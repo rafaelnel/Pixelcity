@@ -461,22 +461,28 @@ export function ReportModal({
                   <div
                     key={m.id}
                     data-testid={`civic-milestone-${m.id}`}
-                    className={`p-2 border flex flex-col justify-between gap-1 ${
-                      m.unlocked
+                    className={`p-2 border flex flex-col justify-between gap-1.5 ${
+                      m.unlocked && m.built
                         ? 'bg-[#12261e] border-[#3d8c61]'
-                        : nextMilestone?.id === m.id
-                          ? 'bg-[#172338] border-[#f5b73b]'
-                          : 'bg-[#0b101b] border-[#24314a]'
+                        : m.unlocked
+                          ? 'bg-[#14263b] border-[#38bdf8]'
+                          : nextMilestone?.id === m.id
+                            ? 'bg-[#172338] border-[#f5b73b]'
+                            : 'bg-[#0b101b] border-[#24314a]'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1">
                       <span className="font-pixel text-[7px] text-[#56c2ff] tabular-nums">
                         {m.populationTarget.toLocaleString('pt-BR')} HAB
                       </span>
-                      {m.unlocked ? (
+                      {m.unlocked && m.built ? (
                         <span className="inline-flex items-center gap-0.5 font-pixel text-[6.5px] text-[#66d98c]">
                           <Check className="w-3 h-3" aria-hidden="true" />
-                          ATIVO
+                          CONSTRUÍDO
+                        </span>
+                      ) : m.unlocked ? (
+                        <span className="font-pixel text-[6.5px] text-[#ffe066]">
+                          LIBERADO
                         </span>
                       ) : (
                         <span className="font-pixel text-[6.5px] text-[#ffe066] tabular-nums">
@@ -487,6 +493,16 @@ export function ReportModal({
                     <div className="text-[14.5px] font-bold text-[#eef2f7] leading-tight">
                       {m.title}
                     </div>
+                    {m.unlocked && !m.built && m.actionId ? (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateNeed('emergencies')}
+                        className="pixel-btn mt-0.5 px-2 py-1 bg-[#1e4e79] hover:bg-[#276399] text-[#e6f4ff] font-pixel text-[6.5px] flex items-center justify-center gap-1"
+                      >
+                        <span>Construir em Obras</span>
+                        <ArrowRight className="w-2.5 h-2.5" aria-hidden="true" />
+                      </button>
+                    ) : null}
                   </div>
                 ))}
               </div>

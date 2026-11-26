@@ -351,6 +351,8 @@ export interface CivicMilestoneStatus {
   rewardCash: number;
   unlocked: boolean;
   progressPct: number;
+  actionId?: EmergencyActionId;
+  built?: boolean;
 }
 
 export interface MilestoneBanner {
@@ -361,6 +363,7 @@ export interface MilestoneBanner {
   subtitle: string;
   rewardCash: number;
   triggeredAtTick: number;
+  actionId?: EmergencyActionId;
 }
 
 export type CityTraitId =

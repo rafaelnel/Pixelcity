@@ -173,14 +173,18 @@ export function EmergenciesModal({
                   className={`font-pixel text-[6.5px] px-1.5 py-0.5 border ${
                     isBuilt
                       ? 'bg-[#132f23] border-[#66d98c] text-[#66d98c]'
-                      : 'bg-[#2a1f16] border-[#f5b73b] text-[#ffe066]'
+                      : offer.unlocked
+                        ? 'bg-[#14283b] border-[#38bdf8] text-[#7dd3fc]'
+                        : 'bg-[#2a1f16] border-[#f5b73b] text-[#ffe066]'
                   }`}
                 >
                   {isBridge
                     ? `${st.bridgeSpanCount} ${st.bridgeSpanCount === 1 ? 'PONTE' : 'PONTES'} · NV.${st.bridgeLevel}`
                     : isBuilt
-                      ? `DESBLOQUEADO (${builtCount} no mapa)`
-                      : 'BLOQUEADO · OBRA EVOLUTIVA'}
+                      ? `CONSTRUÍDO (${builtCount} no mapa)`
+                      : offer.unlocked
+                        ? 'LIBERADO · AGUARDANDO ORDEM'
+                        : 'BLOQUEADO · MARCO POPULACIONAL'}
                 </span>
               </div>
               <h4
@@ -264,8 +268,8 @@ export function EmergenciesModal({
                   : isBridge
                     ? `Executar ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`
                     : offer.tier === 1 && !isBuilt
-                      ? `Desbloquear ${isPort ? 'Porto Fluvial' : 'Aeroporto'} (-$${offer.cost.toLocaleString('pt-BR')})`
-                      : `Investir ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
+                      ? `Construir ${isPort ? 'Porto Fluvial' : 'Aeroporto'} (-$${offer.cost.toLocaleString('pt-BR')})`
+                      : `Pagar e Evoluir ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
             </span>
           </button>
         </div>
@@ -382,7 +386,7 @@ export function EmergenciesModal({
               OBRAS EVOLUTIVAS: PORTO, AEROPORTO &amp; PONTES DO RIO (ARTE 64-BIT)
             </h3>
             <p className="text-[15px] text-[#9eb0c9] leading-tight mt-0.5">
-              Liberadas gradualmente por marcos populacionais: Porto (1,2k / 8k / 18k) · Centro Esportivo (2k) · Aeroporto (5k / 15k / 30k) · Estádio e Pedágio (20k).
+              Os marcos populacionais apenas liberam os projetos — Porto, Aeroporto, Estádio, Centro Esportivo e Pedágio só são construídos quando você tiver caixa e ordenar a obra.
             </p>
           </div>
         </div>
@@ -526,9 +530,9 @@ export function EmergenciesModal({
                       ? offer.lockReason ?? 'Bloqueado'
                       : noAbandoned
                         ? 'Sem imóveis abandonados'
-                        : !canAfford
-                          ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
-                          : `Executar ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
+                      : !canAfford
+                        ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
+                        : `Construir / Executar (-$${offer.cost.toLocaleString('pt-BR')})`}
                   </span>
                 </button>
               </div>

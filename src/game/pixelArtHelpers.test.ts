@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   COMMERCIAL_PALETTES,
   CONSTRUCTION_TOTAL_DURATION,
+  getAtmosphericGradientOverlay,
   getConstructionStageLabel,
   getLightingState,
   getSeasonForMonth,
@@ -137,4 +138,40 @@ test('getTileConstructionStage progresses sequentially through Stages 1, 2, and 
   assert.ok(getConstructionStageLabel(3)?.includes('3/3'));
   assert.equal(getConstructionStageLabel(0), null);
 });
+
+test('getAtmosphericGradientOverlay smoothly darkens the city across day, dusk (crepúsculo), and night', () => {
+  const day = getAtmosphericGradientOverlay('day', 0);
+  const dusk = getAtmosphericGradientOverlay('dusk', 0);
+  const night = getAtmosphericGradientOverlay('night', 0);
+
+  assert.equal(day.phase, 'day');
+  assert.equal(day.phaseLabel, 'Dia');
+  assert.equal(dusk.phase, 'dusk');
+  assert.equal(dusk.phaseLabel, 'Crepúsculo');
+  assert.equal(night.phase, 'night');
+  assert.equal(night.phaseLabel, 'Noite');
+
+  assert.ok(
+    day.darknessLevel < dusk.darknessLevel && dusk.darknessLevel < night.darknessLevel,
+    `Expected darknessLevel day (${day.darknessLevel}) < dusk (${dusk.darknessLevel}) < night (${night.darknessLevel})`
+  );
+  assert.ok(
+    day.opacity < dusk.opacity && dusk.opacity < night.opacity,
+    `Expected overlay opacity day (${day.opacity}) < dusk (${dusk.opacity}) < night (${night.opacity})`
+  );
+  assert.ok(day.gradientCss.includes('radial-gradient') && day.gradientCss.includes('linear-gradient'));
+  assert.ok(dusk.gradientCss.includes('radial-gradient') && dusk.gradientCss.includes('linear-gradient'));
+  assert.ok(night.gradientCss.includes('radial-gradient') && night.gradientCss.includes('linear-gradient'));
+
+  // Auto cycle visits all three overlay phases (day, dusk, night) smoothly
+  const autoPhases = new Set<string>();
+  for (let sec = 0; sec < 96; sec += 3) {
+    const ov = getAtmosphericGradientOverlay('auto', sec);
+    assert.ok(ov.opacity >= 0.18 && ov.opacity <= 0.92);
+    assert.ok(ov.darknessLevel >= 0 && ov.darknessLevel <= 1);
+    autoPhases.add(ov.phase);
+  }
+  assert.ok(autoPhases.has('day') && autoPhases.has('dusk') && autoPhases.has('night'));
+});
+
 

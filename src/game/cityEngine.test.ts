@@ -2152,6 +2152,108 @@ test('random Economic Cycles (recession/inflation) and Urban Incidents (storm/bl
   assert.equal(city.activeUrbanIncident, null, 'Expected incident_response to clear active urban incident');
 });
 
+test('civic milestones unlock projects without auto-building; construction & upgrades require funds and explicit player order', async () => {
+  const { evaluateCivicMilestones, getCivicMilestoneStatuses, setCityBudgetTargetPct } = await import('./cityEngine');
+
+  const city = createNewCity(314159, 'medium');
+  // Ensure there is at least one river bridge to verify bridge level is not auto-upgraded
+  const riverTile = city.tiles.find((t) => t.type === 'water');
+  if (riverTile) {
+    riverTile.type = 'bridge';
+    riverTile.level = 1;
+    riverTile.variant = 0;
+  }
+
+  // Boost city population past every civic milestone (up to 30k+)
+  const slots = city.tiles.filter((t) => t.type === 'grass' || t.type === 'forest');
+  let i = 0;
+  while (city.totalPopulation < 31_000 && i < slots.length) {
+    slots[i].type = 'residential';
+    slots[i].level = 3;
+    i++;
+    recomputeFieldsAndStats(city);
+  }
+  assert.ok(city.totalPopulation >= 30_000, `Expected >= 30k pop, got ${city.totalPopulation}`);
+
+  // Max out budgets and run ticks + milestone evaluation to ensure no automatic building or bridge upgrade occurs
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, 200);
+  }
+  city.breakthroughCharge.entertainment = 99;
+  city.breakthroughCharge.infrastructure = 99;
+
+  for (let t = 0; t < 15; t++) {
+    stepCityTick(city);
+  }
+  evaluateCivicMilestones(city);
+  recomputeFieldsAndStats(city);
+
+  assert.equal(city.stats.portCount, 0, 'Port must NOT auto-build when milestone unlocks');
+  assert.equal(city.stats.airportCount, 0, 'Airport must NOT auto-build when milestone unlocks');
+  assert.equal(city.stats.stadiumCount, 0, 'Stadium must NOT auto-build at 20k+ without player order');
+  assert.equal(city.stats.sportsCenterCount, 0, 'Sports Center must NOT auto-build without player order');
+  assert.equal(city.tollPlaza.built, false, 'Toll Plaza must NOT auto-build without player order');
+  assert.equal(city.stats.bridgeLevel, 1, 'River bridges must NOT auto-upgrade without player order');
+
+  // All 10 civic milestones should report unlocked=true, built=false, and carry their Obras actionId
+  const statusesBefore = getCivicMilestoneStatuses(city);
+  assert.equal(statusesBefore.length, 10);
+  for (const m of statusesBefore) {
+    assert.equal(m.unlocked, true, `Expected milestone ${m.id} to be unlocked at 30k+ pop`);
+    assert.equal(m.built, false, `Expected milestone ${m.id} to remain built=false until player builds it`);
+    assert.ok(m.actionId, `Expected milestone ${m.id} to reference an Obras actionId`);
+  }
+
+  // With insufficient money, player cannot build any unlocked milestone project
+  city.money = 100;
+  for (const actionId of [
+    'port_evolution',
+    'sports_center_project',
+    'airport_evolution',
+    'landmark_project',
+    'toll_plaza_project',
+  ] as const) {
+    const res = executeEmergencyAction(city, actionId);
+    assert.equal(res.ok, false, `Expected ${actionId} to fail with insufficient treasury`);
+  }
+  assert.equal(city.stats.portCount, 0);
+  assert.equal(city.stats.airportCount, 0);
+  assert.equal(city.stats.stadiumCount, 0);
+  assert.equal(city.stats.sportsCenterCount, 0);
+  assert.equal(city.tollPlaza.built, false);
+
+  // Fund treasury and explicitly execute Obras orders
+  city.money = 10_000_000;
+  assert.equal(executeEmergencyAction(city, 'port_evolution').ok, true);
+  assert.equal(executeEmergencyAction(city, 'sports_center_project').ok, true);
+  assert.equal(executeEmergencyAction(city, 'airport_evolution').ok, true);
+  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
+  assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true);
+  // Roadworks tiers 1 -> 2 -> 3 allow bridges to upgrade to Lv.2 & Lv.3 once pop >= 12k
+  assert.equal(executeEmergencyAction(city, 'emergency_roadworks').ok, true);
+  assert.equal(executeEmergencyAction(city, 'emergency_roadworks').ok, true);
+  assert.equal(executeEmergencyAction(city, 'emergency_roadworks').ok, true);
+  recomputeFieldsAndStats(city);
+
+  assert.ok(city.money < 10_000_000, 'Expected treasury deduction after ordering projects');
+  assert.ok(city.stats.portCount >= 1, 'Expected Port built after explicit order');
+  assert.ok(city.stats.sportsCenterCount >= 1, 'Expected Sports Center built after explicit order');
+  assert.ok(city.stats.airportCount >= 1, 'Expected Airport built after explicit order');
+  assert.ok(city.stats.stadiumCount >= 1, 'Expected Stadium built after explicit order');
+  assert.equal(city.tollPlaza.built, true, 'Expected Toll Plaza built after explicit order');
+  assert.equal(city.stats.bridgeLevel, 3, 'Expected river bridges upgraded to Nv. 3 after roadworks order');
+
+  const statusesAfter = getCivicMilestoneStatuses(city);
+  const byId = Object.fromEntries(statusesAfter.map((s) => [s.id, s]));
+  assert.equal(byId.civic_port_lv1.built, true);
+  assert.equal(byId.civic_sports_small.built, true);
+  assert.equal(byId.civic_bridge_lv2.built, true);
+  assert.equal(byId.civic_bridge_lv3.built, true);
+  assert.equal(byId.civic_airport_lv1.built, true);
+  assert.equal(byId.civic_stadium_toll_20k.built, true);
+});
+
+
 
 
 

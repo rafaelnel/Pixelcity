@@ -72,6 +72,7 @@ import {
   zoomCameraAtPoint,
 } from './game/isoMath';
 import {
+  getAtmosphericGradientOverlay,
   getConstructionStageLabel,
   getTileConstructionStage,
   type TimeOfDayMode,
@@ -264,6 +265,8 @@ export default function App() {
   returnMenuOpenRef.current = returnMenuOpen;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lightingOverlayRef = useRef<HTMLDivElement | null>(null);
+  const worldTimeSecRef = useRef<number>(0);
   const stageContainerRef = useRef<HTMLDivElement | null>(null);
   const stageSizeRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
 
@@ -1034,6 +1037,7 @@ export default function App() {
       }
       if (!isPaused) {
         worldTimeSec += dt;
+        worldTimeSecRef.current = worldTimeSec;
       }
 
       // Smooth keyboard camera panning (WASD / Arrows)
@@ -1173,6 +1177,20 @@ export default function App() {
               logicalHeight: logicalH,
             });
           }
+        }
+        const overlayEl = lightingOverlayRef.current;
+        if (overlayEl) {
+          const overlay = getAtmosphericGradientOverlay(
+            timeOfDayRef.current,
+            worldTimeSec,
+            state.weather.season,
+            state.weather.kind,
+            state.weather.intensity
+          );
+          overlayEl.style.backgroundImage = overlay.gradientCss;
+          overlayEl.style.opacity = overlay.opacity.toFixed(3);
+          overlayEl.dataset.phase = overlay.phase;
+          overlayEl.dataset.darkness = overlay.darknessLevel.toFixed(2);
         }
         const renderMs = performance.now() - renderStart;
         renderAccum = renderMs > 30 ? -Math.min(0.08, (renderMs - 20) * 0.0012) : 0;
@@ -1441,6 +1459,13 @@ export default function App() {
 
   const zoomPercent = Math.round(zoomUi * 100);
   const criticalNeedsCount = hud.needs.filter((n) => n.severity === 'critical').length;
+  const initialOverlay = getAtmosphericGradientOverlay(
+    timeOfDay,
+    worldTimeSecRef.current,
+    hud.weather.season,
+    hud.weather.kind,
+    hud.weather.intensity
+  );
 
   return (
     <div
@@ -1471,6 +1496,19 @@ export default function App() {
             isDragging ? 'cursor-grabbing' : 'cursor-grab'
           }`}
           aria-label="Mapa 3D isométrico 64-bit interativo. Arraste com o dedo ou mouse para mover em qualquer direção e use pinça ou roda do mouse para zoom."
+        />
+        {/* Animated Atmospheric Gradient Overlay (Day -> Dusk/Crepúsculo -> Night) */}
+        <div
+          ref={lightingOverlayRef}
+          data-testid="time-of-day-gradient-overlay"
+          data-phase={initialOverlay.phase}
+          data-darkness={initialOverlay.darknessLevel.toFixed(2)}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 transition-opacity duration-700 ease-in-out"
+          style={{
+            backgroundImage: initialOverlay.gradientCss,
+            opacity: initialOverlay.opacity,
+          }}
         />
       </section>
 
@@ -1642,13 +1680,23 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleNavigateNeed('report')}
-                className="pixel-btn px-2 py-1 bg-[#2b6cb0] hover:bg-[#3582d4] text-white font-pixel text-[7px] whitespace-nowrap"
-              >
-                Marcos
-              </button>
+              {hud.recentMilestoneBanner.actionId ? (
+                <button
+                  type="button"
+                  onClick={() => handleNavigateNeed('emergencies')}
+                  className="pixel-btn px-2 py-1 bg-[#1e5c42] hover:bg-[#277856] text-[#eef2f7] font-pixel text-[7px] whitespace-nowrap"
+                >
+                  Construir em Obras
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleNavigateNeed('report')}
+                  className="pixel-btn px-2 py-1 bg-[#2b6cb0] hover:bg-[#3582d4] text-white font-pixel text-[7px] whitespace-nowrap"
+                >
+                  Marcos
+                </button>
+              )}
               <button
                 type="button"
                 aria-label="Fechar aviso de marco cívico"

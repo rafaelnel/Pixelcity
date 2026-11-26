@@ -270,6 +270,97 @@ export function getLightingState(
   };
 }
 
+export interface AtmosphericGradientOverlay {
+  phase: 'day' | 'dusk' | 'night';
+  phaseLabel: 'Dia' | 'Crepúsculo' | 'Noite';
+  /** 0 (bright day) to 1 (deep night) continuous darkening factor */
+  darknessLevel: number;
+  nightFactor: number;
+  duskFactor: number;
+  /** Layered CSS radial + linear gradient applied above the canvas */
+  gradientCss: string;
+  /** Smoothly interpolated overlay opacity (0..1) */
+  opacity: number;
+}
+
+/**
+ * Compute an animated CSS gradient overlay that smoothly darkens and tints the viewport
+ * over the canvas as time transitions between Day (Dia), Dusk (Crepúsculo), and Night (Noite),
+ * without altering the canvas rendering pipeline.
+ */
+export function getAtmosphericGradientOverlay(
+  mode: TimeOfDayMode,
+  timeSeconds: number,
+  season: SeasonId = 'summer',
+  weatherKind: WeatherKind = 'clear',
+  weatherIntensity: number = 0.5
+): AtmosphericGradientOverlay {
+  const ls = getLightingState(mode, timeSeconds, season, weatherKind, weatherIntensity);
+  const { nightFactor, duskFactor } = ls;
+
+  const phase: AtmosphericGradientOverlay['phase'] =
+    nightFactor >= 0.58 ? 'night' : duskFactor >= 0.45 ? 'dusk' : 'day';
+  const phaseLabel: AtmosphericGradientOverlay['phaseLabel'] =
+    phase === 'night' ? 'Noite' : phase === 'dusk' ? 'Crepúsculo' : 'Dia';
+
+  const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+
+  const overcastBoost =
+    weatherKind === 'storm'
+      ? 0.14 * weatherIntensity
+      : weatherKind === 'rain'
+        ? 0.08 * weatherIntensity
+        : 0;
+
+  const darknessLevel = Math.max(
+    0,
+    Math.min(1, Number((nightFactor * 0.86 + duskFactor * 0.36 + overcastBoost).toFixed(3)))
+  );
+
+  // Top zenith tint: warm daylight -> magenta/violet dusk -> deep midnight blue
+  const topR = lerp(lerp(64, 108, duskFactor), 5, nightFactor);
+  const topG = lerp(lerp(116, 40, duskFactor), 10, nightFactor);
+  const topB = lerp(lerp(178, 96, duskFactor), 28, nightFactor);
+  const topA = (0.06 + duskFactor * 0.22 + nightFactor * 0.36 + overcastBoost * 0.35).toFixed(3);
+
+  // Mid horizon tint: soft sky -> golden sunset amber -> nocturnal indigo
+  const midR = lerp(lerp(255, 224, duskFactor), 8, nightFactor);
+  const midG = lerp(lerp(218, 102, duskFactor), 16, nightFactor);
+  const midB = lerp(lerp(156, 54, duskFactor), 42, nightFactor);
+  const midA = (0.02 + duskFactor * 0.18 + nightFactor * 0.22).toFixed(3);
+
+  // Bottom shadow tint: subtle ground vignette -> deep twilight purple -> night navy
+  const botR = lerp(lerp(14, 38, duskFactor), 3, nightFactor);
+  const botG = lerp(lerp(22, 18, duskFactor), 7, nightFactor);
+  const botB = lerp(lerp(38, 52, duskFactor), 20, nightFactor);
+  const botA = (0.08 + duskFactor * 0.24 + nightFactor * 0.44 + overcastBoost * 0.3).toFixed(3);
+
+  // Radial spotlight keeps center crisp for glowing windows & streetlamps while darkening edges
+  const centerA = (0.01 + duskFactor * 0.06 + nightFactor * 0.16).toFixed(3);
+  const midRingA = (0.04 + duskFactor * 0.18 + nightFactor * 0.34).toFixed(3);
+  const edgeA = (0.12 + duskFactor * 0.32 + nightFactor * 0.58 + overcastBoost * 0.25).toFixed(3);
+
+  const gradientCss = [
+    `radial-gradient(circle at 50% 46%, rgba(${topR}, ${topG}, ${topB}, ${centerA}) 0%, rgba(${botR}, ${botG}, ${botB}, ${midRingA}) 64%, rgba(${botR}, ${botG}, ${botB}, ${edgeA}) 100%)`,
+    `linear-gradient(180deg, rgba(${topR}, ${topG}, ${topB}, ${topA}) 0%, rgba(${midR}, ${midG}, ${midB}, ${midA}) 46%, rgba(${botR}, ${botG}, ${botB}, ${botA}) 100%)`,
+  ].join(', ');
+
+  const opacity = Math.max(
+    0.18,
+    Math.min(0.92, Number((0.22 + duskFactor * 0.34 + nightFactor * 0.62 + overcastBoost * 0.2).toFixed(3)))
+  );
+
+  return {
+    phase,
+    phaseLabel,
+    darknessLevel,
+    nightFactor,
+    duskFactor,
+    gradientCss,
+    opacity,
+  };
+}
+
 // ============================================================================
 // Rich Organic Architectural Color Palettes (16+ per zone — Zero Repetition!)
 // ============================================================================

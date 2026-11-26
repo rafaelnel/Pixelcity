@@ -346,7 +346,7 @@ function tryPickOrganicEstablishment(
 
   const candidates: Array<{ spec: EstablishmentSpec; weight: number }> = [];
   for (const spec of ESTABLISHMENT_CATALOG) {
-    if (spec.id === 'soccer_stadium') continue; // Handled via 20k+ population works & milestones
+    if (spec.id === 'soccer_stadium' || spec.id === 'sports_court') continue; // Built strictly when unlocked and ordered by the player in Obras
     if (spec.hostTileType !== hostTileType || spec.hostLevel !== hostLevel) continue;
     if (state.totalPopulation < (spec.minPopulation ?? 0)) continue;
     if (!canPlaceEstablishmentAt(state, spec.id, x, y, ignoreTile)) continue;
@@ -5058,7 +5058,12 @@ export function executeEmergencyAction(
     upsertBoost(offer.title, offer.durationMonths);
     const roadTargets = [4, 6, 8, 10][tier - 1] ?? 8;
     const { roadsLaid } = buildImmediateRoads(state, roadTargets, true);
-    const targetBridgeLv = Math.min(3, tier);
+    const targetBridgeLv =
+      tier >= 3 && state.totalPopulation >= 12000
+        ? 3
+        : tier >= 2 && state.totalPopulation >= 3500
+          ? 2
+          : 1;
     const bridgesUpgraded =
       targetBridgeLv >= 2 ? upgradeAllBridges(state, targetBridgeLv) : 0;
     if (tier >= 3) {
@@ -5205,59 +5210,20 @@ function triggerSystemBreakthrough(state: CityState, area: BudgetAreaKey): void 
 
   if (area === 'infrastructure') {
     buildImmediateRoads(state, 5, true);
-    if (
-      state.stats.bridgeCount > 0 &&
-      state.stats.bridgeLevel < 2 &&
-      state.totalPopulation >= 3500
-    ) {
-      upgradeAllBridges(state, 2);
-    } else if (
-      state.stats.bridgeCount > 0 &&
-      state.stats.bridgeLevel < 3 &&
-      state.totalPopulation >= 12000
-    ) {
-      upgradeAllBridges(state, 3);
-    }
     const up = upgradeTopBuildings(state, 2);
-    if (state.stats.airportCount > 0 && state.totalPopulation >= 30000) {
-      upgradeExistingLandmarks(state, 'airport', 3);
-    } else if (state.stats.airportCount > 0 && state.totalPopulation >= 15000) {
-      upgradeExistingLandmarks(state, 'airport', 2);
-    }
-    if (state.stats.portCount > 0 && state.totalPopulation >= 18000) {
-      upgradeExistingLandmarks(state, 'port', 3);
-    } else if (state.stats.portCount > 0 && state.totalPopulation >= 8000) {
-      upgradeExistingLandmarks(state, 'port', 2);
-    }
     pushNews(
       state,
       `SALTO DE INFRAESTRUTURA! Megainvestimento abre vias planejadas e moderniza ${up} edifícios!`,
       'milestone'
     );
   } else if (area === 'entertainment') {
-    if (state.totalPopulation >= 20000 && state.stats.stadiumCount < 2) {
-      placeLandmarkOnBestSlot(state, 'stadium', true);
-      pushNews(
-        state,
-        'SALTO DE LAZER & ESPORTE! Grande investimento ergue Estádio Monumental e aquece o comércio cultural!',
-        'milestone'
-      );
-    } else if (state.totalPopulation >= 2000) {
-      placeSpecificEstablishmentOnBestSlot(state, 'sports_court', true);
-      pushNews(
-        state,
-        'SALTO ESPORTIVO! Novo Centro Esportivo Pequeno inaugurado para os moradores!',
-        'milestone'
-      );
-    } else {
-      pushNews(
-        state,
-        'SALTO DE LAZER! Novas praças e comércio cultural elevam o astral da cidade!',
-        'milestone'
-      );
-    }
     plantImmediateParks(state, 2);
     upgradeTopBuildings(state, 2, 'commercial');
+    pushNews(
+      state,
+      'SALTO CULTURAL & LAZER! Novas praças e comércio cultural aquecem a cidade!',
+      'milestone'
+    );
   } else if (area === 'education') {
     const up = upgradeTopBuildings(state, 3);
     pushNews(
@@ -6017,49 +5983,8 @@ export function stepCityTick(state: CityState): void {
     }
   }
 
-  // 3. Organic Sports Stadium Milestone (strictly gated at 20.000+ inhabitants!)
-  if (
-    state.stats.stadiumCount === 0 &&
-    state.totalPopulation >= 20000 &&
-    state.stats.coverage.entertainment.coveragePct >= 135 &&
-    nextRandom(state) < 0.04
-  ) {
-    placeLandmarkOnBestSlot(state, 'stadium', false);
-  }
-
-  // 3b. Organic River Bridge Architectural Evolution (Nv. 1 Stone -> Nv. 2 Steel Arch at 3.5k -> Nv. 3 Cable-Stayed at 12k)
-  if (state.stats.bridgeCount > 0) {
-    if (
-      state.stats.bridgeLevel < 2 &&
-      state.totalPopulation >= 3500 &&
-      infraCov >= 0.72 &&
-      nextRandom(state) < 0.035
-    ) {
-      if (upgradeAllBridges(state, 2) > 0) {
-        state.pendingSounds.push({ type: 'bridge' });
-        pushNews(
-          state,
-          'Evolução das Pontes! As pontes do rio agora são Pontes de Arcos Metálicos (Nv. 2)!',
-          'milestone'
-        );
-      }
-    } else if (
-      state.stats.bridgeLevel < 3 &&
-      state.totalPopulation >= 12000 &&
-      infraCov >= 0.80 &&
-      nextRandom(state) < 0.028
-    ) {
-      if (upgradeAllBridges(state, 3) > 0) {
-        state.pendingSounds.push({ type: 'bridge' });
-        pushNews(
-          state,
-          'Evolução Máxima das Pontes! Pontes Estaiadas Monumentais (Nv. 3) iluminam o rio!',
-          'milestone'
-        );
-      }
-    }
-  }
-
+  // 3. Major Civic Landmarks (Stadiums, Ports, Airports, Sports Centers & Bridge upgrades)
+  // are unlocked by Civic Milestones and built ONLY when the player has funds and orders them in Obras.
   // 4. Natural + Accelerated Evolutionary Breakthrough Charge ("Salto Evolutivo")
   // Calibrated for long-term pacing so breakthroughs feel like genuine multi-year milestones!
   for (const area of BUDGET_AREA_ORDER) {
@@ -6569,11 +6494,34 @@ export function stepCityTick(state: CityState): void {
 /** Compute live progression statuses for all population-based Civic Milestones */
 export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatus[] {
   const pop = state.totalPopulation;
+  let maxPortLv = 0;
+  let maxAirportLv = 0;
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (t.type === 'port' && t.level > maxPortLv) maxPortLv = t.level;
+    if (t.type === 'airport' && t.level > maxAirportLv) maxAirportLv = t.level;
+  }
+
   return CIVIC_MILESTONES.map((m) => {
     const unlocked = Boolean(state.milestonesReached[m.id]);
     const progressPct = unlocked
       ? 100
       : Math.max(0, Math.min(99, Math.floor((pop / Math.max(1, m.populationTarget)) * 100)));
+
+    let built = false;
+    if (m.id === 'civic_port_lv1') built = state.stats.portCount >= 1;
+    else if (m.id === 'civic_port_lv2') built = maxPortLv >= 2;
+    else if (m.id === 'civic_port_lv3') built = maxPortLv >= 3;
+    else if (m.id === 'civic_sports_small') built = state.stats.sportsCenterCount >= 1;
+    else if (m.id === 'civic_bridge_lv2') built = state.stats.bridgeLevel >= 2;
+    else if (m.id === 'civic_bridge_lv3') built = state.stats.bridgeLevel >= 3;
+    else if (m.id === 'civic_airport_lv1') built = state.stats.airportCount >= 1;
+    else if (m.id === 'civic_airport_lv2') built = maxAirportLv >= 2;
+    else if (m.id === 'civic_airport_lv3') built = maxAirportLv >= 3;
+    else if (m.id === 'civic_stadium_toll_20k') {
+      built = state.stats.stadiumCount >= 1 || Boolean(state.tollPlaza?.built);
+    }
+
     return {
       id: m.id,
       populationTarget: m.populationTarget,
@@ -6583,6 +6531,8 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
       rewardCash: m.rewardCash,
       unlocked,
       progressPct,
+      actionId: m.actionId,
+      built,
     };
   });
 }
@@ -6594,8 +6544,8 @@ export function dismissMilestoneBanner(state: CityState): void {
 
 /**
  * Evaluate population-based Civic Milestones automatically:
- * Celebrates 10 staged population milestones (1.2k -> 30k+), upgrades river bridges,
- * awards federal grants, and notifies the mayor as major works unlock in Obras!
+ * Unlocks 10 staged population milestones (1.2k -> 30k+), awards civic grants,
+ * and notifies the mayor that the new project is ready to be ordered & paid in Obras!
  */
 export function evaluateCivicMilestones(state: CityState): string[] {
   const triggered: string[] = [];
@@ -6607,12 +6557,6 @@ export function evaluateCivicMilestones(state: CityState): string[] {
     state.milestonesReached[m.id] = true;
     state.money += m.rewardCash;
 
-    if (m.id === 'civic_bridge_lv2') {
-      upgradeAllBridges(state, 2);
-    } else if (m.id === 'civic_bridge_lv3') {
-      upgradeAllBridges(state, 3);
-    }
-
     state.recentMilestoneBanner = {
       id: m.id,
       kind: m.kind,
@@ -6621,12 +6565,13 @@ export function evaluateCivicMilestones(state: CityState): string[] {
       subtitle: m.subtitle,
       rewardCash: m.rewardCash,
       triggeredAtTick: state.tick,
+      actionId: m.actionId,
     };
 
     state.pendingSounds.push({ type: 'milestone' });
     pushNews(
       state,
-      `MARCO CÍVICO (${m.populationTarget.toLocaleString('pt-BR')} hab): ${m.title} (+$${m.rewardCash.toLocaleString('pt-BR')})!`,
+      `MARCO CÍVICO (${m.populationTarget.toLocaleString('pt-BR')} hab): ${m.title} (+$${m.rewardCash.toLocaleString('pt-BR')}) — disponível para construir em Obras!`,
       'milestone'
     );
     triggered.push(m.id);

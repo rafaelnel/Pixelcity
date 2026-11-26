@@ -357,8 +357,8 @@ export const BUDGET_AREA_META: Record<BudgetAreaKey, BudgetAreaMeta> = {
   entertainment: {
     key: 'entertainment',
     label: 'Lazer',
-    shortDesc: 'Esporte, cultura e entretenimento — aquece comércio e pode criar Estádio',
-    breakthroughHint: 'Próximo Salto: Salto Esportivo & Cultural — inaugura Estádio! (150%/200% acelera)',
+    shortDesc: 'Esporte, cultura e entretenimento — aquece comércio, parques e o astral da cidade',
+    breakthroughHint: 'Próximo Salto: Salto Cultural & Lazer — cria praças e impulsiona o comércio (150%/200% acelera)',
     color: '#ff8ec7',
     defaultMonthly: 260,
   },
@@ -952,11 +952,12 @@ export interface CivicMilestoneDef {
   title: string;
   subtitle: string;
   rewardCash: number;
+  actionId?: EmergencyActionId;
 }
 
 /**
  * Population-based Civic Milestones (1.200 -> 30.000+ inhabitants):
- * Gradually unlock iconic civic works & upgrades so cities mature over many years instead of instantly.
+ * Unlock iconic civic projects in Obras; the player chooses when to pay and order construction!
  */
 export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
   {
@@ -964,80 +965,90 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     populationTarget: 1200,
     kind: 'port',
     title: 'Porto Fluvial Nv. 1 Liberado',
-    subtitle: 'Libera a construção do Porto Fluvial em Obras e ativa o escoamento fluvial.',
+    subtitle: 'Libera o Porto Fluvial em Obras — pague e ordene a obra quando quiser iniciar o escoamento fluvial.',
     rewardCash: 1500,
+    actionId: 'port_evolution',
   },
   {
     id: 'civic_sports_small',
     populationTarget: 2000,
     kind: 'sports',
     title: 'Centro Esportivo Pequeno Liberado',
-    subtitle: 'Aos 2.000 habitantes, a cidade desbloqueia Centros Esportivos Pequenos nos bairros e em Obras.',
+    subtitle: 'Aos 2.000 habitantes, libera o Centro Esportivo Pequeno para construção sob seu comando em Obras.',
     rewardCash: 2000,
+    actionId: 'sports_center_project',
   },
   {
     id: 'civic_bridge_lv2',
     populationTarget: 3500,
     kind: 'bridge',
-    title: 'Pontes de Arcos Metálicos Nv. 2',
-    subtitle: 'Moderniza a engenharia fluvial com arcos de aço treliçado sobre o rio.',
+    title: 'Pontes de Arcos Metálicos Nv. 2 Liberadas',
+    subtitle: 'Libera a modernização das pontes do rio para Arcos de Aço (Nv. 2) ao investir em Obras.',
     rewardCash: 2500,
+    actionId: 'emergency_roadworks',
   },
   {
     id: 'civic_airport_lv1',
     populationTarget: 5000,
     kind: 'airport',
     title: 'Aeroporto Pequeno Liberado',
-    subtitle: 'Aos 5.000 habitantes, desbloqueia o Aeroporto Regional Pequeno (Nv. 1) em Obras.',
+    subtitle: 'Aos 5.000 habitantes, desbloqueia o Aeroporto Regional Pequeno (Nv. 1) para construção em Obras.',
     rewardCash: 3500,
+    actionId: 'airport_evolution',
   },
   {
     id: 'civic_port_lv2',
     populationTarget: 8000,
     kind: 'port',
     title: 'Porto Comercial Nv. 2 Liberado',
-    subtitle: 'Libera a expansão para Terminal de Contêineres com navios cargueiros.',
+    subtitle: 'Libera a expansão para Terminal de Contêineres com navios cargueiros em Obras.',
     rewardCash: 4500,
+    actionId: 'port_evolution',
   },
   {
     id: 'civic_bridge_lv3',
     populationTarget: 12000,
     kind: 'bridge',
-    title: 'Pontes Estaiadas Monumentais Nv. 3',
-    subtitle: 'Eleva todas as travessias do rio ao padrão monumental estaiado com torres iluminadas.',
+    title: 'Pontes Estaiadas Nv. 3 Liberadas',
+    subtitle: 'Libera a evolução das travessias do rio para Pontes Estaiadas Monumentais (Nv. 3) em Obras.',
     rewardCash: 5500,
+    actionId: 'emergency_roadworks',
   },
   {
     id: 'civic_airport_lv2',
     populationTarget: 15000,
     kind: 'airport',
     title: 'Aeroporto Médio Liberado',
-    subtitle: 'Aos 15.000 habitantes, libera a ampliação para o Aeroporto Nacional Médio (Nv. 2) com radar.',
+    subtitle: 'Aos 15.000 habitantes, libera a ampliação para o Aeroporto Nacional Médio (Nv. 2) em Obras.',
     rewardCash: 7000,
+    actionId: 'airport_evolution',
   },
   {
     id: 'civic_port_lv3',
     populationTarget: 18000,
     kind: 'port',
     title: 'Porto de Cruzeiros 2×4 Liberado',
-    subtitle: 'Desbloqueia o Terminal Internacional de Cruzeiros 2×4 em trechos livres de pontes.',
+    subtitle: 'Desbloqueia o Terminal Internacional de Cruzeiros 2×4 para construção em Obras.',
     rewardCash: 8500,
+    actionId: 'port_evolution',
   },
   {
     id: 'civic_stadium_toll_20k',
     populationTarget: 20000,
     kind: 'toll',
     title: 'Estádio Monumental & Pedágio Liberados',
-    subtitle: 'Aos 20.000 habitantes, libera o Grande Estádio e a Praça de Pedágio na Rodovia Externa!',
+    subtitle: 'Aos 20.000 habitantes, libera o Grande Estádio e a Praça de Pedágio para construção em Obras!',
     rewardCash: 10000,
+    actionId: 'landmark_project',
   },
   {
     id: 'civic_airport_lv3',
     populationTarget: 30000,
     kind: 'megapolis',
     title: 'Aeroporto Grande Internacional Liberado',
-    subtitle: 'Aos 30.000 habitantes, consagra a metrópole e libera o Aeroporto Grande Nv. 3!',
+    subtitle: 'Aos 30.000 habitantes, consagra a metrópole e libera o Aeroporto Grande Nv. 3 em Obras!',
     rewardCash: 15000,
+    actionId: 'airport_evolution',
   },
 ];
 
