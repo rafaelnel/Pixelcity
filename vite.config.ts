@@ -26,6 +26,35 @@ export default defineConfig(() => {
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
           }
+          // Ensure GitHub Pages files (.nojekyll and 404.html fallback) are always present in dist/
+          if (fs.existsSync(distDir)) {
+            fs.writeFileSync(path.resolve(distDir, '.nojekyll'), '');
+            const distIndex = path.resolve(distDir, 'index.html');
+            if (fs.existsSync(distIndex)) {
+              fs.copyFileSync(distIndex, path.resolve(distDir, '404.html'));
+            }
+            // Mirror compiled bundle to public/bundle/ so even raw main-branch GitHub Pages works
+            const builtAssetsDir = path.resolve(distDir, 'assets');
+            if (fs.existsSync(builtAssetsDir)) {
+              const files = fs.readdirSync(builtAssetsDir);
+              const jsFile = files.find((f) => f.startsWith('index-') && f.endsWith('.js'));
+              const cssFile = files.find((f) => f.startsWith('index-') && f.endsWith('.css'));
+              const fallbackDir = path.resolve(__dirname, 'public/bundle');
+              fs.mkdirSync(fallbackDir, {recursive: true});
+              if (jsFile) {
+                fs.copyFileSync(
+                  path.resolve(builtAssetsDir, jsFile),
+                  path.resolve(fallbackDir, 'app.js')
+                );
+              }
+              if (cssFile) {
+                fs.copyFileSync(
+                  path.resolve(builtAssetsDir, cssFile),
+                  path.resolve(fallbackDir, 'app.css')
+                );
+              }
+            }
+          }
         },
       },
     ],

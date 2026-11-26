@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pixópolis — Simulador Urbano 3D 64-Bit</title>
+    <meta
+      name="description"
+      content="Simulador urbano orgânico e probabilístico em vista isométrica 3D realista 64-bit. Gerencie investimentos, alcance marcos cívicos e veja a cidade nascer sozinha."
+    />
+    <meta property="og:title" content="Pixópolis — Simulador Urbano 3D 64-Bit" />
+    <meta
+      property="og:description"
+      content="Simulador urbano orgânico e probabilístico em vista isométrica 3D realista 64-bit."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#111622" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-[#111622] text-[#eef2f7] antialiased selection:bg-[#f5b73b] selection:text-[#111622]">
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+    <script>
+      (function () {
+        var loadedFallback = false;
+        function loadStaticBundle() {
+          if (loadedFallback) return;
+          var root = document.getElementById('root');
+          if (root && root.childElementCount > 0) return;
+          loadedFallback = true;
+          var css = document.createElement('link');
+          css.rel = 'stylesheet';
+          css.href = './public/bundle/app.css';
+          document.head.appendChild(css);
+          var js = document.createElement('script');
+          js.type = 'module';
+          js.src = './public/bundle/app.js';
+          document.body.appendChild(js);
+        }
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (e && e.target && e.target.tagName === 'SCRIPT') {
+              loadStaticBundle();
+            }
+          },
+          true
+        );
+        window.addEventListener('DOMContentLoaded', function () {
+          setTimeout(loadStaticBundle, 750);
+        });
+      })();
+    </script>
+  </body>
+</html>
