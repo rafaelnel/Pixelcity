@@ -5,8 +5,20 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const envBase = process.env.VITE_BASE_PATH?.trim();
+  const ghRepo = process.env.GITHUB_REPOSITORY?.split('/')[1];
+  const rawBase = envBase
+    ? envBase
+    : process.env.GITHUB_ACTIONS === 'true' && ghRepo
+      ? `/${ghRepo}/`
+      : './';
+  const base =
+    rawBase === './' || rawBase === '.'
+      ? './'
+      : `${rawBase.replace(/\/+$/, '') || ''}/`;
+
   return {
-    base: './',
+    base,
     plugins: [
       react(),
       tailwindcss(),
@@ -32,27 +44,6 @@ export default defineConfig(() => {
             const distIndex = path.resolve(distDir, 'index.html');
             if (fs.existsSync(distIndex)) {
               fs.copyFileSync(distIndex, path.resolve(distDir, '404.html'));
-            }
-            // Mirror compiled bundle to public/bundle/ so even raw main-branch GitHub Pages works
-            const builtAssetsDir = path.resolve(distDir, 'assets');
-            if (fs.existsSync(builtAssetsDir)) {
-              const files = fs.readdirSync(builtAssetsDir);
-              const jsFile = files.find((f) => f.startsWith('index-') && f.endsWith('.js'));
-              const cssFile = files.find((f) => f.startsWith('index-') && f.endsWith('.css'));
-              const fallbackDir = path.resolve(__dirname, 'public/bundle');
-              fs.mkdirSync(fallbackDir, {recursive: true});
-              if (jsFile) {
-                fs.copyFileSync(
-                  path.resolve(builtAssetsDir, jsFile),
-                  path.resolve(fallbackDir, 'app.js')
-                );
-              }
-              if (cssFile) {
-                fs.copyFileSync(
-                  path.resolve(builtAssetsDir, cssFile),
-                  path.resolve(fallbackDir, 'app.css')
-                );
-              }
             }
           }
         },
