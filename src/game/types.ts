@@ -14,7 +14,13 @@ export type TileType =
   | 'abandoned'
   | 'port'
   | 'airport'
-  | 'stadium';
+  | 'stadium'
+  | 'bus_station'
+  | 'metro_station'
+  | 'shopping';
+
+/** Coherent urban neighborhood (bairro) macro-zone classification */
+export type NeighborhoodDistrictType = 'residential' | 'commercial' | 'industrial';
 
 /**
  * 20 Iconic Civic, Cultural, Commercial & Waterfront Establishments
@@ -56,8 +62,11 @@ export type ModalTab = 'budget' | 'finances' | 'emergencies' | 'report';
 
 export type EmergencyActionId =
   | 'sports_center_project'
+  | 'bus_transit_project'
+  | 'metro_transit_project'
   | 'port_evolution'
   | 'airport_evolution'
+  | 'shopping_evolution'
   | 'toll_plaza_project'
   | 'environmental_cleanup'
   | 'revitalization'
@@ -166,7 +175,7 @@ export interface Tile {
   x: number;
   y: number;
   type: TileType;
-  /** 1..3 for residential/commercial/bridge/port/airport; for road: 1=Rua, 2=Avenida, 3=Estrada, 4=Trevo; 0 otherwise */
+  /** 1..4 for residential/commercial/bridge; 1..3 for port/airport; for road: 1=Rua, 2=Avenida, 3=Estrada, 4=Trevo; 0 otherwise */
   level: number;
   /** Visual variant index (0..7) so neighboring buildings have distinct architectural styles */
   variant: number;
@@ -239,12 +248,19 @@ export interface CityStats {
   bridgeCount: number;
   /** Number of distinct river crossings */
   bridgeSpanCount: number;
-  /** Current architectural evolution level of river bridges (1..3) */
+  /** Current architectural evolution level of river bridges (1..4; Nv. 4 = 2-tile-wide Mega-Bridge) */
   bridgeLevel: number;
   portCount: number;
   airportCount: number;
   stadiumCount: number;
   sportsCenterCount: number;
+  busStationCount: number;
+  metroStationCount: number;
+  shoppingCount: number;
+  shoppingLevel: number;
+  wideAvenueTileCount: number;
+  monthlyTransitRiders: number;
+  transitCoveragePct: number;
   condoCount: number;
   midRiseCount: number;
   level3Count: number;
@@ -293,6 +309,7 @@ export interface CityBoost {
   label: string;
   tier: number;
   remainingMonths: number;
+  totalMonths?: number;
 }
 
 export interface EmergencyOfferView {
@@ -340,7 +357,17 @@ export interface CityNeedItem {
   targetTab: ModalTab;
 }
 
-export type CivicMilestoneKind = 'port' | 'bridge' | 'sports' | 'stadium' | 'airport' | 'toll' | 'megapolis';
+export type CivicMilestoneKind =
+  | 'port'
+  | 'bridge'
+  | 'sports'
+  | 'bus'
+  | 'metro'
+  | 'shopping'
+  | 'stadium'
+  | 'airport'
+  | 'toll'
+  | 'megapolis';
 
 export interface CivicMilestoneStatus {
   id: string;

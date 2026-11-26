@@ -1976,7 +1976,10 @@ export function isConstructibleBuildingType(tileType: string): boolean {
     tileType === 'park' ||
     tileType === 'port' ||
     tileType === 'airport' ||
-    tileType === 'stadium'
+    tileType === 'stadium' ||
+    tileType === 'bus_station' ||
+    tileType === 'metro_station' ||
+    tileType === 'shopping'
   );
 }
 
@@ -2119,7 +2122,12 @@ export function drawConstructionStage64(
           : lv === 2
             ? 17
             : 11
-      : tileType === 'stadium' || tileType === 'airport' || tileType === 'port'
+      : tileType === 'stadium' ||
+          tileType === 'airport' ||
+          tileType === 'port' ||
+          tileType === 'bus_station' ||
+          tileType === 'metro_station' ||
+          tileType === 'shopping'
         ? 18
         : 13) * zoom;
 
@@ -2321,7 +2329,10 @@ export function drawOrganicEvolutionGlow64(
     (level || 1) >= 3 ||
     tileType === 'port' ||
     tileType === 'stadium' ||
-    tileType === 'airport';
+    tileType === 'airport' ||
+    tileType === 'bus_station' ||
+    tileType === 'metro_station' ||
+    tileType === 'shopping';
 
   // Smooth bell-curve & breathing pulse so the highlight feels organic and gentle
   const norm = Math.min(1, evolveFlash / 1.4);

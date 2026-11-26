@@ -30,10 +30,12 @@ import {
   ROAD_PLAN_CONFIG,
   SECONDS_PER_GROWTH_TICK_1X,
   SECONDS_PER_MONTH_1X,
+  SHOPPING_FOOTPRINT_BY_LEVEL,
   START_MONTH,
   START_YEAR,
   TOLL_MIN_POPULATION,
   TOLL_TARIFF_CONFIGS,
+  URBAN_MATURITY_CONFIG,
   type EstablishmentSpec,
 } from './simulationConfig';
 import type {
@@ -62,6 +64,7 @@ import type {
   HudSnapshot,
   LandExpansionStatus,
   MonthlyFinancials,
+  NeighborhoodDistrictType,
   NewsItem,
   ParticleEntity,
   PlaneEntity,
@@ -117,7 +120,11 @@ export function isRoadLike(type: TileType): boolean {
 }
 
 export function isLandmarkType(type: TileType): boolean {
-  return type === 'port' || type === 'airport' || type === 'stadium';
+  return type === 'port' || type === 'airport' || type === 'stadium' || type === 'shopping';
+}
+
+export function isTransitStationType(type: TileType): boolean {
+  return type === 'bus_station' || type === 'metro_station';
 }
 
 export function isBuildingType(type: TileType): boolean {
@@ -128,7 +135,8 @@ export function isBuildingType(type: TileType): boolean {
     type === 'industrial' ||
     type === 'park' ||
     type === 'abandoned' ||
-    isLandmarkType(type)
+    isLandmarkType(type) ||
+    isTransitStationType(type)
   );
 }
 
@@ -242,6 +250,18 @@ export function getZoneDisplayLabel(tile: Tile): string {
         : '';
     return `Estádio de Futebol${scale}`;
   }
+  if (tile.type === 'shopping') {
+    const lw = tile.lotWidth ?? 6;
+    const lh = tile.lotHeight ?? 6;
+    const lv = tile.level || 1;
+    if (lv >= 3) {
+      return `Shopping Grande ${lw}×${lh} (Grand Megamall · Nv. 3)`;
+    }
+    if (lv === 2) {
+      return `Shopping Médio ${lw}×${lh} (Metropolitano · Nv. 2)`;
+    }
+    return `Shopping Pequeno ${lw}×${lh} (Galleria Regional · Nv. 1)`;
+  }
   if (tile.type === 'port') {
     const lw = tile.lotWidth ?? 1;
     const lh = tile.lotHeight ?? 1;
@@ -254,6 +274,22 @@ export function getZoneDisplayLabel(tile: Tile): string {
     return lw > 1 || lh > 1
       ? `Complexo Portuário ${lw}×${lh} (Terminal de Cargas)`
       : 'Zona Portuária';
+  }
+  if (tile.type === 'bus_station') {
+    const lv = tile.level || 1;
+    return lv >= 3
+      ? 'Terminal de Ônibus Elétrico'
+      : lv === 2
+        ? 'Terminal Expresso BRT'
+        : 'Terminal de Ônibus Urbano';
+  }
+  if (tile.type === 'metro_station') {
+    const lv = tile.level || 1;
+    return lv >= 3
+      ? 'Estação Central de Metrô (Integrada)'
+      : lv === 2
+        ? 'Estação de Metrô · Linha 2'
+        : 'Estação de Metrô · Linha 1';
   }
   if (tile.type === 'park') return 'Parque Urbano';
   if (tile.type === 'abandoned') return 'Imóvel Abandonado';
@@ -347,7 +383,10 @@ function tryPickOrganicEstablishment(
   const candidates: Array<{ spec: EstablishmentSpec; weight: number }> = [];
   for (const spec of ESTABLISHMENT_CATALOG) {
     if (spec.id === 'soccer_stadium' || spec.id === 'sports_court') continue; // Built strictly when unlocked and ordered by the player in Obras
-    if (spec.hostTileType !== hostTileType || spec.hostLevel !== hostLevel) continue;
+    const levelMatches =
+      spec.hostLevel === hostLevel ||
+      (hostLevel === 1 && spec.hostLevel === 2 && (spec.minPopulation ?? 0) <= 1000);
+    if (spec.hostTileType !== hostTileType || !levelMatches) continue;
     if (state.totalPopulation < (spec.minPopulation ?? 0)) continue;
     if (!canPlaceEstablishmentAt(state, spec.id, x, y, ignoreTile)) continue;
 
@@ -488,7 +527,8 @@ function assignCompoundLot(
           type === 'park' ||
           type === 'port' ||
           type === 'airport' ||
-          type === 'stadium')
+          type === 'stadium' ||
+          type === 'shopping')
           ? Math.max(1.75, evolveFlash)
           : evolveFlash;
       t.lotRole = !isMulti ? 'single' : dx === 0 && dy === 0 ? 'anchor' : 'part';
@@ -930,8 +970,11 @@ function createZeroAreaRecord(): Record<BudgetAreaKey, number> {
 function createInitialWorkTiers(): Record<EmergencyActionId, number> {
   return {
     sports_center_project: 1,
+    bus_transit_project: 1,
+    metro_transit_project: 1,
     port_evolution: 1,
     airport_evolution: 1,
+    shopping_evolution: 1,
     toll_plaza_project: 1,
     environmental_cleanup: 1,
     revitalization: 1,
@@ -1001,6 +1044,13 @@ function createEmptyCityStats(budgets: CityBudgets): CityStats {
     airportCount: 0,
     stadiumCount: 0,
     sportsCenterCount: 0,
+    busStationCount: 0,
+    metroStationCount: 0,
+    shoppingCount: 0,
+    shoppingLevel: 0,
+    wideAvenueTileCount: 0,
+    monthlyTransitRiders: 0,
+    transitCoveragePct: 0,
     condoCount: 0,
     midRiseCount: 0,
     level3Count: 0,
@@ -1684,6 +1734,457 @@ export function classifyPlannedRoadCell(
   };
 }
 
+/**
+ * Determine the cohesive urban neighborhood (Bairro) macro-zone for any tile coordinate.
+ * Aligns cleanly to the 6×6 arterial macro-blocks so Residential, Commercial, and Industrial
+ * neighborhoods form unified districts that fill and evolve together rather than scattering.
+ */
+export function getNeighborhoodDistrict(
+  state: Pick<CityState, 'seed' | 'roadOriginX' | 'roadOriginY' | 'gridWidth' | 'gridHeight'>,
+  x: number,
+  y: number
+): NeighborhoodDistrictType {
+  const ox =
+    typeof state.roadOriginX === 'number'
+      ? state.roadOriginX
+      : Math.floor(state.gridWidth / 2) - 1;
+  const oy =
+    typeof state.roadOriginY === 'number'
+      ? state.roadOriginY
+      : Math.floor(state.gridHeight / 2) - 1;
+
+  // Group tiles into 6x6 arterial neighborhood macro-blocks (each containing four 2x2 city blocks)
+  const bx = Math.floor((x - ox + 3) / 6);
+  const by = Math.floor((y - oy + 3) / 6);
+
+  // Downtown Central Core (macro-block 0,0) is always the main Commercial District
+  if (bx === 0 && by === 0) return 'commercial';
+
+  // Rotate quadrant layout deterministically per city seed so every map feels unique yet cohesive
+  const rot = Math.abs(state.seed || 0) % 4;
+  const rx = rot === 0 ? bx : rot === 1 ? -by : rot === 2 ? -bx : by;
+  const ry = rot === 0 ? by : rot === 1 ? bx : rot === 2 ? -by : -bx;
+
+  // Dedicated Industrial District grouped cleanly along one cohesive arterial flank & quadrant
+  if ((rx >= 1 && ry >= 1) || (rx >= 1 && ry === 0)) {
+    return 'industrial';
+  }
+
+  // Secondary Commercial sub-center along the main central avenue axis adjacent to downtown
+  if ((rx === 0 && ry === -1) || (rx === -1 && ry === 0 && Math.abs(state.seed || 0) % 2 === 0)) {
+    return 'commercial';
+  }
+
+  // Outer commercial retail corridor every 3rd arterial node
+  if (Math.abs(rx) + Math.abs(ry) >= 3 && posMod(rx * 2 + ry + rot, 5) === 0) {
+    return 'commercial';
+  }
+
+  // Majority of surrounding neighborhoods are cohesive Residential Bairros
+  return 'residential';
+}
+
+export function getNeighborhoodDistrictLabel(district: NeighborhoodDistrictType): string {
+  if (district === 'commercial') return 'Bairro Comercial';
+  if (district === 'industrial') return 'Distrito Industrial';
+  return 'Bairro Residencial';
+}
+
+export interface NeighborhoodMaturity {
+  district: NeighborhoodDistrictType;
+  totalLots: number;
+  builtLots: number;
+  emptyLots: number;
+  blockBuiltLots: number;
+  blockEmptyLots: number;
+  lv1Count: number;
+  lv2PlusCount: number;
+  lv3PlusCount: number;
+  avgLevel: number;
+  fillRatio: number;
+  peerLv2Ratio: number;
+  sameZoneDirectLv1Count: number;
+  region12TotalLots: number;
+  region12BuiltLots: number;
+  region12EmptyLots: number;
+  region12FillRatio: number;
+  region12AllLevel1: boolean;
+}
+
+/**
+ * Inspect the local neighborhood and 2×2 city block around `(x, y)` to coordinate
+ * compact infill and gradual, synchronized peer evolution (preventing giant towers next to tiny houses).
+ */
+export function getNeighborhoodMaturity(
+  state: CityState,
+  x: number,
+  y: number
+): NeighborhoodMaturity {
+  const district = getNeighborhoodDistrict(state, x, y);
+  const tile = getTile(state, x, y);
+  const ownType = tile?.type;
+
+  // Identify the 2×2 buildable block cell coordinates inside the 3-tile planned street grid
+  const ox =
+    typeof state.roadOriginX === 'number'
+      ? state.roadOriginX
+      : Math.floor(state.gridWidth / 2) - 1;
+  const oy =
+    typeof state.roadOriginY === 'number'
+      ? state.roadOriginY
+      : Math.floor(state.gridHeight / 2) - 1;
+  const blockOriginX = x - posMod(x - ox, ROAD_PLAN_CONFIG.blockStep);
+  const blockOriginY = y - posMod(y - oy, ROAD_PLAN_CONFIG.blockStep);
+
+  let blockBuiltLots = 0;
+  let blockEmptyLots = 0;
+  for (let dy = 1; dy <= 2; dy++) {
+    for (let dx = 1; dx <= 2; dx++) {
+      const bt = getTile(state, blockOriginX + dx, blockOriginY + dy);
+      if (!bt || bt.type === 'water' || isRoadLike(bt.type)) continue;
+      if (bt.type === 'grass' || bt.type === 'forest') blockEmptyLots++;
+      else if (isBuildingType(bt.type)) blockBuiltLots++;
+    }
+  }
+
+  let totalLots = 0;
+  let builtLots = 0;
+  let emptyLots = 0;
+  let lv1Count = 0;
+  let lv2PlusCount = 0;
+  let lv3PlusCount = 0;
+  let levelSum = 0;
+  let leveledCount = 0;
+  let sameZoneDirectLv1Count = 0;
+
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (Math.abs(dx) + Math.abs(dy) > 4) continue;
+      const nt = getTile(state, x + dx, y + dy);
+      if (!nt || nt.type === 'water' || isRoadLike(nt.type)) continue;
+      if (nt.type === 'grass' || nt.type === 'forest') {
+        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned) {
+          totalLots++;
+          emptyLots++;
+        }
+      } else if (
+        nt.type === 'residential' ||
+        nt.type === 'commercial' ||
+        nt.type === 'industrial' ||
+        nt.type === 'rural'
+      ) {
+        totalLots++;
+        builtLots++;
+        const lv = Math.max(1, nt.level || 1);
+        levelSum += lv;
+        leveledCount++;
+        if (lv <= 1) {
+          lv1Count++;
+          if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && nt.type === ownType) {
+            sameZoneDirectLv1Count++;
+          }
+        } else {
+          lv2PlusCount++;
+          if (lv >= 3) lv3PlusCount++;
+        }
+      } else if (isBuildingType(nt.type)) {
+        totalLots++;
+        builtLots++;
+      }
+    }
+  }
+
+  // 12×12 Neighborhood Maturity Check:
+  // Houses & urban lots can only begin evolving from Lv. 1 -> Lv. 2 once a 12×12 region around them
+  // has ALL buildable lots occupied at >= Level 1 (zero empty grass/forest/abandoned buildable lots).
+  const regionSize = URBAN_MATURITY_CONFIG.regionSize;
+  const halfMin = -Math.floor(regionSize / 2);
+  const halfMax = halfMin + regionSize - 1;
+  let region12TotalLots = 0;
+  let region12BuiltLots = 0;
+  let region12EmptyLots = 0;
+
+  for (let dy = halfMin; dy <= halfMax; dy++) {
+    for (let dx = halfMin; dx <= halfMax; dx++) {
+      const nt = getTile(state, x + dx, y + dy);
+      if (!nt || nt.type === 'water' || isRoadLike(nt.type)) continue;
+      if (nt.type === 'grass' || nt.type === 'forest') {
+        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned) {
+          region12TotalLots++;
+          region12EmptyLots++;
+        }
+      } else if (nt.type === 'abandoned') {
+        region12TotalLots++;
+        region12EmptyLots++;
+      } else if (isBuildingType(nt.type)) {
+        region12TotalLots++;
+        region12BuiltLots++;
+      }
+    }
+  }
+
+  const region12FillRatio =
+    region12TotalLots > 0 ? region12BuiltLots / region12TotalLots : 0;
+  const region12AllLevel1 = region12TotalLots >= 12 && region12EmptyLots === 0;
+
+  const fillRatio = totalLots > 0 ? builtLots / totalLots : 1;
+  const avgLevel = leveledCount > 0 ? levelSum / leveledCount : 1;
+  const peerLv2Ratio = leveledCount > 0 ? lv2PlusCount / leveledCount : 0;
+
+  return {
+    district,
+    totalLots,
+    builtLots,
+    emptyLots,
+    blockBuiltLots,
+    blockEmptyLots,
+    lv1Count,
+    lv2PlusCount,
+    lv3PlusCount,
+    avgLevel,
+    fillRatio,
+    peerLv2Ratio,
+    sameZoneDirectLv1Count,
+    region12TotalLots,
+    region12BuiltLots,
+    region12EmptyLots,
+    region12FillRatio,
+    region12AllLevel1,
+  };
+}
+
+/** Check whether a road tile belongs to a 2-tile-thick Grand Avenue (Avenida Larga 2×2) */
+export function isWideAvenue2x2Tile(state: CityState, x: number, y: number): boolean {
+  const tile = getTile(state, x, y);
+  if (!tile || tile.type !== 'road') return false;
+  const quads: Array<Array<[number, number]>> = [
+    [
+      [x - 1, y - 1],
+      [x, y - 1],
+      [x - 1, y],
+    ],
+    [
+      [x + 1, y - 1],
+      [x, y - 1],
+      [x + 1, y],
+    ],
+    [
+      [x - 1, y + 1],
+      [x, y + 1],
+      [x - 1, y],
+    ],
+    [
+      [x + 1, y + 1],
+      [x, y + 1],
+      [x + 1, y],
+    ],
+  ];
+  for (const q of quads) {
+    let ok = true;
+    for (const [qx, qy] of q) {
+      const nt = getTile(state, qx, qy);
+      if (!nt || !isRoadLike(nt.type)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * Check whether a building footprint (`ax, ay, width, height`) borders a true
+ * 2-tile-thick Wide Avenue (`2×2` thickness) along at least one of its 4 sides.
+ * Required for Level 4 Skyscrapers so they attract heavy urban movement!
+ */
+export function isAdjacentToWideAvenue2x2(
+  state: CityState,
+  ax: number,
+  ay: number,
+  width: number = 1,
+  height: number = 1
+): boolean {
+  const isSideWide = (coords: Array<[number, number]>, nx: number, ny: number): boolean => {
+    let wideCount = 0;
+    for (const [rx, ry] of coords) {
+      const r1 = getTile(state, rx, ry);
+      const r2 = getTile(state, rx + nx, ry + ny);
+      if (
+        r1 &&
+        isRoadLike(r1.type) &&
+        r2 &&
+        isRoadLike(r2.type) &&
+        (r1.type !== 'road' || isWideAvenue2x2Tile(state, rx, ry))
+      ) {
+        wideCount++;
+      }
+    }
+    return wideCount >= Math.min(2, coords.length);
+  };
+
+  // North side (y = ay - 1, expanding outward along ny = -1)
+  const north: Array<[number, number]> = [];
+  const south: Array<[number, number]> = [];
+  for (let dx = 0; dx < width; dx++) {
+    north.push([ax + dx, ay - 1]);
+    south.push([ax + dx, ay + height]);
+  }
+  if (isSideWide(north, 0, -1) || isSideWide(south, 0, 1)) return true;
+
+  // West / East sides
+  const west: Array<[number, number]> = [];
+  const east: Array<[number, number]> = [];
+  for (let dy = 0; dy < height; dy++) {
+    west.push([ax - 1, ay + dy]);
+    east.push([ax + width, ay + dy]);
+  }
+  if (isSideWide(west, -1, 0) || isSideWide(east, 1, 0)) return true;
+
+  return false;
+}
+
+/**
+ * Safely widen an existing arterial Avenue segment into a 2-tile-thick Grand Avenue (`Avenida Larga 2×2`)
+ * without destroying landmarks, transit stations, or Level 2+ buildings.
+ */
+export function widenAvenueCorridorAt(
+  state: CityState,
+  roadX: number,
+  roadY: number,
+  maxLength: number = 5
+): number {
+  const anchor = getTile(state, roadX, roadY);
+  if (!anchor || anchor.type !== 'road') return 0;
+  if (isWideAvenue2x2Tile(state, roadX, roadY)) return 0;
+
+  // Detect primary direction of the road corridor (E-W or N-S)
+  const hasE = Boolean(getTile(state, roadX + 1, roadY) && isRoadLike(getTile(state, roadX + 1, roadY)!.type));
+  const hasW = Boolean(getTile(state, roadX - 1, roadY) && isRoadLike(getTile(state, roadX - 1, roadY)!.type));
+  const hasN = Boolean(getTile(state, roadX, roadY - 1) && isRoadLike(getTile(state, roadX, roadY - 1)!.type));
+  const hasS = Boolean(getTile(state, roadX, roadY + 1) && isRoadLike(getTile(state, roadX, roadY + 1)!.type));
+
+  const orientations: Array<{ stepX: number; stepY: number; perpX: number; perpY: number }> = [];
+  if (hasE || hasW) {
+    orientations.push({ stepX: 1, stepY: 0, perpX: 0, perpY: 1 });
+    orientations.push({ stepX: 1, stepY: 0, perpX: 0, perpY: -1 });
+  }
+  if (hasN || hasS) {
+    orientations.push({ stepX: 0, stepY: 1, perpX: 1, perpY: 0 });
+    orientations.push({ stepX: 0, stepY: 1, perpX: -1, perpY: 0 });
+  }
+
+  const isSafeToWidenInto = (cand: Tile | null): boolean => {
+    if (!cand) return false;
+    if (cand.x <= 1 || cand.y <= 1 || cand.x >= state.gridWidth - 2 || cand.y >= state.gridHeight - 2) {
+      return false;
+    }
+    if (cand.type === 'road') return true;
+    if (cand.type === 'grass' || cand.type === 'forest' || cand.type === 'abandoned') return true;
+    if (
+      (cand.type === 'rural' || cand.type === 'residential' || cand.type === 'commercial' || cand.type === 'industrial') &&
+      (cand.level || 1) <= 1 &&
+      !cand.establishmentId &&
+      (cand.lotWidth ?? 1) === 1 &&
+      (cand.lotHeight ?? 1) === 1
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  for (const ori of orientations) {
+    // Collect contiguous road stretch up to maxLength centered around (roadX, roadY)
+    const baseRoadTiles: Tile[] = [anchor];
+    for (let step = 1; step < maxLength && baseRoadTiles.length < maxLength; step++) {
+      const fwd = getTile(state, roadX + ori.stepX * step, roadY + ori.stepY * step);
+      if (fwd && fwd.type === 'road') baseRoadTiles.push(fwd);
+      else break;
+    }
+    for (let step = 1; step < maxLength && baseRoadTiles.length < maxLength; step++) {
+      const bwd = getTile(state, roadX - ori.stepX * step, roadY - ori.stepY * step);
+      if (bwd && bwd.type === 'road') baseRoadTiles.unshift(bwd);
+      else break;
+    }
+    if (baseRoadTiles.length < 2) continue;
+
+    // Collect the longest contiguous sub-stretch (>= 2 tiles) whose parallel strip is safe
+    let bestStart = -1;
+    let bestLen = 0;
+    let curStart = -1;
+    let curLen = 0;
+    for (let i = 0; i < baseRoadTiles.length; i++) {
+      const bt = baseRoadTiles[i];
+      const pt = getTile(state, bt.x + ori.perpX, bt.y + ori.perpY);
+      if (isSafeToWidenInto(pt)) {
+        if (curStart === -1) curStart = i;
+        curLen++;
+        if (curLen > bestLen) {
+          bestLen = curLen;
+          bestStart = curStart;
+        }
+      } else {
+        curStart = -1;
+        curLen = 0;
+      }
+    }
+
+    if (bestLen >= 2 && bestStart >= 0) {
+      let widened = 0;
+      for (let i = bestStart; i < bestStart + bestLen; i++) {
+        const bt = baseRoadTiles[i];
+        const pt = getTile(state, bt.x + ori.perpX, bt.y + ori.perpY)!;
+        if (pt.type !== 'road') {
+          if (isBuildingType(pt.type)) {
+            for (const ct of getCompoundTiles(state, pt)) {
+              resetTileToGrass(ct, 0.7);
+            }
+          }
+          pt.type = 'road';
+          pt.level = 2;
+          pt.variant = 2;
+          pt.age = 0;
+          pt.evolveFlash = 1.25;
+          widened++;
+        }
+        if (bt.level < 3) {
+          bt.level = 2;
+          bt.variant = 2;
+        }
+      }
+      if (widened > 0) {
+        reconcileRoadHierarchy(state);
+        state.mapVersion += 1;
+        return widened;
+      }
+    }
+  }
+  return 0;
+}
+
+/** Find a nearby arterial avenue around (targetX, targetY) and widen it to 2×2 thickness */
+export function tryWidenAvenueNear(state: CityState, targetX: number, targetY: number, radius: number = 4): number {
+  const candidates: Array<{ tile: Tile; dist: number; prio: number }> = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const t = getTile(state, targetX + dx, targetY + dy);
+      if (!t || t.type !== 'road') continue;
+      if (t.level >= 4 || isExternalBorderRoadTile(state, t.x, t.y) || isTollPlazaTile(state, t.x, t.y)) continue;
+      if (isWideAvenue2x2Tile(state, t.x, t.y)) continue;
+      const plan = classifyPlannedRoadCell(state, t.x, t.y);
+      const prio = plan.onAvenueAxis ? 3 : t.level === 2 ? 2 : 1;
+      candidates.push({ tile: t, dist: Math.abs(dx) + Math.abs(dy), prio });
+    }
+  }
+  candidates.sort((a, b) => b.prio - a.prio || a.dist - b.dist);
+  for (const c of candidates.slice(0, 6)) {
+    const widened = widenAvenueCorridorAt(state, c.tile.x, c.tile.y, 4);
+    if (widened > 0) return widened;
+  }
+  return 0;
+}
+
 /** Human-readable Portuguese label for any road hierarchy level + variant */
 export function getRoadClassLabel(level: number, variant: number = 0): string {
   if (level >= 4) {
@@ -1694,7 +2195,9 @@ export function getRoadClassLabel(level: number, variant: number = 0): string {
       ? 'Rodovia de 4 Faixas (2 Idas / 2 Voltas)'
       : 'Rodovia de 2 Faixas (Estrada Expressa)';
   }
-  if (level === 2) return 'Avenida';
+  if (level === 2) {
+    return variant === 2 ? 'Avenida Larga 2×2 (Boulevard)' : 'Avenida';
+  }
   return 'Rua Local';
 }
 
@@ -1735,6 +2238,7 @@ function shouldUpgradeToFourLaneHighway(state: CityState, x: number, y: number):
  * - Arterial 6x6 crossings with roads on BOTH X and Y axes automatically become Trevos (Nv. 4)
  *   - variant 1 = Trevo Rodoviário (connects Estrada Expressa)
  *   - variant 0 = Rotatória Paisagística (connects Avenidas)
+ * - 2-tile-thick Grand Avenues (forming 2x2 road strips) are preserved as `level = 2, variant = 2` (Avenida Larga 2×2).
  * - Highway corridors (Nv. 3) dynamically operate as 2-Lane Highways (variant 0) or
  *   4-Lane Divided Highways (2 idas e 2 voltas, variant 1) when traffic/corridor demand warrants it.
  * - River bridges upgrade to wider, more developed dual-lane variants (variant 1) on arterial corridors or wide spans.
@@ -1759,12 +2263,17 @@ export function reconcileRoadHierarchy(state: CityState): void {
       (e && isRoadLike(e.type) ? 1 : 0) +
       (w && isRoadLike(w.type) ? 1 : 0);
 
-    if (plan.isArterialCross && hasNS && hasEW && deg >= 3 && !isTollPlazaTile(state, t.x, t.y)) {
+    const isWideAve = isWideAvenue2x2Tile(state, t.x, t.y);
+
+    if (plan.isArterialCross && hasNS && hasEW && deg >= 3 && !isTollPlazaTile(state, t.x, t.y) && !isWideAve) {
       t.level = 4;
       t.variant = plan.isHighwayCross ? 1 : 0;
     } else if (isExternalHighwayCorridorTile(state, t.x, t.y)) {
       t.level = 3;
       t.variant = 1;
+    } else if (isWideAve) {
+      t.level = 2;
+      t.variant = 2;
     } else if (plan.isPlanned) {
       t.level = plan.corridorLevel;
       t.variant = 0;
@@ -2115,7 +2624,7 @@ export function countRiverBridges(state: CityState): number {
   return spans;
 }
 
-/** Determine the current architectural evolution level (1..3) for city river bridges */
+/** Determine the current architectural evolution level (1..4) for city river bridges */
 function getCurrentBridgeLevel(state: CityState): number {
   let maxLv = 1;
   for (let i = 0; i < state.tiles.length; i++) {
@@ -2125,14 +2634,264 @@ function getCurrentBridgeLevel(state: CityState): number {
     }
   }
   const roadTier = state.workTiers?.emergency_roadworks ?? 1;
-  if (roadTier >= 4 || state.totalPopulation >= 560) maxLv = Math.max(maxLv, 3);
-  else if (roadTier >= 3 || state.totalPopulation >= 260) maxLv = Math.max(maxLv, 2);
-  return Math.max(1, Math.min(3, maxLv));
+  if (roadTier >= 4 && state.totalPopulation >= 12000) maxLv = Math.max(maxLv, 3);
+  else if (roadTier >= 3 && state.totalPopulation >= 3500) maxLv = Math.max(maxLv, 2);
+  return Math.max(1, Math.min(4, maxLv));
 }
 
-/** Upgrade all existing river bridge tiles uniformly to targetLevel (1..3) */
+/**
+ * Check whether a bridge tile belongs to a 2-tile-wide (double-width) bridge span
+ * (at least one orthogonal bridge neighbor perpendicular to its crossing axis).
+ */
+export function isDoubleWidthBridgeTile(state: CityState, x: number, y: number): boolean {
+  const tile = getTile(state, x, y);
+  if (!tile || tile.type !== 'bridge') return false;
+  const hasE = getTile(state, x + 1, y)?.type === 'bridge';
+  const hasW = getTile(state, x - 1, y)?.type === 'bridge';
+  const hasN = getTile(state, x, y - 1)?.type === 'bridge';
+  const hasS = getTile(state, x, y + 1)?.type === 'bridge';
+  if ((hasE || hasW) && (hasN || hasS)) return true;
+  // Single-tile river crossing widened to 2 tiles wide (1x2 or 2x1 bridge with roads on both perpendicular banks)
+  if ((hasE || hasW) && !hasN && !hasS) {
+    const roadN = getTile(state, x, y - 1)?.type === 'road';
+    const roadS = getTile(state, x, y + 1)?.type === 'road';
+    return Boolean(roadN && roadS);
+  }
+  if ((hasN || hasS) && !hasE && !hasW) {
+    const roadE = getTile(state, x + 1, y)?.type === 'road';
+    const roadW = getTile(state, x - 1, y)?.type === 'road';
+    return Boolean(roadE && roadW);
+  }
+  return false;
+}
+
+/**
+ * Safely widen a contiguous 1-tile-wide river bridge span into a 2-tile-wide monumental bridge (Nv. 4)
+ * whenever adjacent water tiles and safe riverbank landing approaches are available (never overwriting landmarks or buildings).
+ */
+function tryWidenBridgeComponentToDoubleWidth(
+  state: CityState,
+  component: Tile[]
+): number {
+  if (component.length === 0) return 0;
+
+  let minX = component[0].x;
+  let maxX = component[0].x;
+  let minY = component[0].y;
+  let maxY = component[0].y;
+  const compSet = new Set<number>();
+  const w = state.gridWidth;
+
+  for (const t of component) {
+    if (t.x < minX) minX = t.x;
+    if (t.x > maxX) maxX = t.x;
+    if (t.y < minY) minY = t.y;
+    if (t.y > maxY) maxY = t.y;
+    compSet.add(t.y * w + t.x);
+  }
+
+  const spanW = maxX - minX + 1;
+  const spanH = maxY - minY + 1;
+
+  // Determine crossing orientation: E-W bridges cross along X (widen along Y); N-S bridges cross along Y (widen along X)
+  let crossingAxis: 'ew' | 'ns';
+  if (spanW >= 2 && spanH >= 2) {
+    // Already 2+ tiles wide!
+    return 0;
+  } else if (spanW > spanH) {
+    crossingAxis = 'ew';
+  } else if (spanH > spanW) {
+    crossingAxis = 'ns';
+  } else {
+    // 1x1 bridge over a 1-tile river: inspect road neighbors to pick crossing axis
+    const hasRoadEW =
+      isRoadLike(getTile(state, minX - 1, minY)?.type ?? 'grass') ||
+      isRoadLike(getTile(state, maxX + 1, minY)?.type ?? 'grass');
+    const hasRoadNS =
+      isRoadLike(getTile(state, minX, minY - 1)?.type ?? 'grass') ||
+      isRoadLike(getTile(state, minX, maxY + 1)?.type ?? 'grass');
+    crossingAxis = hasRoadEW && !hasRoadNS ? 'ew' : 'ns';
+  }
+
+  const isSafeBankTile = (t: Tile | null): boolean =>
+    Boolean(
+      t &&
+        !isLandmarkType(t.type) &&
+        !t.establishmentId &&
+        (t.type === 'grass' || t.type === 'forest' || isRoadLike(t.type))
+    );
+
+  const offsets: ReadonlyArray<1 | -1> = [1, -1];
+
+  for (const off of offsets) {
+    const parallelWater: Tile[] = [];
+    let landA: Tile | null = null;
+    let landB: Tile | null = null;
+
+    if (crossingAxis === 'ew') {
+      const py = minY + off;
+      if (py <= 0 || py >= state.gridHeight - 1) continue;
+      // Find a seed water tile along the parallel row overlapping [minX..maxX]
+      const midX = Math.floor((minX + maxX) / 2);
+      let seedX = -1;
+      if (getTile(state, midX, py)?.type === 'water') {
+        seedX = midX;
+      } else {
+        for (let sx = minX; sx <= maxX; sx++) {
+          if (getTile(state, sx, py)?.type === 'water') {
+            seedX = sx;
+            break;
+          }
+        }
+      }
+      if (seedX < 0) continue;
+
+      let leftX = seedX;
+      while (leftX > 1 && getTile(state, leftX - 1, py)?.type === 'water') {
+        leftX--;
+      }
+      let rightX = seedX;
+      while (rightX < state.gridWidth - 2 && getTile(state, rightX + 1, py)?.type === 'water') {
+        rightX++;
+      }
+      const pLen = rightX - leftX + 1;
+      if (pLen < 1 || pLen > 8) continue;
+      if (rightX < minX || leftX > maxX) continue;
+
+      landA = getTile(state, leftX - 1, py);
+      landB = getTile(state, rightX + 1, py);
+      if (!isSafeBankTile(landA) || !isSafeBankTile(landB)) continue;
+
+      for (let x = leftX; x <= rightX; x++) {
+        const wt = getTile(state, x, py);
+        if (wt && wt.type === 'water') parallelWater.push(wt);
+      }
+    } else {
+      const px = minX + off;
+      if (px <= 0 || px >= state.gridWidth - 1) continue;
+      const midY = Math.floor((minY + maxY) / 2);
+      let seedY = -1;
+      if (getTile(state, px, midY)?.type === 'water') {
+        seedY = midY;
+      } else {
+        for (let sy = minY; sy <= maxY; sy++) {
+          if (getTile(state, px, sy)?.type === 'water') {
+            seedY = sy;
+            break;
+          }
+        }
+      }
+      if (seedY < 0) continue;
+
+      let topY = seedY;
+      while (topY > 1 && getTile(state, px, topY - 1)?.type === 'water') {
+        topY--;
+      }
+      let botY = seedY;
+      while (botY < state.gridHeight - 2 && getTile(state, px, botY + 1)?.type === 'water') {
+        botY++;
+      }
+      const pLen = botY - topY + 1;
+      if (pLen < 1 || pLen > 8) continue;
+      if (botY < minY || topY > maxY) continue;
+
+      landA = getTile(state, px, topY - 1);
+      landB = getTile(state, px, botY + 1);
+      if (!isSafeBankTile(landA) || !isSafeBankTile(landB)) continue;
+
+      for (let y = topY; y <= botY; y++) {
+        const wt = getTile(state, px, y);
+        if (wt && wt.type === 'water') parallelWater.push(wt);
+      }
+    }
+
+    if (parallelWater.length === 0) continue;
+
+    // Ensure the parallel deck does not collide with another distinct bridge span
+    let tooCloseToOtherBridge = false;
+    for (const wt of parallelWater) {
+      for (let i = 0; i < state.tiles.length; i++) {
+        const other = state.tiles[i];
+        if (other.type !== 'bridge') continue;
+        if (compSet.has(i)) continue;
+        if (Math.abs(other.x - wt.x) + Math.abs(other.y - wt.y) < 3) {
+          tooCloseToOtherBridge = true;
+          break;
+        }
+      }
+      if (tooCloseToOtherBridge) break;
+    }
+    if (tooCloseToOtherBridge) continue;
+
+    // Commit the 2nd parallel bridge deck at Nv. 4!
+    for (const wt of parallelWater) {
+      wt.type = 'bridge';
+      wt.level = 4;
+      wt.variant = 1;
+      wt.age = 0;
+      wt.evolveFlash = 1.7;
+    }
+
+    // Connect both riverbank landings to the road network cleanly
+    for (const landing of [landA, landB]) {
+      if (landing && !isRoadLike(landing.type)) {
+        landing.type = 'road';
+        const plan = classifyPlannedRoadCell(state, landing.x, landing.y);
+        landing.level = Math.max(2, plan.corridorLevel);
+        landing.age = 0;
+        landing.evolveFlash = 0.9;
+      }
+    }
+
+    return parallelWater.length;
+  }
+
+  return 0;
+}
+
+/**
+ * Collect distinct contiguous river bridge spans and widen every eligible 1-tile bridge
+ * into a 2-tile-wide Mega-Bridge (Nv. 4) whenever riverbank space permits.
+ */
+function widenEligibleBridgesToDoubleWidth(state: CityState): number {
+  const visited = new Uint8Array(state.tiles.length);
+  const w = state.gridWidth;
+  const components: Tile[][] = [];
+
+  for (let i = 0; i < state.tiles.length; i++) {
+    if (visited[i] || state.tiles[i].type !== 'bridge') continue;
+    const comp: Tile[] = [];
+    const stack = [i];
+    visited[i] = 1;
+    while (stack.length > 0) {
+      const curIdx = stack.pop()!;
+      const cur = state.tiles[curIdx];
+      comp.push(cur);
+      for (const [dx, dy] of ORTHO_DIRS) {
+        const nt = getTile(state, cur.x + dx, cur.y + dy);
+        if (!nt || nt.type !== 'bridge') continue;
+        const ni = nt.y * w + nt.x;
+        if (!visited[ni]) {
+          visited[ni] = 1;
+          stack.push(ni);
+        }
+      }
+    }
+    components.push(comp);
+  }
+
+  let widenedSpans = 0;
+  for (const comp of components) {
+    if (tryWidenBridgeComponentToDoubleWidth(state, comp) > 0) {
+      widenedSpans++;
+    }
+  }
+  return widenedSpans;
+}
+
+/** Upgrade all existing river bridge tiles uniformly to targetLevel (1..4; Nv. 4 widens eligible bridges to 2 tiles wide) */
 export function upgradeAllBridges(state: CityState, targetLevel: number): number {
-  const clamped = Math.max(1, Math.min(3, targetLevel));
+  const clamped = Math.max(1, Math.min(4, targetLevel));
   let upgraded = 0;
   for (let i = 0; i < state.tiles.length; i++) {
     const t = state.tiles[i];
@@ -2145,7 +2904,17 @@ export function upgradeAllBridges(state: CityState, targetLevel: number): number
       upgraded++;
     }
   }
+
+  let widenedSpans = 0;
+  if (clamped >= 4) {
+    widenedSpans = widenEligibleBridgesToDoubleWidth(state);
+    upgraded += widenedSpans;
+  }
+
   if (upgraded > 0) {
+    if (widenedSpans > 0) {
+      reconcileRoadHierarchy(state);
+    }
     state.mapVersion += 1;
   }
   return upgraded;
@@ -2206,17 +2975,28 @@ function tryBuildBridgeFrom(
         t.age = 0;
         t.evolveFlash = 0.7;
       }
+
+      // At ultimate Nv. 4, automatically build as a 2-tile-wide bridge if riverbank space allows
+      let widenedToDouble = false;
+      if (bridgeLv >= 4) {
+        widenedToDouble = tryWidenBridgeComponentToDoubleWidth(state, span) > 0;
+      }
+
       reconcileRoadHierarchy(state);
       state.mapVersion += 1;
       state.pendingSounds.push({ type: 'bridge' });
       const bridgeLabel =
-        bridgeLv === 3
-          ? 'Ponte Estaiada de Duas Faixas (Nv. 3)'
-          : bridgeLv === 2
-            ? 'Ponte de Arcos Metálicos Dupla (Nv. 2)'
-            : bridgeVariant === 1
-              ? 'Ponte de Pedra Dupla (Nv. 1)'
-              : 'Ponte Histórica de Pedra (Nv. 1)';
+        bridgeLv >= 4
+          ? widenedToDouble
+            ? 'Megaponte Expressa de 2 Espaços (Nv. 4)'
+            : 'Megaponte Estaiada Expressa (Nv. 4)'
+          : bridgeLv === 3
+            ? 'Ponte Estaiada de Duas Faixas (Nv. 3)'
+            : bridgeLv === 2
+              ? 'Ponte de Arcos Metálicos Dupla (Nv. 2)'
+              : bridgeVariant === 1
+                ? 'Ponte de Pedra Dupla (Nv. 1)'
+                : 'Ponte Histórica de Pedra (Nv. 1)';
       const totalNow = countRiverBridges(state);
       pushNews(
         state,
@@ -2611,7 +3391,7 @@ export function placeEstablishmentOnMap(
 
 /**
  * Construct or evolve the Airport Complex (`Complexo Aeroportuário`):
- * - Level 1: `6×12` / `12×6` (`72` tiles) featuring a wide landing strip (`pista`), apron, ATC tower and dual hangars (`galpões`).
+ * - Level 1: `4×10` (`40` tiles) featuring a 10-tile regional landing strip (`pista`), apron, ATC tower and dual hangars (`galpões`).
  * - Level 2 & Level 3: Expands to `8×16` (`128` tiles) with an international runway, parallel taxiway, dual hangars, and passenger terminal.
  * - Automatically demolishes obstructing lots and connects the airport terminal to the city's main road network!
  */
@@ -2861,10 +3641,360 @@ export function placeOrExpandAirportComplex(
 }
 
 /**
+ * Construct or evolve the Shopping Mall Complex (`Shopping Center`):
+ * - Level 1 (Shopping Pequeno): `6×6` (`36` tiles) — Galleria Comercial Regional (Marco 7.500 hab.)
+ * - Level 2 (Shopping Médio): `8×8` (`64` tiles) — Shopping Metropolitano com Cúpula e Multiplex (Marco 16.000 hab.)
+ * - Level 3 (Shopping Grande): `9×9` (`81` tiles) — Grand Megamall com Domo de Cristal e Heliponto VIP (Marco 26.000 hab.)
+ * - Automatically expands from 6×6 -> 8×8 -> 9×9 and connects to the main road network.
+ */
+export function placeOrExpandShoppingComplex(
+  state: CityState,
+  targetLevel: number = 1,
+  force: boolean = false
+): Tile | null {
+  const clampedLevel = Math.max(1, Math.min(3, targetLevel)) as 1 | 2 | 3;
+  const { w, h } = SHOPPING_FOOTPRINT_BY_LEVEL[clampedLevel];
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+
+  const existingShoppingTiles = state.tiles.filter((t) => t.type === 'shopping');
+  const existingAnchor =
+    existingShoppingTiles.find((t) => t.lotRole === 'anchor') ??
+    existingShoppingTiles[0] ??
+    null;
+
+  if (
+    existingAnchor &&
+    (existingAnchor.lotWidth ?? 1) >= w &&
+    (existingAnchor.lotHeight ?? 1) >= h &&
+    existingShoppingTiles.length >= w * h
+  ) {
+    for (const t of existingShoppingTiles) {
+      if (t.level < clampedLevel) {
+        t.level = clampedLevel;
+      }
+      t.evolveFlash = 1.65;
+    }
+    ensureTileConnectedToMainRoad(state, existingShoppingTiles);
+    state.mapVersion += 1;
+    return existingAnchor;
+  }
+
+  const mainRoadSet = getMainConnectedRoadSet(state);
+  const variant = existingAnchor
+    ? existingAnchor.variant
+    : Math.floor(nextRandom(state) * 8);
+
+  interface ShoppingCandidate {
+    x: number;
+    y: number;
+    score: number;
+    demolishedBuildings: number;
+    demolishedRoads: number;
+  }
+
+  const searchShoppingRects = (): ShoppingCandidate[] => {
+    const out: ShoppingCandidate[] = [];
+    const maxX = state.gridWidth - w - 1;
+    const maxY = state.gridHeight - h - 1;
+
+    for (let y = 1; y <= maxY; y++) {
+      for (let x = 1; x <= maxX; x++) {
+        let valid = true;
+        let overlapShopping = 0;
+        let demolishedBuildings = 0;
+        let demolishedHighLv = 0;
+        let demolishedRoads = 0;
+
+        for (let dy = 0; dy < h && valid; dy++) {
+          for (let dx = 0; dx < w; dx++) {
+            const qt = state.tiles[(y + dy) * state.gridWidth + (x + dx)];
+            if (
+              !qt ||
+              qt.type === 'water' ||
+              qt.type === 'bridge' ||
+              qt.type === 'port' ||
+              qt.type === 'airport' ||
+              qt.type === 'stadium' ||
+              isExternalBorderRoadTile(state, qt.x, qt.y) ||
+              isTollPlazaTile(state, qt.x, qt.y)
+            ) {
+              valid = false;
+              break;
+            }
+            if (qt.type === 'shopping') {
+              overlapShopping++;
+            } else if (qt.type === 'road') {
+              demolishedRoads++;
+            } else if (isBuildingType(qt.type)) {
+              demolishedBuildings++;
+              if (qt.level >= 3 || qt.establishmentId) {
+                demolishedHighLv++;
+              }
+            }
+          }
+        }
+
+        if (!valid) continue;
+
+        let touchesMainRoad = false;
+        let touchesWideAvenue = false;
+        let touchesAnyRoad = false;
+        for (let dx = 0; dx < w; dx++) {
+          const topN = getTile(state, x + dx, y - 1);
+          const botN = getTile(state, x + dx, y + h);
+          for (const nb of [topN, botN]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+              if (nb.type === 'road' && nb.level === 2 && nb.variant === 2) touchesWideAvenue = true;
+            }
+          }
+        }
+        for (let dy = 0; dy < h; dy++) {
+          const leftN = getTile(state, x - 1, y + dy);
+          const rightN = getTile(state, x + w, y + dy);
+          for (const nb of [leftN, rightN]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+              if (nb.type === 'road' && nb.level === 2 && nb.variant === 2) touchesWideAvenue = true;
+            }
+          }
+        }
+
+        let score = 0;
+        if (existingAnchor) {
+          const distFromOld = Math.hypot(x - existingAnchor.x, y - existingAnchor.y);
+          score =
+            overlapShopping * 36 -
+            distFromOld * 24 -
+            demolishedBuildings * 7 -
+            demolishedHighLv * 16 -
+            demolishedRoads * 18 +
+            (touchesWideAvenue ? 18 : 0) +
+            (touchesMainRoad ? 28 : touchesAnyRoad ? 12 : 0);
+        } else {
+          const distFromCore = Math.hypot(x + w * 0.5 - cx, y + h * 0.5 - cy);
+          const district = getNeighborhoodDistrict(state, Math.round(x + w * 0.5), Math.round(y + h * 0.5));
+          const districtBonus = district === 'commercial' ? 22 : district === 'residential' ? 10 : -8;
+          score =
+            40 -
+            Math.abs(distFromCore - 6) * 2.2 +
+            districtBonus +
+            (touchesWideAvenue ? 20 : 0) +
+            (touchesMainRoad ? 28 : touchesAnyRoad ? 12 : 0) -
+            demolishedBuildings * 9 -
+            demolishedHighLv * 22 -
+            demolishedRoads * 24;
+        }
+
+        out.push({
+          x,
+          y,
+          score,
+          demolishedBuildings,
+          demolishedRoads,
+        });
+      }
+    }
+    return out;
+  };
+
+  let candidates = searchShoppingRects();
+
+  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
+    const offers = getLandExpansions(state);
+    const chosenOffer = offers.find((o) => o.canExpand);
+    if (!chosenOffer) break;
+    state.money += chosenOffer.cost;
+    expandCityLand(state, chosenOffer.direction);
+    candidates = searchShoppingRects();
+  }
+
+  if (candidates.length === 0 && !force) {
+    return null;
+  }
+  if (candidates.length === 0) {
+    return existingAnchor;
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const topSlice = existingAnchor ? 1 : Math.max(1, Math.min(3, candidates.length));
+  const pick = candidates[Math.floor(nextRandom(state) * topSlice)];
+
+  if (existingShoppingTiles.length > 0) {
+    for (const oldTile of existingShoppingTiles) {
+      const insideNew =
+        oldTile.x >= pick.x &&
+        oldTile.x < pick.x + w &&
+        oldTile.y >= pick.y &&
+        oldTile.y < pick.y + h;
+      if (!insideNew) {
+        resetTileToGrass(oldTile, 0.9);
+      }
+    }
+  }
+
+  const compound = assignCompoundLot(
+    state,
+    pick.x,
+    pick.y,
+    w,
+    h,
+    'shopping',
+    clampedLevel,
+    variant,
+    1.75
+  );
+  state.mapVersion += 1;
+
+  ensureTileConnectedToMainRoad(state, compound);
+
+  const sizeLabel =
+    clampedLevel === 3
+      ? 'Shopping Grande 9×9 (Grand Megamall · Nv. 3)'
+      : clampedLevel === 2
+        ? 'Shopping Médio 8×8 (Metropolitano · Nv. 2)'
+        : 'Shopping Pequeno 6×6 (Galleria Regional · Nv. 1)';
+
+  state.pendingSounds.push({ type: 'milestone' });
+  pushNews(
+    state,
+    `${sizeLabel} ${existingAnchor ? 'expandido e modernizado' : 'inaugurado'} com conexão viária e praça comercial!`,
+    'milestone'
+  );
+
+  return compound[0] ?? null;
+}
+
+/**
  * Place a major landmark (`stadium` or `airport`):
  * - Airports occupy a `6×12` area at Nv. 1 and expand to `8×16` at Nv. 2/3, automatically demolishing obstructing lots.
  * - Stadiums occupy a `4×3` (`soccer_stadium`) sports arena complex, automatically demolishing obstructing lots.
  */
+/** Return all active Metro Stations ordered cleanly along the city's underground Metro Line */
+export function getMetroNetworkStations(state: CityState): Tile[] {
+  const stations: Tile[] = [];
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (t.type === 'metro_station' && t.lotRole !== 'part') {
+      stations.push(t);
+    }
+  }
+  if (stations.length <= 2) return stations;
+  // Order stations cleanly into a nearest-neighbor transit loop starting closest to city center
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+  stations.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy));
+  const ordered: Tile[] = [stations.shift()!];
+  while (stations.length > 0) {
+    const last = ordered[ordered.length - 1];
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < stations.length; i++) {
+      const d = Math.hypot(stations[i].x - last.x, stations[i].y - last.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    ordered.push(stations.splice(bestIdx, 1)[0]);
+  }
+  return ordered;
+}
+
+/**
+ * Place `count` well-spaced Bus Terminals (`bus_station`) or Metro Stations (`metro_station`)
+ * adjacent to the main road network (preferring wide avenues, arterial avenues & distinct neighborhoods),
+ * without overwriting landmarks or high-rise towers.
+ */
+export function placeTransitStationOnBestSlot(
+  state: CityState,
+  kind: 'bus_station' | 'metro_station',
+  count: number = 2,
+  stationLevel: number = 1
+): number {
+  const clampedLv = Math.max(1, Math.min(3, stationLevel || 1));
+  const minSpacing = kind === 'metro_station' ? 7 : 6;
+  let placedCount = 0;
+
+  for (let n = 0; n < count; n++) {
+    const mainRoads = getMainConnectedRoadSet(state);
+    const existingStations = state.tiles.filter((t) => t.type === kind);
+    const existingDistricts = new Set(
+      existingStations.map((st) => getNeighborhoodDistrict(state, st.x, st.y))
+    );
+
+    let best: { tile: Tile; score: number } | null = null;
+    for (let i = 0; i < state.tiles.length; i++) {
+      const t = state.tiles[i];
+      if (t.x <= 1 || t.y <= 1 || t.x >= state.gridWidth - 2 || t.y >= state.gridHeight - 2) {
+        continue;
+      }
+      if (classifyPlannedRoadCell(state, t.x, t.y).isPlanned) continue;
+      if (t.establishmentId || isLandmarkType(t.type) || isTransitStationType(t.type)) continue;
+      if ((t.lotWidth ?? 1) > 1 || (t.lotHeight ?? 1) > 1) continue;
+
+      const isReplaceable =
+        t.type === 'grass' ||
+        t.type === 'forest' ||
+        t.type === 'abandoned' ||
+        ((t.type === 'rural' || t.type === 'residential' || t.type === 'commercial' || t.type === 'industrial') &&
+          (t.level || 1) <= 2);
+      if (!isReplaceable) continue;
+
+      const neigh = getOrthoNeighbors(state, t.x, t.y);
+      const adjRoads = neigh.filter((nt) => nt.type === 'road' && mainRoads.has(nt.y * state.gridWidth + nt.x));
+      if (adjRoads.length === 0) continue;
+
+      let tooClose = false;
+      for (const st of existingStations) {
+        if (Math.hypot(st.x - t.x, st.y - t.y) < minSpacing) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
+
+      const district = getNeighborhoodDistrict(state, t.x, t.y);
+      const touchesWideAve = adjRoads.some((r) => isWideAvenue2x2Tile(state, r.x, r.y));
+      const touchesAvenue = adjRoads.some((r) => (r.level || 1) >= 2);
+      const nearbyPop = countPopulatedNear(state, t.x, t.y, 4);
+
+      let score = nearbyPop * 4 + (touchesWideAve ? 24 : touchesAvenue ? 14 : 4);
+      if (!existingDistricts.has(district)) score += 22; // Spread transit across different bairros
+      if (t.type === 'grass' || t.type === 'forest' || t.type === 'abandoned') score += 12;
+      else if ((t.level || 1) === 1) score += 5;
+      else score -= 4;
+
+      if (!best || score > best.score) {
+        best = { tile: t, score };
+      }
+    }
+
+    if (!best) break;
+    const target = best.tile;
+    assignCompoundLot(state, target.x, target.y, 1, 1, kind, clampedLv, placedCount % 3, 1.8);
+    ensureTileConnectedToMainRoad(state, [target]);
+    placedCount++;
+  }
+
+  if (placedCount > 0) {
+    // Also upgrade existing stations of this kind to reflect system modernization
+    for (let i = 0; i < state.tiles.length; i++) {
+      const t = state.tiles[i];
+      if (t.type === kind && (t.level || 1) < clampedLv) {
+        t.level = clampedLv;
+        t.evolveFlash = 1.4;
+      }
+    }
+    state.mapVersion += 1;
+  }
+
+  return placedCount;
+}
+
 export function placeLandmarkOnBestSlot(
   state: CityState,
   landmarkType: 'stadium' | 'airport',
@@ -3235,8 +4365,14 @@ export function recomputeFieldsAndStats(
   let portLevelSum = 0;
   let airports = 0;
   let airportLevelSum = 0;
+  let shoppings = 0;
+  let shoppingLevelSum = 0;
+  let shoppingMaxLv = 0;
   let stadiums = 0;
   let sportsCenters = 0;
+  let busStations = 0;
+  let metroStations = 0;
+  let wideAvenueTiles = 0;
   let condos = 0;
   let midRises = 0;
   let lv3 = 0;
@@ -3273,8 +4409,10 @@ export function recomputeFieldsAndStats(
       roads++;
       if (t.level >= 4) interchanges++;
       else if (t.level === 3) highways++;
-      else if (t.level === 2) avenues++;
-      else streets++;
+      else if (t.level === 2) {
+        avenues++;
+        if (t.variant === 2) wideAvenueTiles++;
+      } else streets++;
     } else if (t.type === 'bridge') {
       bridges++;
     } else if (t.type === 'rural') {
@@ -3326,11 +4464,28 @@ export function recomputeFieldsAndStats(
         stadiums++;
         pop += POPULATION_BY_BUILDING.stadium;
       }
+    } else if (t.type === 'bus_station') {
+      if (t.lotRole !== 'part') {
+        busStations++;
+      }
+    } else if (t.type === 'metro_station') {
+      if (t.lotRole !== 'part') {
+        metroStations++;
+      }
+    } else if (t.type === 'shopping') {
+      if (t.lotRole !== 'part') {
+        shoppings++;
+        const lv = Math.max(1, Math.min(3, t.level || 1));
+        shoppingLevelSum += lv;
+        if (lv > shoppingMaxLv) shoppingMaxLv = lv;
+        pop += POPULATION_BY_BUILDING.shopping * lv;
+        comBaseTax += 1150 * lv;
+      }
     }
   }
 
   const totalBuildings = rural + res + com + ind + park;
-  const totalLandmarks = ports + airports + stadiums;
+  const totalLandmarks = ports + airports + stadiums + shoppings;
   const prevPol = state.stats.avgPollution;
   const difficulty = sanitizeDifficulty(state.difficulty);
   state.difficulty = difficulty;
@@ -3441,15 +4596,44 @@ export function recomputeFieldsAndStats(
         polBuffer[i] += POLLUTION_EMISSION.road * 1.45 * tm.pollutionMultiplier * cleanupMult;
         valBuffer[i] += 5;
       } else if (t.type === 'road' && t.level === 2) {
-        // Avenida Arborizada: high commercial & residential prestige along the boulevard
-        polBuffer[i] += POLLUTION_EMISSION.road * 0.9 * tm.pollutionMultiplier * cleanupMult;
-        valBuffer[i] += 8;
+        // Avenida Arborizada / Avenida Larga 2×2: high commercial & residential prestige along the boulevard
+        const isWide2x2 = t.variant === 2;
+        polBuffer[i] += POLLUTION_EMISSION.road * (isWide2x2 ? 0.78 : 0.9) * tm.pollutionMultiplier * cleanupMult;
+        valBuffer[i] += isWide2x2 ? 12 : 8;
         for (const nb of getOrthoNeighbors(state, t.x, t.y)) {
-          valBuffer[nb.y * w + nb.x] += 3;
+          valBuffer[nb.y * w + nb.x] += isWide2x2 ? 5 : 3;
         }
       } else {
         polBuffer[i] += POLLUTION_EMISSION.road * tm.pollutionMultiplier * cleanupMult;
         valBuffer[i] += 4;
+      }
+    } else if (t.type === 'bus_station') {
+      const lvMult = 0.85 + (t.level || 1) * 0.25;
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const nx = t.x + dx;
+          const ny = t.y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const d = Math.hypot(dx, dy);
+          if (d > 3.2) continue;
+          const falloff = 1 - d / 3.5;
+          polBuffer[ny * w + nx] += POLLUTION_EMISSION.busStationReduction * lvMult * falloff;
+          valBuffer[ny * w + nx] += 14 * lvMult * falloff;
+        }
+      }
+    } else if (t.type === 'metro_station') {
+      const lvMult = 0.9 + (t.level || 1) * 0.25;
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const nx = t.x + dx;
+          const ny = t.y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const d = Math.hypot(dx, dy);
+          if (d > 4.2) continue;
+          const falloff = 1 - d / 4.5;
+          polBuffer[ny * w + nx] += POLLUTION_EMISSION.metroStationReduction * lvMult * falloff;
+          valBuffer[ny * w + nx] += 26 * lvMult * falloff;
+        }
       }
     } else if (t.type === 'commercial' && t.level === 3) {
       polBuffer[i] += POLLUTION_EMISSION.commercialLv3 * tm.pollutionMultiplier * cleanupMult;
@@ -3507,6 +4691,19 @@ export function recomputeFieldsAndStats(
           const ny = t.y + dy;
           if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
           valBuffer[ny * w + nx] += t.lotRole !== 'part' ? 14 : 1.5;
+        }
+      }
+    } else if (t.type === 'shopping') {
+      if (t.lotRole !== 'part') {
+        polBuffer[i] += POLLUTION_EMISSION.shopping * tm.pollutionMultiplier * cleanupMult;
+      }
+      const lvBoost = 1 + (t.level || 1) * 0.25;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = t.x + dx;
+          const ny = t.y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          valBuffer[ny * w + nx] += (t.lotRole !== 'part' ? 16 : 2.2) * lvBoost;
         }
       }
     } else if (t.type === 'forest') {
@@ -3654,7 +4851,10 @@ export function recomputeFieldsAndStats(
   const serviceScore =
     (wellRatio * 20 + secRatio * 14 + entRatio * 12 + eduRatio * 10) * serviceImpact;
   const parkBonus = Math.min(14, park * 2.0);
-  const landmarkHappyBonus = Math.min(18, stadiums * 9 + ports * 3 + airports * 4);
+  const transitHappyBonus = Math.min(10, busStations * 1.5 + metroStations * 2.8);
+  const shoppingHappyBonus = Math.min(9, shoppingLevelSum * 2.8);
+  const landmarkHappyBonus =
+    Math.min(20, stadiums * 9 + ports * 3 + airports * 4 + shoppingHappyBonus) + transitHappyBonus;
   const abandonPenalty = Math.min(28, abn * 3.5);
   const polPenalty = avgPol * 0.65;
   const cashPenalty = state.money < 0 ? 11 : 0;
@@ -3693,6 +4893,19 @@ export function recomputeFieldsAndStats(
 
   const happiness = Math.max(5, Math.min(100, Math.round(rawHappiness)));
 
+  // Public Transit (Bus & Metro) ridership & coverage metrics
+  const transitCapacity = busStations * 1400 + metroStations * 4600;
+  const transitCoveragePct =
+    pop > 0 && transitCapacity > 0
+      ? Math.min(100, Math.round((transitCapacity / Math.max(1200, pop)) * 100))
+      : 0;
+  const monthlyTransitRiders =
+    transitCapacity > 0
+      ? Math.round(
+          Math.min(transitCapacity * 1.45, pop * (0.22 + (transitCoveragePct / 100) * 0.58))
+        )
+      : 0;
+
   const eduIncomeBoost =
     0.88 + eduRatio * 0.28 * serviceImpact + Math.min(0.12, estEducationScore * 0.008);
   const happyScale = 0.72 + (happiness / 100) * 0.42;
@@ -3706,10 +4919,11 @@ export function recomputeFieldsAndStats(
       tm.taxMultiplier *
       revDiffMult
   );
+  const transitComBonus = Math.min(0.16, busStations * 0.015 + metroStations * 0.03);
   const totalComTax = Math.round(
     comBaseTax *
       (state.taxes.commercial / 10) *
-      (0.9 + entRatio * 0.22 * serviceImpact + stadiums * 0.06 + airports * 0.08) *
+      (0.9 + entRatio * 0.22 * serviceImpact + stadiums * 0.06 + airports * 0.08 + transitComBonus) *
       happyScale *
       tm.taxMultiplier *
       revDiffMult
@@ -3735,6 +4949,9 @@ export function recomputeFieldsAndStats(
     portLevelSum * 155 +
     stadiums * 280 +
     airportLevelSum * 390 +
+    shoppingLevelSum * 260 +
+    busStations * 45 +
+    metroStations * 130 +
     estTourismBonus +
     entRatio * 65 +
     (state.trait.id === 'tourist_climate' ? 95 : 0);
@@ -3781,7 +4998,7 @@ export function recomputeFieldsAndStats(
   for (let i = 0; i < state.tiles.length; i++) {
     const t = state.tiles[i];
     if (t.type === 'bridge') {
-      const lv = Math.max(1, Math.min(3, t.level || 1));
+      const lv = Math.max(1, Math.min(4, t.level || 1));
       if (lv > maxBridgeLv) maxBridgeLv = lv;
     }
   }
@@ -3815,6 +5032,13 @@ export function recomputeFieldsAndStats(
     airportCount: airports,
     stadiumCount: stadiums,
     sportsCenterCount: sportsCenters,
+    busStationCount: busStations,
+    metroStationCount: metroStations,
+    shoppingCount: shoppings,
+    shoppingLevel: shoppingMaxLv,
+    wideAvenueTileCount: wideAvenueTiles,
+    monthlyTransitRiders,
+    transitCoveragePct,
     condoCount: condos,
     midRiseCount: midRises,
     visitorTrafficPct: visitorFlowPct,
@@ -3832,7 +5056,12 @@ export function recomputeFieldsAndStats(
     totalResTax + totalComTax + totalIndTax + totalTourism + totalTrade + totalTollIncome;
   const fixedMult = diffCfg.fixedCostMultiplier * eventMods.expenseMult;
   const fixedRoadsAndBridges = Math.round(
-    (roads * FIXED_COSTS_CONFIG.perRoad + bridges * FIXED_COSTS_CONFIG.perBridge) * fixedMult
+    (roads * FIXED_COSTS_CONFIG.perRoad +
+      bridges * FIXED_COSTS_CONFIG.perBridge +
+      busStations * FIXED_COSTS_CONFIG.perBusStation +
+      metroStations * FIXED_COSTS_CONFIG.perMetroStation +
+      shoppings * FIXED_COSTS_CONFIG.perShopping) *
+      fixedMult
   );
   const debtInterest =
     state.money < 0
@@ -4129,6 +5358,20 @@ export function getCondoConversionInfo(
       projectedResidents,
       popGain,
       reason: 'Sem espaço livre de quadra 2×2 ao lado',
+    };
+  }
+  if (!isAdjacentToWideAvenue2x2(state, slot.ax, slot.ay, 2, 2)) {
+    return {
+      eligible: false,
+      canConvert: false,
+      canAfford,
+      targetLevel: 4,
+      targetLabel: 'Mega Condomínio 2×2 (Nv. 4)',
+      cost,
+      currentResidents,
+      projectedResidents,
+      popGain,
+      reason: 'Arranha-céu 2×2 exige Avenida Larga (2×2) em um dos lados',
     };
   }
   return {
@@ -4702,18 +5945,44 @@ function upgradeTopBuildings(
   preferType?: 'residential' | 'commercial'
 ): number {
   const resCap = state.condoPolicy === 'auto' ? 3 : 2;
-  const candidates = state.tiles.filter(
-    (t) =>
-      (t.type === 'residential' || t.type === 'commercial') &&
-      t.lotRole !== 'part' &&
-      !t.establishmentId &&
-      t.level < (t.type === 'residential' ? resCap : 3) &&
-      (!preferType || t.type === preferType)
-  );
+  const candidates = state.tiles
+    .filter(
+      (t) =>
+        (t.type === 'residential' || t.type === 'commercial') &&
+        t.lotRole !== 'part' &&
+        !t.establishmentId &&
+        t.level < (t.type === 'residential' ? resCap : 3) &&
+        (!preferType || t.type === preferType)
+    )
+    .map((t) => {
+      const mat = getNeighborhoodMaturity(state, t.x, t.y);
+      // Prioritize lower-level lagging peers inside dense filled neighborhoods so blocks grow together!
+      const score =
+        (3 - t.level) * 2.4 +
+        mat.fillRatio * 1.8 +
+        (t.level === 2 && mat.avgLevel >= 1.55 ? 0.6 : 0) +
+        nextRandom(state) * 0.45;
+      return { tile: t, mat, score };
+    })
+    .filter(({ tile, mat }) => {
+      // Enforce hybrid 12×12 neighborhood rule & 10k population milestone for Large Buildings (Lv. 3)
+      if (!mat.region12AllLevel1) return false;
+      if (
+        tile.level === 2 &&
+        state.totalPopulation < URBAN_MATURITY_CONFIG.largeBuildingMinPopulation
+      ) {
+        return false;
+      }
+      if (tile.level === 2 && mat.fillRatio < 0.42 && mat.builtLots < 4) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.score - a.score);
+
   let upgraded = 0;
-  for (let i = 0; i < count && candidates.length > 0; i++) {
-    const idx = Math.floor(nextRandom(state) * candidates.length);
-    const target = candidates.splice(idx, 1)[0];
+  for (let i = 0; i < count && i < candidates.length; i++) {
+    const target = candidates[i].tile;
     const cap = target.type === 'residential' ? resCap : 3;
     const nextLv = Math.min(cap, target.level + 1);
     for (const ct of getCompoundTiles(state, target)) {
@@ -4968,6 +6237,7 @@ export function executeEmergencyAction(
     const existing = state.activeBoosts.find((b) => b.actionId === actionId);
     if (existing) {
       existing.remainingMonths = Math.max(existing.remainingMonths, months);
+      existing.totalMonths = Math.max(existing.totalMonths ?? months, existing.remainingMonths);
       existing.tier = Math.max(existing.tier, tier);
       existing.label = label;
     } else {
@@ -4977,6 +6247,7 @@ export function executeEmergencyAction(
         label,
         tier,
         remainingMonths: months,
+        totalMonths: months,
       });
     }
   };
@@ -4990,6 +6261,26 @@ export function executeEmergencyAction(
     pushNews(
       state,
       `${offer.title} inaugurado! Novo Centro Esportivo Pequeno eleva o lazer e a qualidade de vida nos bairros.`,
+      'milestone'
+    );
+  } else if (actionId === 'bus_transit_project') {
+    upsertBoost(offer.title, offer.durationMonths);
+    const placed = placeTransitStationOnBestSlot(state, 'bus_station', 2, tier);
+    if (tier >= 2) {
+      tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 8);
+    }
+    pushNews(
+      state,
+      `${offer.title} inaugurado! ${placed > 0 ? `${placed} terminais de ônibus` : 'Frota modernizada'} e ônibus urbanos agora circulam pelos bairros.`,
+      'milestone'
+    );
+  } else if (actionId === 'metro_transit_project') {
+    upsertBoost(offer.title, offer.durationMonths);
+    const placed = placeTransitStationOnBestSlot(state, 'metro_station', 2, tier);
+    tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10);
+    pushNews(
+      state,
+      `${offer.title} concluído! ${placed > 0 ? `${placed} novas Estações de Metrô` : 'Malha metroviária'} conectam os bairros no subsolo.`,
       'milestone'
     );
   } else if (actionId === 'toll_plaza_project') {
@@ -5058,27 +6349,35 @@ export function executeEmergencyAction(
     upsertBoost(offer.title, offer.durationMonths);
     const roadTargets = [4, 6, 8, 10][tier - 1] ?? 8;
     const { roadsLaid } = buildImmediateRoads(state, roadTargets, true);
+    const wideAvenueAdded =
+      tier >= 2 ? tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10) : 0;
     const targetBridgeLv =
-      tier >= 3 && state.totalPopulation >= 12000
-        ? 3
-        : tier >= 2 && state.totalPopulation >= 3500
-          ? 2
-          : 1;
+      tier >= 4 && state.totalPopulation >= 22000
+        ? 4
+        : tier >= 3 && state.totalPopulation >= 12000
+          ? 3
+          : tier >= 2 && state.totalPopulation >= 3500
+            ? 2
+            : 1;
     const bridgesUpgraded =
       targetBridgeLv >= 2 ? upgradeAllBridges(state, targetBridgeLv) : 0;
     if (tier >= 3) {
       upgradeTopBuildings(state, tier === 4 ? 3 : 2);
     }
+    const wideAveMsg = wideAvenueAdded > 0 ? ' + Avenida Larga 2×2' : '';
     const bridgeMsg =
       bridgesUpgraded > 0
-        ? ` e evolui pontes do rio para Nv. ${targetBridgeLv}`
+        ? targetBridgeLv >= 4
+          ? ' e alarga pontes do rio para Megaponte de 2 Espaços (Nv. 4)'
+          : ` e evolui pontes do rio para Nv. ${targetBridgeLv}`
         : '';
     pushNews(
       state,
-      `${offer.title} (${offer.tierLabel}) abre ${roadsLaid} vias${bridgeMsg} por ${offer.durationMonths} meses!`,
+      `${offer.title} (${offer.tierLabel}) abre ${roadsLaid} vias${wideAveMsg}${bridgeMsg} por ${offer.durationMonths} meses!`,
       'good'
     );
   } else if (actionId === 'port_evolution') {
+    upsertBoost(offer.title, offer.durationMonths);
     if (tier === 1) {
       const placed = placePortOnRiverfront(state, true, 1);
       if (!placed) {
@@ -5112,7 +6411,6 @@ export function executeEmergencyAction(
       );
     } else {
       upgradeExistingLandmarks(state, 'port', 3);
-      upsertBoost(offer.title, offer.durationMonths);
       upgradeTopBuildings(state, 3, 'commercial');
       pushNews(
         state,
@@ -5121,6 +6419,7 @@ export function executeEmergencyAction(
       );
     }
   } else if (actionId === 'airport_evolution') {
+    upsertBoost(offer.title, offer.durationMonths);
     if (tier === 1) {
       const placed = placeLandmarkOnBestSlot(state, 'airport', true, 1);
       if (!placed) {
@@ -5149,7 +6448,6 @@ export function executeEmergencyAction(
       );
     } else {
       upgradeExistingLandmarks(state, 'airport', 3);
-      upsertBoost(offer.title, offer.durationMonths);
       upgradeTopBuildings(state, 4);
       pushNews(
         state,
@@ -5157,7 +6455,15 @@ export function executeEmergencyAction(
         'milestone'
       );
     }
+  } else if (actionId === 'shopping_evolution') {
+    upsertBoost(offer.title, offer.durationMonths);
+    const targetShoppingLv = Math.max(1, Math.min(3, tier));
+    placeOrExpandShoppingComplex(state, targetShoppingLv, true);
+    if (tier >= 2) {
+      upgradeTopBuildings(state, tier === 3 ? 3 : 2, 'commercial');
+    }
   } else if (actionId === 'landmark_project') {
+    upsertBoost(offer.title, offer.durationMonths);
     if (tier === 1) {
       placeLandmarkOnBestSlot(state, 'stadium', true, 1);
     } else if (tier === 2) {
@@ -5171,7 +6477,6 @@ export function executeEmergencyAction(
         'milestone'
       );
     } else {
-      upsertBoost(offer.title, offer.durationMonths);
       if (state.stats.stadiumCount < 2) {
         placeLandmarkOnBestSlot(state, 'stadium', true, 1);
       }
@@ -5608,11 +6913,17 @@ export function stepCityTick(state: CityState): void {
           else if (targetPlan.onAvenueAxis) weight = isStraight ? 2.2 : 1.5;
           else weight = isStraight ? 1.55 : 0.95;
 
+          const coreDist = Math.hypot(
+            target.x - (typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2),
+            target.y - (typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2)
+          );
+          const coreFocusMult = coreDist <= 9 ? 1.45 : coreDist > 13 ? 0.72 : 1.0;
+
           roadFrontier.push({
             road: t,
             dir,
             target,
-            weight,
+            weight: weight * coreFocusMult,
             corridorLevel: targetPlan.corridorLevel,
           });
         } else if (
@@ -5659,12 +6970,63 @@ export function stepCityTick(state: CityState): void {
     }
   }
 
+  // Pre-compute compact block infill metrics so active 2×2 city blocks fill completely before sprawling outward!
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+  const ox = Math.floor(cx);
+  const oy = Math.floor(cy);
+
+  const countBuiltInSame2x2Block = (tx: number, ty: number): number => {
+    const relX = ((((tx - ox) % 3) + 3) % 3);
+    const relY = ((((ty - oy) % 3) + 3) % 3);
+    if (relX === 0 || relY === 0) return 0;
+    const bx = tx - (relX - 1);
+    const by = ty - (relY - 1);
+    let built = 0;
+    for (let dy = 0; dy <= 1; dy++) {
+      for (let dx = 0; dx <= 1; dx++) {
+        const bt = getTile(state, bx + dx, by + dy);
+        if (bt && isBuildingType(bt.type)) built++;
+      }
+    }
+    return built;
+  };
+
+  let internalGapCount = 0;
+  const scoredBuildableSlots: Array<{
+    tile: Tile;
+    blockBuiltLots: number;
+    adjBuildings: number;
+    infillScore: number;
+  }> = [];
+
+  for (let i = 0; i < buildableEmptyTiles.length; i++) {
+    const t = buildableEmptyTiles[i];
+    const blockBuiltLots = countBuiltInSame2x2Block(t.x, t.y);
+    const adjBuildings = getOrthoNeighbors(state, t.x, t.y).filter((n) =>
+      isBuildingType(n.type)
+    ).length;
+    if (blockBuiltLots > 0 || adjBuildings >= 2) {
+      internalGapCount++;
+    }
+    const distFromCore = Math.hypot(t.x - cx, t.y - cy);
+    // Strongly prioritize closing empty gaps inside already-started 2×2 blocks and adjacent to existing buildings!
+    const infillScore =
+      blockBuiltLots * 6.5 +
+      adjBuildings * 3.4 -
+      distFromCore * 0.65 +
+      nextRandom(state) * 1.15;
+    scoredBuildableSlots.push({ tile: t, blockBuiltLots, adjBuildings, infillScore });
+  }
+  scoredBuildableSlots.sort((a, b) => b.infillScore - a.infillScore);
+
   // 1. Planned Urban Road Network Expansion (Estradas, Avenidas, Ruas, Trevos & Arterial River Bridges)
+  // Throttle outer road sprawl whenever many interior block lots are still empty grass gaps!
+  const shouldThrottleSprawl = internalGapCount >= 8 && roadBoostTier === 0;
   let roadsChanged = false;
-  const roadAttempts = Math.min(
-    4,
-    Math.max(1, Math.floor(roadFrontier.length / 12) + 1)
-  );
+  const roadAttempts = shouldThrottleSprawl
+    ? 1
+    : Math.min(4, Math.max(1, Math.floor(roadFrontier.length / 12) + 1));
   for (let a = 0; a < roadAttempts; a++) {
     if (roadFrontier.length === 0) break;
     // Weighted pick favoring arterials, ring highways, and completing Trevos cleanly
@@ -5712,12 +7074,14 @@ export function stepCityTick(state: CityState): void {
         !target.establishmentId)
     ) {
       if (wouldCreateRoadBlob(state, target.x, target.y)) continue;
+      const sprawlBrake = shouldThrottleSprawl ? 0.28 : 1.0;
       const expandChance =
         (GROWTH_CONFIG.baseRoadExpandChance + infraCov * GROWTH_CONFIG.infraRoadBonus) *
         Math.min(2.1, weight) *
         tm.roadExpandMultiplier *
         roadBoostMult *
-        eventMods.growthMult;
+        eventMods.growthMult *
+        sprawlBrake;
 
       if (nextRandom(state) < expandChance) {
         if (isBuildingType(target.type)) {
@@ -5737,11 +7101,15 @@ export function stepCityTick(state: CityState): void {
   }
 
   // Also automatically demolish any legacy/misplaced non-arterial road tile sitting inside a 2×2 buildable block interior
-  // if it is obstructing buildings from evolving into larger multi-tile compounds
+  // (NEVER touch intentional 2×2 Wide Avenues / Boulevards!)
   for (let i = 0; i < state.tiles.length; i++) {
     const rt = state.tiles[i];
     if (rt.type !== 'road') continue;
-    if (isExternalBorderRoadTile(state, rt.x, rt.y) || isTollPlazaTile(state, rt.x, rt.y)) {
+    if (
+      isExternalBorderRoadTile(state, rt.x, rt.y) ||
+      isTollPlazaTile(state, rt.x, rt.y) ||
+      isWideAvenue2x2Tile(state, rt.x, rt.y)
+    ) {
       continue;
     }
     const plan = classifyPlannedRoadCell(state, rt.x, rt.y);
@@ -5756,13 +7124,28 @@ export function stepCityTick(state: CityState): void {
     }
   }
 
+  // Organic 2×2 Wide Avenue (Boulevard) widening once city reaches mid-sized density (>= 2.200 hab.)
+  // so downtown commercial/residential boulevards naturally prepare for future Lv. 4 Skyscrapers!
+  const desiredWideAvenueTiles =
+    state.stats.population >= 2200
+      ? Math.min(48, Math.floor((state.stats.population - 1400) / 450) * 6)
+      : 0;
+  if (
+    desiredWideAvenueTiles > (state.stats.wideAvenueTileCount || 0) &&
+    nextRandom(state) < (roadBoostTier > 0 ? 0.35 : 0.14)
+  ) {
+    if (tryWidenAvenueNear(state, Math.round(cx), Math.round(cy))) {
+      roadsChanged = true;
+    }
+  }
+
   if (roadsChanged) {
     reconcileRoadHierarchy(state);
   }
 
-  // 2. Intelligent Zoning inside Planned 2x2 City Blocks:
-  // Creates Zonas Rurais (outer greenbelt), Comerciais (Avenidas/Trevos), Industriais (Estradas),
-  // and Residenciais (Baixo, Médio, Alto Valor) with unique architectural variants and multi-tile footprints!
+  // 2. Cohesive Neighborhood Zoning & Compact Infill inside Planned 2x2 City Blocks:
+  // Groups homes into Bairros Residenciais, shops/towers into Bairros Comerciais, and factories into Distritos Industriais,
+  // while tightly filling active blocks before spreading out!
   const resTaxFactor = Math.max(0.24, 1 - (state.taxes.residential - fairTax) * 0.13);
   const comTaxFactor = Math.max(0.24, 1 - (state.taxes.commercial - (fairTax + 0.5)) * 0.12);
   const indTaxFactor = Math.max(0.24, 1 - (state.taxes.industrial - (fairTax + 1.0)) * 0.11);
@@ -5772,68 +7155,108 @@ export function stepCityTick(state: CityState): void {
     Math.min(1.3, Math.max(0.25, avgDemandFactor)) *
     eventMods.growthMult;
 
-  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
-  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
-
+  const isEarlyHorizontalTown = state.totalPopulation < 1500;
   const zoneAttempts = Math.min(
-    GROWTH_CONFIG.evaluationsPerTick,
-    buildableEmptyTiles.length
+    isEarlyHorizontalTown ? GROWTH_CONFIG.evaluationsPerTick + 2 : GROWTH_CONFIG.evaluationsPerTick,
+    scoredBuildableSlots.length
   );
+  const topPoolCap = Math.max(1, Math.min(scoredBuildableSlots.length, Math.max(8, Math.ceil(scoredBuildableSlots.length * 0.30))));
   for (let z = 0; z < zoneAttempts; z++) {
-    const idx = Math.floor(nextRandom(state) * buildableEmptyTiles.length);
-    const tile = buildableEmptyTiles[idx];
+    // Strongly favor top compact-infill slots (82% from the tightest active-block gaps, 18% organic frontier)
+    const useCompactPool = z < Math.ceil(zoneAttempts * 0.82);
+    const poolLimit = useCompactPool ? topPoolCap : scoredBuildableSlots.length;
+    const slot = scoredBuildableSlots[Math.floor(nextRandom(state) * poolLimit)];
+    const tile = slot?.tile;
     if (!tile || (tile.type !== 'grass' && tile.type !== 'forest')) continue;
 
-    if (nextRandom(state) > growthSpeed) continue;
+    // Prioritize closing interior block gaps so 12×12 Level-1 neighborhoods consolidate briskly while keeping multi-year economy balanced
+    const infillBoost = isEarlyHorizontalTown
+      ? slot.blockBuiltLots >= 2
+        ? 1.72
+        : slot.blockBuiltLots === 1 || slot.adjBuildings >= 2
+          ? 1.42
+          : 0.72
+      : slot.blockBuiltLots >= 2
+        ? 1.15
+        : slot.blockBuiltLots === 1 || slot.adjBuildings >= 2
+          ? 0.96
+          : 0.44;
+    if (nextRandom(state) > Math.min(0.88, growthSpeed * infillBoost)) continue;
 
     const adj = countAdjacentTypes(state, tile.x, tile.y);
     const adjRoadNeighbors = getOrthoNeighbors(state, tile.x, tile.y).filter(
       (n) => n.type === 'road'
     );
     const nearHighway = adjRoadNeighbors.some((n) => n.level === 3);
+    const nearWideAvenue = adjRoadNeighbors.some((n) => n.level === 2 && n.variant === 2);
     const nearAvenueOrTrevo = adjRoadNeighbors.some((n) => n.level === 2 || n.level >= 4);
     const nearLocalOnly = adjRoadNeighbors.length > 0 && !nearHighway && !nearAvenueOrTrevo;
 
+    const district = getNeighborhoodDistrict(state, tile.x, tile.y);
     const distFromCenter = Math.hypot(tile.x - cx, tile.y - cy);
     const densePopNear = countPopulatedNear(state, tile.x, tile.y, 3);
-    const isOuterFrontier = distFromCenter >= 5.2 && densePopNear <= 4;
+    const isOuterFrontier = distFromCenter >= 6.8 && densePopNear <= 3;
 
     let wRural = isOuterFrontier
-      ? (1.35 + (distFromCenter - 4.5) * 0.32 + adj.rural * 0.95 + adj.water * 0.35) *
+      ? (1.25 + (distFromCenter - 5.8) * 0.30 + adj.rural * 0.95 + adj.water * 0.35) *
         (nearHighway ? 0.55 : nearAvenueOrTrevo ? 0.4 : 1.35) *
         indTaxFactor
-      : 0.04;
+      : 0.02;
 
     let wRes =
-      (2.2 + wellCov * 1.6 + eduCov * 1.2 + entCov * 0.9 + adj.residential * 0.5 + adj.park * 0.8 + adj.water * 0.4 + adj.landmark * 0.5) *
+      (2.2 + wellCov * 1.5 + eduCov * 1.15 + entCov * 0.85 + adj.residential * 1.15 + adj.park * 0.75 + adj.water * 0.4 + adj.landmark * 0.45) *
       tm.residentialWeightMultiplier *
       resTaxFactor;
     let wCom =
-      (1.1 + entCov * 1.45 + tourCov * 1.3 + infraCov * 0.6 + adj.commercial * 0.55 + adj.residential * 0.35 + adj.landmark * 1.2) *
+      (1.15 + entCov * 1.45 + tourCov * 1.25 + infraCov * 0.65 + adj.commercial * 1.2 + adj.residential * 0.25 + adj.landmark * 1.15) *
       tm.commercialWeightMultiplier *
       festivalBoost *
       comTaxFactor;
     let wInd =
-      (0.85 + infraCov * 0.95 + adj.industrial * 0.9 - wellCov * 0.35 - eduCov * 0.25) *
+      (0.85 + infraCov * 0.95 + adj.industrial * 1.3 - wellCov * 0.32 - eduCov * 0.22) *
       tm.industrialWeightMultiplier *
       indTaxFactor;
     let wPark =
-      (0.35 + wellCov * 2.1 + tourCov * 0.7 + adj.water * 0.55 + (tile.pollution > 22 ? 0.75 : 0)) *
+      (0.28 + wellCov * 1.65 + tourCov * 0.6 + adj.water * 0.45 + (tile.pollution > 22 ? 0.75 : 0)) *
       tm.parkWeightMultiplier;
 
-    // Smart urban land-use zoning along the planned road hierarchy:
-    if (nearHighway) {
-      wInd *= 1.55; // Logistics & industry thrive next to Estradas Expressas
-      wCom *= 1.15;
-      wPark *= 1.25; // Greenbelt buffers alongside highways
-      wRes *= 0.52; // Quiet homes prefer interior streets
+    // Cohesive Neighborhood District Specialization (Bairros Residenciais, Comerciais & Distritos Industriais):
+    if (district === 'residential') {
+      wRes *= 3.8;
+      wCom *= 0.34;
+      wInd *= 0.08;
+      wPark *= 0.78;
+    } else if (district === 'commercial') {
+      wCom *= 3.5;
+      wRes *= 0.62;
+      wInd *= 0.08;
+      wPark *= 0.72;
+    } else {
+      // 'industrial' district: keeps heavy industry grouped together cleanly away from residential areas
+      wInd *= 3.7;
+      wCom *= 0.42;
+      wRes *= 0.09;
+      wPark *= 0.48;
+      wRural *= 0.45;
+    }
+
+    // Smart urban land-use tuning along the planned road hierarchy:
+    if (nearWideAvenue) {
+      wCom *= 1.85; // 2×2 Wide Boulevards strongly attract high-value commercial corridors & future skyscrapers
+      wRes *= 1.18;
+      wInd *= 0.35;
+    } else if (nearHighway) {
+      wInd *= district === 'residential' ? 1.45 : 2.35; // Logistics & industry thrive next to Estradas Expressas
+      wCom *= 1.12;
+      wPark *= 1.15;
+      wRes *= 0.52;
     } else if (nearAvenueOrTrevo) {
-      wCom *= 1.55; // Shops & commercial towers line Avenidas & Trevos
+      wCom *= 1.45; // Shops & commercial avenues line Avenidas & Trevos
       wRes *= 1.05;
-      wInd *= 0.62;
+      wInd *= 0.55;
     } else if (nearLocalOnly) {
-      wRes *= 1.3; // Cozy residential neighborhoods flourish on Ruas Locais
-      wInd *= 0.72;
+      wRes *= 1.32; // Cozy residential neighborhoods flourish on Ruas Locais
+      wInd *= 0.68;
     }
 
     if (tile.pollution > 26) {
@@ -5842,15 +7265,15 @@ export function stepCityTick(state: CityState): void {
       wInd *= 1.35;
     }
     if (adj.industrial > 0) {
-      wRes *= 0.55;
-      wRural *= 0.5;
+      wRes *= 0.42;
+      wRural *= 0.45;
     }
 
-    wRural = Math.max(0.02, wRural);
-    wRes = Math.max(0.05, wRes);
-    wCom = Math.max(0.05, wCom);
-    wInd = Math.max(0.05, wInd);
-    wPark = Math.max(0.1, wPark);
+    wRural = Math.max(0.01, wRural);
+    wRes = Math.max(0.04, wRes);
+    wCom = Math.max(0.04, wCom);
+    wInd = Math.max(0.04, wInd);
+    wPark = Math.max(0.08, wPark);
 
     const totalW = wRural + wRes + wCom + wInd + wPark;
     let roll = nextRandom(state) * totalW;
@@ -5875,7 +7298,7 @@ export function stepCityTick(state: CityState): void {
     let formedCompound = false;
     if (
       (chosen === 'park' || chosen === 'commercial' || chosen === 'residential') &&
-      nextRandom(state) < (chosen === 'park' ? 0.50 : 0.20)
+      nextRandom(state) < (chosen === 'park' ? 0.55 : 0.28)
     ) {
       const estPick = tryPickOrganicEstablishment(state, tile.x, tile.y, chosen, 1, tile);
       if (estPick) {
@@ -6039,7 +7462,7 @@ export function stepCityTick(state: CityState): void {
       continue;
     }
 
-    if (tile.type === 'park' || isLandmarkType(tile.type)) continue;
+    if (tile.type === 'park' || isLandmarkType(tile.type) || isTransitStationType(tile.type)) continue;
 
     const sectorTaxExcess =
       tile.type === 'residential'
@@ -6172,12 +7595,57 @@ export function stepCityTick(state: CityState): void {
         continue;
       }
 
-      // Level 4 (2×2 Skyscraper / Mega Condomínio) requires a mature city (>= 6.500 pop) and a valid 2×2 city block slot!
+      // Treasury deficit always erodes accumulated evolution progress immediately
+      if (state.money < 0 && (tile.evolutionProgress ?? 0) > 0) {
+        const decayed = Math.max(0, (tile.evolutionProgress ?? 0) - 4);
+        for (const ct of getCompoundTiles(state, tile)) {
+          ct.evolutionProgress = decayed;
+        }
+        continue;
+      }
+
+      // Hybrid Neighborhood Maturity + Population Milestone Gate:
+      // 1) Lv. 1 -> Lv. 2: A 12×12 region around the house/building MUST have all buildable lots filled at >= Lv. 1,
+      //    after which lots evolve gradually one-by-one.
+      // 2) Lv. 2 -> Lv. 3 (Prédios Grandes): Requires 10,000+ inhabitants (Marco de Verticalização) + consolidated 12×12 neighborhood.
+      // 3) Lv. 3 -> Lv. 4 (Arranha-Céus 2×2 / Mega Condomínios): Requires 30,000+ inhabitants (Marco Metropolitano) + mature 12×12 + Avenida Larga 2×2.
+      const maturity = getNeighborhoodMaturity(state, tile.x, tile.y);
+      if (tile.type !== 'rural') {
+        if (!maturity.region12AllLevel1) {
+          continue;
+        }
+        if (targetLevel === 3) {
+          if (state.totalPopulation < URBAN_MATURITY_CONFIG.largeBuildingMinPopulation) {
+            continue;
+          }
+          // Neighborhood must be compactly filled and peers must have started maturing to Lv. 2+
+          if (maturity.fillRatio < 0.55 || (maturity.builtLots >= 3 && maturity.peerLv2Ratio < 0.35)) {
+            continue;
+          }
+          if (maturity.sameZoneDirectLv1Count >= 2 && maturity.lv2PlusCount < 2) {
+            continue;
+          }
+        }
+      }
+
+      // Level 4 (2×2 Skyscraper / Mega Condomínio) requires Marco de 30.000 habitantes,
+      // a mature 12×12 neighborhood, a valid 2×2 city block slot, AND a 2-tile-thick Wide Avenue (2×2)!
       let skyscraper2x2Slot: { ax: number; ay: number } | null = null;
       if (targetLevel === 4) {
-        if (state.totalPopulation < CONDO_CONVERSION_CONFIG.megaCondoMinPopulation) continue;
+        if (state.totalPopulation < URBAN_MATURITY_CONFIG.skyscraperMinPopulation) continue;
+        if (
+          !maturity.region12AllLevel1 ||
+          maturity.fillRatio < 0.65 ||
+          maturity.avgLevel < 2.0 ||
+          maturity.sameZoneDirectLv1Count > 0
+        ) {
+          continue;
+        }
         skyscraper2x2Slot = findSkyscraper2x2SlotForTile(state, tile);
         if (!skyscraper2x2Slot) continue;
+        if (!isAdjacentToWideAvenue2x2(state, skyscraper2x2Slot.ax, skyscraper2x2Slot.ay, 2, 2)) {
+          continue;
+        }
       }
 
       const nearbyBuilt = adj.residential + adj.commercial + adj.park + adj.landmark;
@@ -6263,8 +7731,11 @@ export function stepCityTick(state: CityState): void {
         continue;
       }
 
-      // Accumulate sustained progression proportional to service quality, land value, parks & demand
+      // Accumulate sustained progression proportional to service quality, land value, parks & peer catch-up
       const parkBonus = adj.park > 0 || adj.landmark > 0 ? 1.22 : 1.0;
+      const peerCatchupBonus = maturity.avgLevel > tile.level + 0.35 ? 1.45 : 1.0;
+      const transitBonus =
+        state.stats.metroStationCount > 0 ? 1.15 : state.stats.busStationCount > 0 ? 1.08 : 1.0;
       const happyMult =
         state.globalHappiness >= 75 ? 1.2 : state.globalHappiness >= 60 ? 1.0 : 0.85;
       const valueMult = 0.85 + Math.min(0.4, (tile.landValue / 100) * 0.4);
@@ -6274,6 +7745,8 @@ export function stepCityTick(state: CityState): void {
         baseRate *
         (0.75 + driverCoverage * 0.55) *
         parkBonus *
+        peerCatchupBonus *
+        transitBonus *
         happyMult *
         valueMult *
         demandMult *
@@ -6299,9 +7772,10 @@ export function stepCityTick(state: CityState): void {
       const readinessRoll =
         (GROWTH_CONFIG.baseUpgradeChance * 12 + driverCoverage * 0.25) *
         (targetLevel >= 4 ? 0.58 : targetLevel === 3 ? 0.72 : 1.0) *
+        peerCatchupBonus *
         tm.upgradeMultiplier;
 
-      if (nextRandom(state) < Math.min(0.65, readinessRoll)) {
+      if (nextRandom(state) < Math.min(0.68, readinessRoll)) {
         upgradesThisTick++;
         const nextCooldown =
           targetLevel >= 3
@@ -6309,6 +7783,26 @@ export function stepCityTick(state: CityState): void {
             : targetLevel >= 2
               ? GROWTH_CONFIG.upgradeCooldownLv2To3
               : GROWTH_CONFIG.upgradeCooldownLv1To2;
+
+        // Synchronized neighborhood peer nudge: when a building evolves, nearby peer lots of the same zone
+        // gain momentum so the whole bairro grows together!
+        let nudgedPeers = 0;
+        for (let dy = -2; dy <= 2 && nudgedPeers < 3; dy++) {
+          for (let dx = -2; dx <= 2 && nudgedPeers < 3; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const peer = getTile(state, tile.x + dx, tile.y + dy);
+            if (
+              peer &&
+              peer.lotRole !== 'part' &&
+              peer.type === tile.type &&
+              peer.level === tile.level
+            ) {
+              peer.evolutionProgress = (peer.evolutionProgress ?? 0) + 32;
+              peer.upgradeCooldown = Math.max(0, (peer.upgradeCooldown ?? 0) - 4);
+              nudgedPeers++;
+            }
+          }
+        }
 
         if (targetLevel === 4 && skyscraper2x2Slot) {
           const built = assignCompoundLot(
@@ -6496,10 +7990,12 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
   const pop = state.totalPopulation;
   let maxPortLv = 0;
   let maxAirportLv = 0;
+  let maxShoppingLv = 0;
   for (let i = 0; i < state.tiles.length; i++) {
     const t = state.tiles[i];
     if (t.type === 'port' && t.level > maxPortLv) maxPortLv = t.level;
     if (t.type === 'airport' && t.level > maxAirportLv) maxAirportLv = t.level;
+    if (t.type === 'shopping' && t.level > maxShoppingLv) maxShoppingLv = t.level;
   }
 
   return CIVIC_MILESTONES.map((m) => {
@@ -6513,11 +8009,18 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
     else if (m.id === 'civic_port_lv2') built = maxPortLv >= 2;
     else if (m.id === 'civic_port_lv3') built = maxPortLv >= 3;
     else if (m.id === 'civic_sports_small') built = state.stats.sportsCenterCount >= 1;
+    else if (m.id === 'civic_bus_system') built = state.stats.busStationCount >= 1;
+    else if (m.id === 'civic_metro_system') built = state.stats.metroStationCount >= 1;
     else if (m.id === 'civic_bridge_lv2') built = state.stats.bridgeLevel >= 2;
     else if (m.id === 'civic_bridge_lv3') built = state.stats.bridgeLevel >= 3;
+    else if (m.id === 'civic_bridge_lv4') built = state.stats.bridgeLevel >= 4;
     else if (m.id === 'civic_airport_lv1') built = state.stats.airportCount >= 1;
     else if (m.id === 'civic_airport_lv2') built = maxAirportLv >= 2;
     else if (m.id === 'civic_airport_lv3') built = maxAirportLv >= 3;
+    else if (m.id === 'civic_shopping_lv1') built = state.stats.shoppingCount >= 1;
+    else if (m.id === 'civic_shopping_lv2') built = maxShoppingLv >= 2;
+    else if (m.id === 'civic_shopping_lv3') built = maxShoppingLv >= 3;
+    else if (m.id === 'civic_vertical_10k') built = unlocked;
     else if (m.id === 'civic_stadium_toll_20k') {
       built = state.stats.stadiumCount >= 1 || Boolean(state.tollPlaza?.built);
     }
@@ -7074,7 +8577,15 @@ export function deserializeCitySave(rawJson: string): CityState | null {
       year: typeof parsed.year === 'number' ? parsed.year : START_YEAR,
       news: Array.isArray(parsed.news) ? parsed.news : [],
       nextNewsId: typeof parsed.nextNewsId === 'number' ? parsed.nextNewsId : 10,
-      activeBoosts: Array.isArray(parsed.activeBoosts) ? parsed.activeBoosts : [],
+      activeBoosts: Array.isArray(parsed.activeBoosts)
+        ? parsed.activeBoosts.map((b) => ({
+            ...b,
+            totalMonths:
+              typeof b.totalMonths === 'number' && b.totalMonths >= b.remainingMonths
+                ? b.totalMonths
+                : b.remainingMonths,
+          }))
+        : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
       rngState:
         typeof parsed.rngState === 'number'
@@ -7631,7 +9142,10 @@ export function updateCarsAndParticles(
     (c) => c.role === 'visitor_in' || c.role === 'visitor_out'
   ).length;
 
-  while (cars.length < desiredCars && roadList.length >= 2) {
+  let spawnAttempts = 0;
+  const maxSpawnAttempts = desiredCars * 4 + 8;
+  while (cars.length < desiredCars && roadList.length >= 2 && spawnAttempts < maxSpawnAttempts) {
+    spawnAttempts++;
     let start: Tile;
     let next: Tile;
     let role: 'local' | 'visitor_in' | 'visitor_out' = 'local';
@@ -7640,10 +9154,27 @@ export function updateCarsAndParticles(
       roadList.length >= 4 && countKind('police') < Math.max(1, Math.floor(desiredCars * 0.1));
     const needsFire =
       roadList.length >= 4 && countKind('fire') < Math.max(1, Math.floor(desiredCars * 0.08));
+    const busStationsCount = state.stats.busStationCount ?? 0;
+    const desiredBuses =
+      busStationsCount > 0 ? Math.min(10, 2 + busStationsCount * 2) : 0;
+    const needsBus =
+      busStationsCount > 0 && roadList.length >= 4 && countKind('bus') < desiredBuses;
+
+    // Wide 2x2 Avenues and Bus Terminal corridors attract significantly higher vehicle & bus movement!
+    const wideAvenueRoads = roadList.filter(
+      (r) => r.type === 'road' && r.level === 2 && r.variant === 2
+    );
+    const pickWeightedRoad = (): Tile => {
+      if (wideAvenueRoads.length > 0 && Math.random() < (needsBus ? 0.58 : 0.42)) {
+        return wideAvenueRoads[Math.floor(Math.random() * wideAvenueRoads.length)];
+      }
+      return roadList[Math.floor(Math.random() * roadList.length)];
+    };
 
     const shouldSpawnVisitor =
       !needsPolice &&
       !needsFire &&
+      !needsBus &&
       extHw &&
       activeVisitorCars < desiredVisitorCars;
     if (shouldSpawnVisitor && extHw) {
@@ -7656,10 +9187,9 @@ export function updateCarsAndParticles(
         start = borderTile;
         next = borderNeighbors[0];
         role = 'visitor_in';
-        activeVisitorCars++;
       } else {
         // Outgoing vehicle heading toward the external highway border to leave the city
-        start = roadList[Math.floor(Math.random() * roadList.length)];
+        start = pickWeightedRoad();
         const roadNeighbors = getOrthoNeighbors(state, start.x, start.y).filter((n) =>
           isRoadLike(n.type)
         );
@@ -7671,10 +9201,9 @@ export function updateCarsAndParticles(
         );
         next = roadNeighbors[0];
         role = 'visitor_out';
-        activeVisitorCars++;
       }
     } else {
-      start = roadList[Math.floor(Math.random() * roadList.length)];
+      start = pickWeightedRoad();
       const roadNeighbors = getOrthoNeighbors(state, start.x, start.y).filter((n) =>
         isRoadLike(n.type)
       );
@@ -7683,17 +9212,23 @@ export function updateCarsAndParticles(
     }
 
     const isMultiLane =
-      (start.type === 'road' && start.level === 3 && start.variant === 1) ||
+      (start.type === 'road' &&
+        ((start.level === 3 && start.variant === 1) || (start.level === 2 && start.variant === 2))) ||
       (start.type === 'bridge' && ((start.variant || 0) === 1 || (start.level || 1) >= 2));
 
     let kind: VehicleKind;
-    if (role === 'local' && needsPolice) {
+    if (role === 'local' && needsBus) {
+      kind = 'bus';
+    } else if (role === 'local' && needsPolice) {
       kind = 'police';
     } else if (role === 'local' && needsFire) {
       kind = 'fire';
     } else {
       kind = getVehicleKind(cars.length + Math.floor(Math.random() * 14));
-      if (role !== 'local' && (kind === 'police' || kind === 'fire')) {
+      if (kind === 'bus' && busStationsCount === 0) {
+        kind = 'van';
+      }
+      if (role !== 'local' && (kind === 'police' || kind === 'fire' || kind === 'bus')) {
         kind = 'sedan';
       }
     }
@@ -7703,9 +9238,24 @@ export function updateCarsAndParticles(
         ? 2.15 + Math.random() * 0.7
         : kind === 'fire'
           ? 1.95 + Math.random() * 0.6
-          : role !== 'local'
-            ? 1.85 + Math.random() * 0.9
-            : 1.5 + Math.random() * 1.4;
+          : kind === 'bus'
+            ? 1.55 + Math.random() * 0.55
+            : role !== 'local'
+              ? 1.85 + Math.random() * 0.9
+              : 1.5 + Math.random() * 1.4;
+
+    const spawnProgress = role === 'visitor_in' ? 0.04 : Math.random();
+    const overlapsExisting = cars.some(
+      (c) =>
+        c.fromX === start.x &&
+        c.fromY === start.y &&
+        c.toX === next.x &&
+        c.toY === next.y
+    );
+    if (overlapsExisting) continue;
+    if (role === 'visitor_in' || role === 'visitor_out') {
+      activeVisitorCars++;
+    }
 
     cars.push({
       x: start.x + 0.5,
@@ -7714,14 +9264,16 @@ export function updateCarsAndParticles(
       fromY: start.y,
       toX: next.x,
       toY: next.y,
-      progress: role === 'visitor_in' ? 0.04 : Math.random(),
+      progress: spawnProgress,
       speed: baseSpeed,
       color:
         kind === 'police'
           ? '#0f172a'
           : kind === 'fire'
             ? '#dc2626'
-            : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
+            : kind === 'bus'
+              ? '#0284c7'
+              : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
       laneOffset: isMultiLane ? (cars.length % 2 === 0 ? 0.10 : 0.23) : 0.14,
       kind,
       role,
@@ -7736,16 +9288,20 @@ export function updateCarsAndParticles(
     const roadSpeedMult = isPassingToll
       ? 0.58 // Brief slowdown while crossing the Toll Plaza gates
       : activeTile?.type === 'bridge'
-        ? (activeTile.variant || 0) === 1 || (activeTile.level || 1) >= 2
-          ? 1.55
-          : 1.35
+        ? (activeTile.level || 1) >= 4
+          ? 1.85 // 2-tile-wide Mega-Bridge expressway speed
+          : (activeTile.variant || 0) === 1 || (activeTile.level || 1) >= 2
+            ? 1.55
+            : 1.35
         : activeTile?.type === 'road'
           ? activeTile.level === 3
             ? activeTile.variant === 1
               ? 2.15 // 4-Lane divided highway (2 idas / 2 voltas)
               : 1.85 // 2-Lane expressway
             : activeTile.level === 2
-              ? 1.35 // Smooth boulevard speed on Avenidas
+              ? activeTile.variant === 2
+                ? 1.55 // 2×2 Wide Avenue (Boulevard) high-capacity smooth speed
+                : 1.35 // Smooth boulevard speed on Avenidas
               : activeTile.level >= 4
                 ? 1.15 // Flowing roundabout / Trevo
                 : 1.0 // Neighborhood Rua Local
@@ -7828,7 +9384,9 @@ export function updateCarsAndParticles(
       }
 
       const isMultiLane =
-        (curTile.type === 'road' && curTile.level === 3 && curTile.variant === 1) ||
+        (curTile.type === 'road' &&
+          ((curTile.level === 3 && curTile.variant === 1) ||
+            (curTile.level === 2 && curTile.variant === 2))) ||
         (curTile.type === 'bridge' && ((curTile.variant || 0) === 1 || (curTile.level || 1) >= 2));
       car.laneOffset = isMultiLane ? (i % 2 === 0 ? 0.10 : 0.23) : 0.14;
 
@@ -7841,9 +9399,18 @@ export function updateCarsAndParticles(
       }
       const forward = neighbors.filter((n) => n.x !== prevX || n.y !== prevY);
       const pool = forward.length > 0 ? forward : neighbors;
+      const straight = pool.find(
+        (n) => n.x - car.fromX === dirX && n.y - car.fromY === dirY
+      );
+      const wideAvenueChoices = pool.filter(
+        (n) => n.type === 'road' && n.level === 2 && n.variant === 2
+      );
 
       let next: Tile;
-      if (car.role === 'visitor_out' && extHw && Math.random() < 0.78) {
+      if (curTile.type === 'bridge' && straight) {
+        // Keep cars moving smoothly straight along the bridge deck (no mid-river sideways lane-jumps on 2-tile bridges!)
+        next = straight;
+      } else if (car.role === 'visitor_out' && extHw && Math.random() < 0.78) {
         // Steer outgoing cars toward the external border highway!
         const sorted = [...pool].sort(
           (a, b) =>
@@ -7851,13 +9418,28 @@ export function updateCarsAndParticles(
             Math.hypot(b.x - extHw.borderX, b.y - extHw.borderY)
         );
         next = sorted[0];
+      } else if (
+        straight &&
+        curTile.type === 'road' &&
+        curTile.level === 2 &&
+        curTile.variant === 2 &&
+        straight.type === 'road' &&
+        straight.level === 2 &&
+        straight.variant === 2 &&
+        Math.random() < 0.84
+      ) {
+        // Keep smooth multi-lane flow along 2×2 Wide Boulevards!
+        next = straight;
+      } else if (
+        wideAvenueChoices.length > 0 &&
+        (car.kind === 'bus' ? Math.random() < 0.72 : Math.random() < 0.45)
+      ) {
+        // Buses & urban commuters gravitate toward 2×2 Wide Boulevards!
+        next = wideAvenueChoices[Math.floor(Math.random() * wideAvenueChoices.length)];
       } else {
         // Prefer continuing straight along Estradas / Avenidas for realistic urban flow
-        const straight = pool.find(
-          (n) => n.x - car.fromX === dirX && n.y - car.fromY === dirY
-        );
         next =
-          straight && (curTile.level === 2 || curTile.level === 3 || curTile.type === 'bridge') && Math.random() < 0.76
+          straight && (curTile.level === 2 || curTile.level === 3) && Math.random() < 0.76
             ? straight
             : pool[Math.floor(Math.random() * pool.length)];
       }
@@ -8152,10 +9734,11 @@ export function updateBoatsAndPlanes(
   }
 
   if (desiredPlanes > 0 && airportAnchor) {
-    const lotW = airportAnchor.lotWidth ?? 6;
-    const lotH = airportAnchor.lotHeight ?? 12;
+    const lotW = airportAnchor.lotWidth ?? 4;
+    const lotH = airportAnchor.lotHeight ?? 10;
     const isExpanded = lotW >= 8 || lotH >= 16;
     const isMedium6x12 = !isExpanded && lotW >= 6 && lotH >= 12;
+    const isCompact4x10 = !isExpanded && !isMedium6x12 && lotW === 4 && lotH >= 10;
     const runwayX =
       airportAnchor.x + (isExpanded ? 5.5 : isMedium6x12 ? 4.0 : 2.5);
     const apronX =
@@ -8165,7 +9748,9 @@ export function updateBoatsAndPlanes(
     const northHangarX = airportAnchor.x + (isExpanded ? 1.45 : isMedium6x12 ? 0.52 : 0.48);
     const northHangarY = airportAnchor.y + (isExpanded ? 4.5 : isMedium6x12 ? 3.2 : 3.2);
     const southHangarX = airportAnchor.x + (isExpanded ? 1.45 : isMedium6x12 ? 0.52 : 0.48);
-    const southHangarY = airportAnchor.y + (isExpanded ? 12.5 : isMedium6x12 ? 9.2 : 3.2);
+    const southHangarY =
+      airportAnchor.y +
+      (isExpanded ? 12.5 : isMedium6x12 ? 9.2 : isCompact4x10 ? 7.5 : 3.2);
 
     const countActiveRunwayTraffic = () =>
       planes.filter(
@@ -8178,7 +9763,7 @@ export function updateBoatsAndPlanes(
     while (planes.length < desiredPlanes) {
       const idx = planes.length;
       const accentColor = PLANE_ACCENTS[idx % PLANE_ACCENTS.length];
-      const useSouth = (isExpanded || isMedium6x12) && idx % 2 === 1;
+      const useSouth = (isExpanded || isMedium6x12 || isCompact4x10) && idx % 2 === 1;
       const hx = useSouth ? southHangarX : northHangarX;
       const hy = useSouth ? southHangarY : northHangarY;
       if (idx === 0) {
@@ -8246,7 +9831,7 @@ export function updateBoatsAndPlanes(
       plane.runwayStartY = runwayStartY;
       plane.runwayEndY = runwayEndY;
       plane.apronX = apronX;
-      const useSouth = (isExpanded || isMedium6x12) && i % 2 === 1;
+      const useSouth = (isExpanded || isMedium6x12 || isCompact4x10) && i % 2 === 1;
       const hx = plane.hangarX ?? (useSouth ? southHangarX : northHangarX);
       const hy = plane.hangarY ?? (useSouth ? southHangarY : northHangarY);
       plane.hangarX = hx;

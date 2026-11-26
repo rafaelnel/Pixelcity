@@ -138,6 +138,9 @@ export const FIXED_COSTS_CONFIG = {
   perBuilding: 7,
   perLandmark: 160,
   perTollPlaza: 200,
+  perBusStation: 42,
+  perMetroStation: 125,
+  perShopping: 145,
 };
 
 /** Toll Plaza (Pedágio Rodoviário) unlock threshold and 3 adjustable tariff tiers */
@@ -180,14 +183,27 @@ export const TOLL_TARIFF_CONFIGS: Record<TollTariffLevel, TollTariffSpec> = {
   },
 };
 
+/**
+ * Hybrid Urban Maturation & Milestone Rules:
+ * - Lv. 1 -> Lv. 2: Requires a 12×12 surrounding neighborhood region to be fully built (>= Lv. 1),
+ *   then buildings evolve gradually one-by-one.
+ * - Lv. 2 -> Lv. 3 (Prédios Grandes): Unlocks organically at 10,000 inhabitants inside consolidated 12×12 neighborhoods.
+ * - Lv. 3 -> Lv. 4 (Arranha-Céus 2×2 / Mega Condomínios): Unlocks at 30,000 inhabitants alongside a 2×2 Wide Avenue.
+ */
+export const URBAN_MATURITY_CONFIG = {
+  regionSize: 12,
+  largeBuildingMinPopulation: 10000,
+  skyscraperMinPopulation: 30000,
+};
+
 /** Residential Mid-Rise (Prédio Médio Nv.2) -> Condomínio (Nv.3 / 2×2 Nv.4) manual conversion parameters */
 export const CONDO_CONVERSION_CONFIG = {
   /** Base cost to convert a Prédio Médio (Nv.2) into a Condomínio Residencial (Nv.3) */
   toCondoLv3BaseCost: 2400,
   /** Base cost to consolidate a Condomínio (Nv.3) into a Mega Condomínio 2×2 (Nv.4) */
   toMegaCondoLv4BaseCost: 8500,
-  /** Minimum population before Mega Condomínio 2×2 (Lv.4) unlocks */
-  megaCondoMinPopulation: 6500,
+  /** Minimum population before Mega Condomínio 2×2 & Arranha-Céus (Lv.4) unlock (Marco de 30.000 hab.) */
+  megaCondoMinPopulation: URBAN_MATURITY_CONFIG.skyscraperMinPopulation,
 };
 
 export interface RandomEventSpec {
@@ -403,7 +419,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Constrói Centro Esportivo Pequeno · +felicidade, valorização e lazer nos bairros',
         baseCost: 8500,
         revScalePct: 0.25,
-        durationMonths: 0,
+        durationMonths: 2,
         minPopulation: 2000,
       },
       {
@@ -420,6 +436,84 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
     ],
   },
   {
+    id: 'bus_transit_project',
+    accentColor: '#38bdf8',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Fase I · Marco 4.000 hab.',
+        title: 'Sistema de Ônibus Urbano',
+        summary: 'Constrói 2 Terminais de Ônibus conectados às avenidas principais e libera a frota municipal circulando pelos bairros.',
+        effectHint: '2 Terminais + frota de ônibus urbanos · +felicidade, valorização e fluxo comercial',
+        baseCost: 11500,
+        revScalePct: 0.28,
+        durationMonths: 3,
+        minPopulation: 4000,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Fase II · Corredor BRT',
+        title: 'Corredores Expressos BRT',
+        summary: 'Expande a rede com +2 Terminais integrados às avenidas largas 2×2 e amplia a frota de ônibus expressos.',
+        effectHint: '+2 Terminais BRT · Mais ônibus circulando e alívio de tráfego nos bairros (4 meses)',
+        baseCost: 22000,
+        revScalePct: 0.34,
+        durationMonths: 4,
+        minPopulation: 9000,
+      },
+      {
+        tier: 3,
+        tierLabel: 'Fase III · Frota Elétrica',
+        title: 'Frota Elétrica Metropolitana',
+        summary: 'Instala +2 Terminais modernos e eletrifica os ônibus urbanos, cortando emissões e elevando a qualidade de vida.',
+        effectHint: '+2 Terminais Elétricos · Reduz poluição viária e impulsiona turismo e comércio (6 meses)',
+        baseCost: 36000,
+        revScalePct: 0.40,
+        durationMonths: 6,
+        minPopulation: 16000,
+      },
+    ],
+  },
+  {
+    id: 'metro_transit_project',
+    accentColor: '#a855f7',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Fase I · Marco 14.000 hab.',
+        title: 'Metrô Metropolitano · Linha 1',
+        summary: 'Escava a Linha 1 subterrânea com 2 Estações de Metrô ligando os bairros centrais ao núcleo comercial.',
+        effectHint: '2 Estações de Metrô conectadas · Grande valorização imobiliária, menos poluição e alta mobilidade',
+        baseCost: 34000,
+        revScalePct: 0.42,
+        durationMonths: 4,
+        minPopulation: 14000,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Fase II · Linha 2',
+        title: 'Expansão Linha 2 do Metrô',
+        summary: 'Inaugura +2 Estações subterrâneas conectando bairros residenciais e o distrito industrial à malha metroviária.',
+        effectHint: '+2 Estações de Metrô · Multiplica passageiros e acelera evolução dos bairros (5 meses)',
+        baseCost: 52000,
+        revScalePct: 0.46,
+        durationMonths: 5,
+        minPopulation: 21000,
+      },
+      {
+        tier: 3,
+        tierLabel: 'Fase III · Malha Total',
+        title: 'Malha Metroviária Integrada',
+        summary: 'Completa a rede com +2 Estações integradas aos terminais de ônibus e avenidas largas 2×2.',
+        effectHint: '+2 Estações Integradas · Cobertura máxima de transporte público e bônus de metrópole (6 meses)',
+        baseCost: 72000,
+        revScalePct: 0.50,
+        durationMonths: 6,
+        minPopulation: 28000,
+      },
+    ],
+  },
+  {
     id: 'port_evolution',
     accentColor: '#38bdf8',
     tiers: [
@@ -431,7 +525,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Desbloqueia Porto Nv. 1 · Libera navegação de barcos e receita de Comércio Exterior',
         baseCost: 7500,
         revScalePct: 0.26,
-        durationMonths: 0,
+        durationMonths: 2,
         minPopulation: 1200,
       },
       {
@@ -442,7 +536,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Evolui Porto para Nv. 2 · +85% receita portuária e nova frota de barcaças no rio',
         baseCost: 24000,
         revScalePct: 0.35,
-        durationMonths: 0,
+        durationMonths: 3,
         minPopulation: 8000,
       },
       {
@@ -453,7 +547,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Expande Porto para 2×4 Nv. 3 · Recebe Cruzeiros de até 2×3 e dobra o comércio marítimo',
         baseCost: 58000,
         revScalePct: 0.45,
-        durationMonths: 0,
+        durationMonths: 4,
         minPopulation: 18000,
       },
       {
@@ -476,12 +570,12 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       {
         tier: 1,
         tierLabel: 'Pequeno · 5k hab.',
-        title: 'Aeroporto Pequeno (Regional · Nv. 1)',
-        summary: 'Inaugura o Aeroporto Pequeno (12×6) com pista regional, galpões/hangares, torre ATC e acesso rodoviário garantido.',
+        title: 'Aeroporto Pequeno (Regional · 4×10 · Nv. 1)',
+        summary: 'Inaugura o Aeroporto Pequeno (4×10) com pista regional, galpões/hangares, torre ATC e acesso rodoviário garantido.',
         effectHint: 'Desbloqueia Aeroporto Pequeno Nv. 1 · Aviões pousam, entram nos hangares e geram receita aérea',
         baseCost: 22000,
         revScalePct: 0.34,
-        durationMonths: 0,
+        durationMonths: 3,
         minPopulation: 5000,
       },
       {
@@ -492,7 +586,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Expande Aeroporto para Médio Nv. 2 · +90% receita aérea, mais voos e impulso comercial',
         baseCost: 54000,
         revScalePct: 0.44,
-        durationMonths: 0,
+        durationMonths: 4,
         minPopulation: 15000,
       },
       {
@@ -503,7 +597,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Evolui Aeroporto para Grande Nv. 3 · Dispara turismo global e negócios de alta renda',
         baseCost: 115000,
         revScalePct: 0.55,
-        durationMonths: 0,
+        durationMonths: 5,
         minPopulation: 30000,
       },
       {
@@ -516,6 +610,51 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         revScalePct: 0.60,
         durationMonths: 6,
         minPopulation: 42000,
+      },
+    ],
+  },
+  {
+    id: 'shopping_evolution',
+    accentColor: '#f472b6',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Pequeno 6×6 · 7,5k hab.',
+        title: 'Shopping Pequeno (Galleria 6×6 · Nv. 1)',
+        summary:
+          'Constrói o Shopping Center Regional Pequeno (6×6) com claraboia central de vidro, praça de alimentação, lojas âncora e estacionamento arborizado.',
+        effectHint:
+          'Constrói Shopping Pequeno 6×6 · +comércio, +lazer, +turismo e valorização nos bairros (3 meses)',
+        baseCost: 26000,
+        revScalePct: 0.35,
+        durationMonths: 3,
+        minPopulation: 7500,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Médio 8×8 · 16k hab.',
+        title: 'Shopping Médio (Metropolitano 8×8 · Nv. 2)',
+        summary:
+          'Expande para o Shopping Metropolitano Médio (8×8) com cúpula de vidro em cruz, cinemas multiplex, boulevard iluminado e terraço panorâmico.',
+        effectHint:
+          'Expande para Shopping Médio 8×8 · +95% receita comercial do shopping, +turismo e +felicidade (4 meses)',
+        baseCost: 58000,
+        revScalePct: 0.44,
+        durationMonths: 4,
+        minPopulation: 16000,
+      },
+      {
+        tier: 3,
+        tierLabel: 'Grande 9×9 · 26k hab.',
+        title: 'Shopping Grande (Grand Megamall 9×9 · Nv. 3)',
+        summary:
+          'Consagra o Shopping Grande (9×9) com domo geodésico de cristal, passarelas suspensas, jardins no terraço, heliponto VIP e fontes luminosas.',
+        effectHint:
+          'Evolui para Shopping Grande 9×9 · Atrai fluxo regional máximo, +turismo global e alta renda (5 meses)',
+        baseCost: 108000,
+        revScalePct: 0.52,
+        durationMonths: 5,
+        minPopulation: 26000,
       },
     ],
   },
@@ -548,7 +687,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Constrói Estádio 4×3 · +felicidade, turismo e prestígio metropolitano',
         baseCost: 72000,
         revScalePct: 0.45,
-        durationMonths: 0,
+        durationMonths: 3,
         minPopulation: 20000,
       },
       {
@@ -559,7 +698,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         effectHint: 'Constrói Parque de Diversões 3×3 · Grande salto em turismo e felicidade',
         baseCost: 92000,
         revScalePct: 0.48,
-        durationMonths: 0,
+        durationMonths: 4,
         minPopulation: 25000,
       },
       {
@@ -751,10 +890,10 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       },
       {
         tier: 4,
-        tierLabel: 'Fase IV · Hub Viário',
-        title: 'Corredor Logístico & Pontes Iluminadas',
-        summary: 'Infraestrutura multimodal conectando avenidas expressas, pontes estaiadas, porto e aeroporto.',
-        effectHint: 'Pontes no nível máximo + 10 ruas + evolui 3 prédios · Logística máxima (6 meses)',
+        tierLabel: 'Fase IV · Ponte 2× Nv.4',
+        title: 'Megaponte Expressa de 2 Espaços (Nv. 4)',
+        summary: 'Última evolução de pontes: alarga travessias do rio para 2 espaços de largura (pista dupla monumental) sempre que houver margem livre e abre corredores expressos.',
+        effectHint: 'Alarga pontes para 2 espaços de largura (Nv. 4) + 10 ruas + evolui 3 prédios · Logística máxima (6 meses)',
         baseCost: 42000,
         revScalePct: 0.46,
         durationMonths: 6,
@@ -776,6 +915,7 @@ export const POPULATION_BY_BUILDING = {
   port: 35,
   airport: 45,
   stadium: 60,
+  shopping: 50,
 };
 
 /** Monthly taxable base per building tile (at 10% tax rate — reduced to prevent runaway millions) */
@@ -794,8 +934,11 @@ export const POLLUTION_EMISSION = {
   commercialLv3: 6,
   airport: 10,
   port: 8,
+  shopping: 4,
   parkReduction: -24,
   forestReduction: -10,
+  busStationReduction: -8,
+  metroStationReduction: -18,
 };
 
 /** Organic growth & breakthrough tuning parameters (calibrated for slower, long-term urban maturation) */
@@ -988,13 +1131,31 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     actionId: 'emergency_roadworks',
   },
   {
+    id: 'civic_bus_system',
+    populationTarget: 4000,
+    kind: 'bus',
+    title: 'Sistema de Ônibus Urbano Liberado',
+    subtitle: 'Aos 4.000 habitantes, desbloqueia Terminais e a Frota de Ônibus Urbano para construção em Obras!',
+    rewardCash: 3000,
+    actionId: 'bus_transit_project',
+  },
+  {
     id: 'civic_airport_lv1',
     populationTarget: 5000,
     kind: 'airport',
-    title: 'Aeroporto Pequeno Liberado',
-    subtitle: 'Aos 5.000 habitantes, desbloqueia o Aeroporto Regional Pequeno (Nv. 1) para construção em Obras.',
+    title: 'Aeroporto Pequeno (4×10) Liberado',
+    subtitle: 'Aos 5.000 habitantes, desbloqueia o Aeroporto Regional Pequeno (4×10 · Nv. 1) para construção em Obras.',
     rewardCash: 3500,
     actionId: 'airport_evolution',
+  },
+  {
+    id: 'civic_shopping_lv1',
+    populationTarget: 7500,
+    kind: 'shopping',
+    title: 'Shopping Pequeno (6×6) Liberado',
+    subtitle: 'Aos 7.500 habitantes, desbloqueia o Shopping Center Pequeno (6×6 · Nv. 1) para construção em Obras!',
+    rewardCash: 4200,
+    actionId: 'shopping_evolution',
   },
   {
     id: 'civic_port_lv2',
@@ -1006,6 +1167,14 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     actionId: 'port_evolution',
   },
   {
+    id: 'civic_vertical_10k',
+    populationTarget: URBAN_MATURITY_CONFIG.largeBuildingMinPopulation,
+    kind: 'megapolis',
+    title: 'Verticalização · Prédios Grandes (Nv. 3)',
+    subtitle: 'Aos 10.000 habitantes, libera a evolução orgânica de Prédios Grandes (Nv. 3) em bairros 12×12 já consolidados!',
+    rewardCash: 5000,
+  },
+  {
     id: 'civic_bridge_lv3',
     populationTarget: 12000,
     kind: 'bridge',
@@ -1015,6 +1184,15 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     actionId: 'emergency_roadworks',
   },
   {
+    id: 'civic_metro_system',
+    populationTarget: 14000,
+    kind: 'metro',
+    title: 'Sistema de Metrô Metropolitano Liberado',
+    subtitle: 'Aos 14.000 habitantes, desbloqueia a Linha 1 do Metrô Subterrâneo e suas Estações em Obras!',
+    rewardCash: 6500,
+    actionId: 'metro_transit_project',
+  },
+  {
     id: 'civic_airport_lv2',
     populationTarget: 15000,
     kind: 'airport',
@@ -1022,6 +1200,15 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     subtitle: 'Aos 15.000 habitantes, libera a ampliação para o Aeroporto Nacional Médio (Nv. 2) em Obras.',
     rewardCash: 7000,
     actionId: 'airport_evolution',
+  },
+  {
+    id: 'civic_shopping_lv2',
+    populationTarget: 16000,
+    kind: 'shopping',
+    title: 'Shopping Médio (8×8) Liberado',
+    subtitle: 'Aos 16.000 habitantes, desbloqueia o Shopping Metropolitano Médio (8×8 · Nv. 2) em Obras!',
+    rewardCash: 7800,
+    actionId: 'shopping_evolution',
   },
   {
     id: 'civic_port_lv3',
@@ -1042,11 +1229,29 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     actionId: 'landmark_project',
   },
   {
+    id: 'civic_bridge_lv4',
+    populationTarget: 22000,
+    kind: 'bridge',
+    title: 'Megaponte de 2 Espaços (Nv. 4) Liberada',
+    subtitle: 'Aos 22.000 habitantes, libera a última evolução de pontes: travessias duplas com 2 espaços de largura em Obras!',
+    rewardCash: 11500,
+    actionId: 'emergency_roadworks',
+  },
+  {
+    id: 'civic_shopping_lv3',
+    populationTarget: 26000,
+    kind: 'shopping',
+    title: 'Shopping Grande (9×9) Liberado',
+    subtitle: 'Aos 26.000 habitantes, libera o Grand Shopping Megamall (9×9 · Nv. 3) para construção em Obras!',
+    rewardCash: 13500,
+    actionId: 'shopping_evolution',
+  },
+  {
     id: 'civic_airport_lv3',
-    populationTarget: 30000,
+    populationTarget: URBAN_MATURITY_CONFIG.skyscraperMinPopulation,
     kind: 'megapolis',
-    title: 'Aeroporto Grande Internacional Liberado',
-    subtitle: 'Aos 30.000 habitantes, consagra a metrópole e libera o Aeroporto Grande Nv. 3 em Obras!',
+    title: 'Metrópole 30k · Arranha-Céus & Aeroporto Grande',
+    subtitle: 'Aos 30.000 habitantes, libera Arranha-Céus 2×2 (Nv. 4) em Avenidas Largas e o Aeroporto Grande Nv. 3 em Obras!',
     rewardCash: 15000,
     actionId: 'airport_evolution',
   },
@@ -1069,14 +1274,26 @@ export const MONTH_NAMES = [
 
 /**
  * Evolving Airport Complex Dimensions:
- * - Level 1 (Inicial): 6×12 / 12×6 (72 tiles) — Pista Larga de 12 blocos, Pátio, Torre ATC & Galpões
+ * - Level 1 (Primeiro Aeroporto): 4×10 (40 tiles) — Pista Regional de 10 blocos, Pátio, Torre ATC & Galpões
  * - Level 2 (Evoluído): 8×16 (128 tiles) — Pista Expandida, Galpões Duplos, Terminal de Vidro & Radar ATC
  * - Level 3 (Internacional): 8×16 (128 tiles) — Megahub Internacional com Fingers & Pista Iluminada
  */
 export const AIRPORT_FOOTPRINT_BY_LEVEL: Record<1 | 2 | 3, { w: number; h: number }> = {
-  1: { w: 6, h: 12 },
+  1: { w: 4, h: 10 },
   2: { w: 8, h: 16 },
   3: { w: 8, h: 16 },
+};
+
+/**
+ * Evolving Shopping Mall Complex Dimensions (conquistados com marcos de população):
+ * - Level 1 (Shopping Pequeno): 6×6 (36 tiles) — Galleria Comercial com claraboia, lojas âncora e estacionamento (Marco 7.500 hab.)
+ * - Level 2 (Shopping Médio): 8×8 (64 tiles) — Shopping Metropolitano com cúpula em cruz, cinemas e boulevard (Marco 16.000 hab.)
+ * - Level 3 (Shopping Grande): 9×9 (81 tiles) — Grand Megamall com domo geodésico de cristal, sky-garden e heliponto VIP (Marco 26.000 hab.)
+ */
+export const SHOPPING_FOOTPRINT_BY_LEVEL: Record<1 | 2 | 3, { w: number; h: number }> = {
+  1: { w: 6, h: 6 },
+  2: { w: 8, h: 8 },
+  3: { w: 9, h: 9 },
 };
 
 export interface EstablishmentSpec {

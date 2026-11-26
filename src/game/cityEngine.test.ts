@@ -5,17 +5,22 @@ import {
   closeFinancialMonth,
   computeCityNeeds,
   computeFairTaxRate,
+  countRiverBridges,
   createNewCity,
   createParticlePool,
   deleteSavedCityFromStorage,
+  demolishCityTile,
   deserializeCitySave,
   executeEmergencyAction,
   expandCityLand,
   getCruisePortNavigationInfo,
   getEmergencyOffers,
   getMainConnectedRoadSet,
+  getTile,
   getTrafficSignalState,
   isCruiseNavigableWater,
+  isDoubleWidthBridgeTile,
+  isNavigableWater,
   isTrafficLightIntersection,
   loadSavedCitiesFromStorage,
   placePortOnRiverfront,
@@ -274,7 +279,7 @@ test('population-based Civic Milestones unlock Sports Center (2k), Airports (5k/
   assert.equal(city.stats.airportCount, 0);
   assert.equal(city.stats.stadiumCount, 0);
   const initialStatuses = getCivicMilestoneStatuses(city);
-  assert.equal(initialStatuses.length, 10);
+  assert.equal(initialStatuses.length, 17);
   assert.ok(initialStatuses.every((m) => !m.unlocked));
 
   // Helper to raise population cleanly to a target threshold and run milestone check
@@ -727,10 +732,10 @@ test('intelligent zoning creates Rural, Commercial, Industrial & Baixo/Médio/Al
   );
   assert.ok(usedVariants.size >= 5, `Expected diverse building variants across city, got ${usedVariants.size}`);
 
-  // Ensure Airport is placed (either automatically by the 1,600-pop civic milestone or explicitly) and verify it occupies a 6×12 (72-tile) block at Level 1 and expands to 8×16 (128-tile) when evolved, automatically demolishing obstructing structures
+  // Ensure Airport is placed and verify it occupies a 4×10 (40-tile) block at Level 1 and expands to 8×16 (128-tile) when evolved, automatically demolishing obstructing structures
   if (city.stats.airportCount === 0) {
     const placedAirport = placeLandmarkOnBestSlot(city, 'airport', true, 1);
-    assert.ok(placedAirport, 'Expected 6x12 airport placement with automatic demolition to succeed');
+    assert.ok(placedAirport, 'Expected 4x10 airport placement with automatic demolition to succeed');
     recomputeFieldsAndStats(city);
   }
 
@@ -740,14 +745,14 @@ test('intelligent zoning creates Rural, Commercial, Industrial & Baixo/Médio/Al
   if (anchor.level === 1) {
     assert.equal(
       airportTiles.length,
-      6 * 12,
-      `Expected Level 1 Airport to occupy a 6x12 (72-tile) block, got ${airportTiles.length}`
+      4 * 10,
+      `Expected Level 1 Airport to occupy a 4x10 (40-tile) block, got ${airportTiles.length}`
     );
-    assert.equal(anchor.lotWidth, 6);
-    assert.equal(anchor.lotHeight, 12);
+    assert.equal(anchor.lotWidth, 4);
+    assert.equal(anchor.lotHeight, 10);
     assert.ok(
-      getZoneDisplayLabel(anchor).includes('12×6') || getZoneDisplayLabel(anchor).includes('6×12'),
-      `Expected Level 1 airport label to indicate 12×6/6×12 footprint, got ${getZoneDisplayLabel(anchor)}`
+      getZoneDisplayLabel(anchor).includes('4×10'),
+      `Expected Level 1 airport label to indicate 4×10 footprint, got ${getZoneDisplayLabel(anchor)}`
     );
   }
 
@@ -1091,8 +1096,21 @@ test('gradual city progression and sustained-conditions individual evolution wit
     'No residential/commercial building should upgrade before meeting sustained age + cooldown + progress thresholds'
   );
 
-  // 2. Unfavorable conditions (negative treasury or high local pollution) erode/block evolutionProgress
+  // 2.5 Fill the 12×12 region around `tracked` with Level 1 houses (required before Lv.1 -> Lv.2 evolution begins!)
   const tracked = startResTiles[0];
+  for (let dy = -6; dy <= 5; dy++) {
+    for (let dx = -6; dx <= 5; dx++) {
+      const nt = getTile(city, tracked.x + dx, tracked.y + dy);
+      if (nt && (nt.type === 'grass' || nt.type === 'forest' || nt.type === 'abandoned')) {
+        nt.type = 'residential';
+        nt.level = 1;
+        nt.age = 10;
+      }
+    }
+  }
+  recomputeFieldsAndStats(city);
+
+  // 2. Unfavorable conditions (negative treasury or high local pollution) erode/block evolutionProgress
   tracked.age = GROWTH_CONFIG.minAgeForUpgrade + 10;
   tracked.upgradeCooldown = 0;
   tracked.evolutionProgress = 45;
@@ -1108,7 +1126,7 @@ test('gradual city progression and sustained-conditions individual evolution wit
   // 3. Sustained favorable conditions accumulate evolutionProgress smoothly and graduate to Lv2 -> then enforce Lv2->Lv3 cooldown & age!
   let sawLv2 = false;
   let lv2CooldownAtUpgrade = 0;
-  for (let i = 0; i < 65; i++) {
+  for (let i = 0; i < 75; i++) {
     stepCityTick(city);
     if (!sawLv2 && tracked.level === 2) {
       sawLv2 = true;
@@ -1116,7 +1134,7 @@ test('gradual city progression and sustained-conditions individual evolution wit
       break;
     }
   }
-  assert.ok(sawLv2, 'Expected tracked residential lot to reach Level 2 after sustained favorable conditions');
+  assert.ok(sawLv2, 'Expected tracked residential lot to reach Level 2 after 12×12 neighborhood fill + sustained favorable conditions');
   assert.ok(
     lv2CooldownAtUpgrade >= GROWTH_CONFIG.upgradeCooldownLv2To3 - 1,
     `Expected Lv2->Lv3 cooldown >= ${GROWTH_CONFIG.upgradeCooldownLv2To3 - 1}, got ${lv2CooldownAtUpgrade}`
@@ -1146,9 +1164,18 @@ test('gradual city progression and sustained-conditions individual evolution wit
   assert.equal(reloadedTracked.evolutionProgress, 72);
   assert.equal(reloadedTracked.upgradeCooldown, tracked.upgradeCooldown);
 
-  // In default 'manual' condoPolicy, residential buildings pause at Prédio Médio (Lv. 2); switching to 'auto' allows sustained Lv. 3 evolution!
+  // In default 'manual' condoPolicy, residential buildings pause at Prédio Médio (Lv. 2);
+  // switching to 'auto' + reaching the 10k Verticalização milestone allows sustained Lv. 3 evolution!
   const { setCondoPolicy } = await import('./cityEngine');
   setCondoPolicy(city, 'auto');
+  for (const t of city.tiles) {
+    if (city.totalPopulation >= 10_500) break;
+    if (t.type === 'grass' || t.type === 'forest') {
+      t.type = 'residential';
+      t.level = 2;
+      recomputeFieldsAndStats(city);
+    }
+  }
   for (let i = 0; i < 130; i++) {
     stepCityTick(city);
   }
@@ -1159,7 +1186,7 @@ test('gradual city progression and sustained-conditions individual evolution wit
   );
   assert.ok(
     lv3Exists,
-    'Expected sustained healthy conditions over extended timeline (with auto condo policy) to eventually produce Level 3 evolutions'
+    'Expected sustained healthy conditions over extended timeline (with auto condo policy & 10k pop) to eventually produce Level 3 evolutions'
   );
 });
 
@@ -1353,14 +1380,14 @@ test('airplanes enter and emerge from airport hangars, helicopters land/take off
     `Expected Lv.3 Cruise Port label, got: ${getZoneDisplayLabel(portAnchor)}`
   );
 
-  // 2. Place 6×12 (12×6) Airport & verify landing planes enter hangars (`taxi_to_hangar` -> `in_hangar` -> `taxi_from_hangar`)
+  // 2. Place 4×10 Airport & verify landing planes enter hangars (`taxi_to_hangar` -> `in_hangar` -> `taxi_from_hangar`)
   const airportPlaced = placeLandmarkOnBestSlot(city, 'airport', true, 1);
-  assert.ok(airportPlaced, 'Expected 6×12 Airport placement to succeed');
+  assert.ok(airportPlaced, 'Expected 4×10 Airport placement to succeed');
   recomputeFieldsAndStats(city);
   assert.equal(
     city.tiles.filter((t) => t.type === 'airport').length,
-    6 * 12,
-    'Expected Level 1 Airport to occupy 72 tiles (6x12)'
+    4 * 10,
+    'Expected Level 1 Airport to occupy 40 tiles (4x10)'
   );
 
   // 3. Provision a 2×2 Level 4 Skyscraper with a Rooftop Helipad
@@ -2192,16 +2219,22 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.equal(city.stats.airportCount, 0, 'Airport must NOT auto-build when milestone unlocks');
   assert.equal(city.stats.stadiumCount, 0, 'Stadium must NOT auto-build at 20k+ without player order');
   assert.equal(city.stats.sportsCenterCount, 0, 'Sports Center must NOT auto-build without player order');
+  assert.equal(city.stats.busStationCount, 0, 'Bus Terminals must NOT auto-build without player order');
+  assert.equal(city.stats.metroStationCount, 0, 'Metro Stations must NOT auto-build without player order');
   assert.equal(city.tollPlaza.built, false, 'Toll Plaza must NOT auto-build without player order');
   assert.equal(city.stats.bridgeLevel, 1, 'River bridges must NOT auto-upgrade without player order');
 
-  // All 10 civic milestones should report unlocked=true, built=false, and carry their Obras actionId
+  // All 17 civic milestones should report unlocked=true; all Obras-gated projects remain built=false until player builds them
   const statusesBefore = getCivicMilestoneStatuses(city);
-  assert.equal(statusesBefore.length, 10);
+  assert.equal(statusesBefore.length, 17);
   for (const m of statusesBefore) {
     assert.equal(m.unlocked, true, `Expected milestone ${m.id} to be unlocked at 30k+ pop`);
-    assert.equal(m.built, false, `Expected milestone ${m.id} to remain built=false until player builds it`);
-    assert.ok(m.actionId, `Expected milestone ${m.id} to reference an Obras actionId`);
+    if (m.id === 'civic_vertical_10k') {
+      assert.equal(m.built, true, 'Organic 10k verticalization milestone should activate once unlocked');
+    } else {
+      assert.equal(m.built, false, `Expected milestone ${m.id} to remain built=false until player builds it`);
+      assert.ok(m.actionId, `Expected milestone ${m.id} to reference an Obras actionId`);
+    }
   }
 
   // With insufficient money, player cannot build any unlocked milestone project
@@ -2209,6 +2242,8 @@ test('civic milestones unlock projects without auto-building; construction & upg
   for (const actionId of [
     'port_evolution',
     'sports_center_project',
+    'bus_transit_project',
+    'metro_transit_project',
     'airport_evolution',
     'landmark_project',
     'toll_plaza_project',
@@ -2217,6 +2252,8 @@ test('civic milestones unlock projects without auto-building; construction & upg
     assert.equal(res.ok, false, `Expected ${actionId} to fail with insufficient treasury`);
   }
   assert.equal(city.stats.portCount, 0);
+  assert.equal(city.stats.busStationCount, 0);
+  assert.equal(city.stats.metroStationCount, 0);
   assert.equal(city.stats.airportCount, 0);
   assert.equal(city.stats.stadiumCount, 0);
   assert.equal(city.stats.sportsCenterCount, 0);
@@ -2226,6 +2263,8 @@ test('civic milestones unlock projects without auto-building; construction & upg
   city.money = 10_000_000;
   assert.equal(executeEmergencyAction(city, 'port_evolution').ok, true);
   assert.equal(executeEmergencyAction(city, 'sports_center_project').ok, true);
+  assert.equal(executeEmergencyAction(city, 'bus_transit_project').ok, true);
+  assert.equal(executeEmergencyAction(city, 'metro_transit_project').ok, true);
   assert.equal(executeEmergencyAction(city, 'airport_evolution').ok, true);
   assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
   assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true);
@@ -2238,25 +2277,668 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.ok(city.money < 10_000_000, 'Expected treasury deduction after ordering projects');
   assert.ok(city.stats.portCount >= 1, 'Expected Port built after explicit order');
   assert.ok(city.stats.sportsCenterCount >= 1, 'Expected Sports Center built after explicit order');
+  assert.ok(city.stats.busStationCount >= 2, 'Expected Bus Terminals built after explicit order');
+  assert.ok(city.stats.metroStationCount >= 2, 'Expected Metro Stations built after explicit order');
   assert.ok(city.stats.airportCount >= 1, 'Expected Airport built after explicit order');
   assert.ok(city.stats.stadiumCount >= 1, 'Expected Stadium built after explicit order');
   assert.equal(city.tollPlaza.built, true, 'Expected Toll Plaza built after explicit order');
-  assert.equal(city.stats.bridgeLevel, 3, 'Expected river bridges upgraded to Nv. 3 after roadworks order');
+  assert.equal(city.stats.bridgeLevel, 3, 'Expected river bridges upgraded to Nv. 3 after roadworks Tier 3');
 
-  const statusesAfter = getCivicMilestoneStatuses(city);
-  const byId = Object.fromEntries(statusesAfter.map((s) => [s.id, s]));
-  assert.equal(byId.civic_port_lv1.built, true);
-  assert.equal(byId.civic_sports_small.built, true);
-  assert.equal(byId.civic_bridge_lv2.built, true);
-  assert.equal(byId.civic_bridge_lv3.built, true);
-  assert.equal(byId.civic_airport_lv1.built, true);
-  assert.equal(byId.civic_stadium_toll_20k.built, true);
+  const statusesAfterTier3 = getCivicMilestoneStatuses(city);
+  const byIdTier3 = Object.fromEntries(statusesAfterTier3.map((s) => [s.id, s]));
+  assert.equal(byIdTier3.civic_port_lv1.built, true);
+  assert.equal(byIdTier3.civic_sports_small.built, true);
+  assert.equal(byIdTier3.civic_bus_system.built, true);
+  assert.equal(byIdTier3.civic_metro_system.built, true);
+  assert.equal(byIdTier3.civic_bridge_lv2.built, true);
+  assert.equal(byIdTier3.civic_bridge_lv3.built, true);
+  assert.equal(byIdTier3.civic_bridge_lv4.built, false, 'Expected Nv. 4 Mega-Bridge milestone to stay built=false until Tier 4');
+  assert.equal(byIdTier3.civic_airport_lv1.built, true);
+  assert.equal(byIdTier3.civic_stadium_toll_20k.built, true);
+
+  // Roadworks Tier 4 at >= 22k pop upgrades bridges to Nv. 4 (2-tile-wide Mega-Bridge)
+  assert.equal(executeEmergencyAction(city, 'emergency_roadworks').ok, true);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.bridgeLevel, 4, 'Expected river bridges upgraded to Nv. 4 after roadworks Tier 4');
+  const byIdTier4 = Object.fromEntries(getCivicMilestoneStatuses(city).map((s) => [s.id, s]));
+  assert.equal(byIdTier4.civic_bridge_lv4.built, true);
 });
 
+test('Nv. 4 Mega-Bridge widens eligible river bridges to 2 tiles wide without overwriting landmarks, keeps cars straight, and demolishes as one span', async () => {
+  const { evaluateCivicMilestones } = await import('./cityEngine');
+  const city = createNewCity(440044);
 
+  // Build a clean deterministic vertical N-S river (x = 17..19) across the entire map
+  for (let y = 0; y < city.gridHeight; y++) {
+    for (let x = 0; x < city.gridWidth; x++) {
+      const tile = getTile(city, x, y)!;
+      if (x >= 17 && x <= 19) {
+        tile.type = 'water';
+        tile.level = 1;
+      } else {
+        tile.type = 'grass';
+        tile.level = 1;
+      }
+      tile.variant = 0;
+    }
+  }
 
+  // Bridge 1 at y = 14 (clear grass banks at y = 13 and y = 15 -> eligible to widen to 2 tiles)
+  for (const bx of [17, 18, 19]) {
+    const t = getTile(city, bx, 14)!;
+    t.type = 'bridge';
+    t.level = 1;
+  }
+  for (const rx of [15, 16, 20, 21]) {
+    const t = getTile(city, rx, 14)!;
+    t.type = 'road';
+    t.level = 2;
+  }
 
+  // Bridge 2 at y = 26 (blocked on BOTH sides y = 25 and y = 27 by port landmarks -> must NOT overwrite ports)
+  for (const bx of [17, 18, 19]) {
+    const t = getTile(city, bx, 26)!;
+    t.type = 'bridge';
+    t.level = 1;
+  }
+  for (const rx of [15, 16, 20, 21]) {
+    const t = getTile(city, rx, 26)!;
+    t.type = 'road';
+    t.level = 2;
+  }
+  for (const portY of [25, 27]) {
+    for (const portX of [16, 20]) {
+      const p = getTile(city, portX, portY)!;
+      p.type = 'port';
+      p.level = 2;
+    }
+  }
 
+  // Populate the map away from both bridges to >= 23,000 residents
+  for (let y = 2; y < city.gridHeight - 2 && city.totalPopulation < 23000; y++) {
+    for (let x = 2; x < city.gridWidth - 2 && city.totalPopulation < 23000; x++) {
+      if (x >= 14 && x <= 22) continue;
+      const t = getTile(city, x, y)!;
+      if (t.type === 'grass') {
+        t.type = 'residential';
+        t.level = 4;
+        recomputeFieldsAndStats(city);
+      }
+    }
+  }
+  assert.ok(city.totalPopulation >= 22000, `Expected >=22k pop, got ${city.totalPopulation}`);
+  assert.equal(countRiverBridges(city), 2, 'Expected 2 distinct river bridges before Tier 4 upgrade');
+
+  // Execute Roadworks Tiers 1 -> 2 -> 3 -> 4
+  city.money = 10_000_000;
+  evaluateCivicMilestones(city);
+  for (let tier = 1; tier <= 4; tier++) {
+    const res = executeEmergencyAction(city, 'emergency_roadworks');
+    assert.equal(res.ok, true, `Expected emergency_roadworks Tier ${tier} to succeed`);
+  }
+  recomputeFieldsAndStats(city);
+
+  assert.equal(city.stats.bridgeLevel, 4);
+
+  // Bridge 1 should now be 2 tiles wide (y = 14 + either y = 15 or y = 13) with all tiles at level 4
+  const widenedRow = getTile(city, 18, 15)?.type === 'bridge' ? 15 : getTile(city, 18, 13)?.type === 'bridge' ? 13 : -1;
+  assert.ok(widenedRow === 15 || widenedRow === 13, 'Expected eligible Bridge 1 to widen to an adjacent parallel row');
+  for (const bx of [17, 18, 19]) {
+    const primary = getTile(city, bx, 14);
+    const sibling = getTile(city, bx, widenedRow);
+    assert.ok(primary && sibling);
+    assert.equal(primary.type, 'bridge');
+    assert.equal(primary.level, 4);
+    assert.equal(sibling.type, 'bridge');
+    assert.equal(sibling.level, 4);
+    assert.equal(isDoubleWidthBridgeTile(city, bx, 14), true);
+    assert.equal(isDoubleWidthBridgeTile(city, bx, widenedRow), true);
+  }
+  // Both riverbank landing roads of the widened lane must connect cleanly
+  assert.equal(getTile(city, 16, widenedRow)?.type, 'road');
+  assert.equal(getTile(city, 20, widenedRow)?.type, 'road');
+
+  // Contiguous 2-tile-wide bridge still counts as 1 span -> total remains 2 spans
+  assert.equal(countRiverBridges(city), 2, 'Double-width bridge must count as a single contiguous span');
+
+  // Bridge 2 was flanked by ports on both sides -> upgraded safely to Lv.4 without overwriting ports
+  for (const bx of [17, 18, 19]) {
+    const b2 = getTile(city, bx, 26)!;
+    assert.equal(b2.type, 'bridge');
+    assert.equal(b2.level, 4);
+    assert.equal(isDoubleWidthBridgeTile(city, bx, 26), false);
+  }
+  for (const portY of [25, 27]) {
+    for (const portX of [16, 20]) {
+      assert.equal(getTile(city, portX, portY)?.type, 'port', `Port at (${portX},${portY}) must remain intact`);
+    }
+  }
+
+  // Boats pass under bridges while cruise liners avoid bridges
+  assert.equal(isNavigableWater('bridge'), true);
+  assert.equal(isCruiseNavigableWater('bridge'), false);
+
+  // Cars driving east on Bridge 1 (y = 14) must continue straight onto (18, 14) and never jump sideways onto widenedRow
+  const car: CarEntity = {
+    x: 16,
+    y: 14,
+    fromX: 16,
+    fromY: 14,
+    toX: 17,
+    toY: 14,
+    progress: 0.99,
+    speed: 2.0,
+    color: '#ef4444',
+    kind: 'sedan',
+    laneOffset: 0.14,
+  };
+  const cars: CarEntity[] = [car];
+  const particles = createParticlePool();
+  updateCarsAndParticles(city, cars, particles, { idx: 0 }, 0.05, 1, 0);
+  assert.equal(car.fromX, 17);
+  assert.equal(car.fromY, 14);
+  assert.equal(car.toX, 18, 'Car crossing 2-tile-wide bridge must proceed straight along its deck');
+  assert.equal(car.toY, 14, 'Car crossing 2-tile-wide bridge must not jump sideways mid-river');
+
+  // Demolishing a single tile of the 2-tile-wide bridge clears BOTH parallel decks back to water
+  city.money = 1_000_000;
+  const demoRes = demolishCityTile(city, 18, 14);
+  assert.equal(demoRes.ok, true);
+  for (const bx of [17, 18, 19]) {
+    assert.equal(getTile(city, bx, 14)?.type, 'water');
+    assert.equal(getTile(city, bx, widenedRow)?.type, 'water');
+  }
+  assert.equal(countRiverBridges(city), 1);
+});
+
+test('cohesive neighborhoods partition Residential, Commercial, and Industrial districts, enforce compact infill, and prevent isolated giant towers beside Lv. 1 houses', async () => {
+  const {
+    getNeighborhoodDistrict,
+    getNeighborhoodDistrictLabel,
+    getNeighborhoodMaturity,
+    setCityBudgetTargetPct,
+  } = await import('./cityEngine');
+  const city = createNewCity(771122);
+
+  // Deterministic district partitioning must generate all 3 cohesive neighborhood types across the grid
+  const districtCounts = { residential: 0, commercial: 0, industrial: 0 };
+  for (let y = 2; y < city.gridHeight - 2; y++) {
+    for (let x = 2; x < city.gridWidth - 2; x++) {
+      const d = getNeighborhoodDistrict(city, x, y);
+      districtCounts[d]++;
+    }
+  }
+  assert.ok(districtCounts.residential > 40, 'Expected substantial Bairro Residencial coverage');
+  assert.ok(districtCounts.commercial > 25, 'Expected substantial Bairro Comercial coverage');
+  assert.ok(districtCounts.industrial > 25, 'Expected substantial Distrito Industrial coverage');
+  assert.equal(getNeighborhoodDistrictLabel('residential'), 'Bairro Residencial');
+  assert.equal(getNeighborhoodDistrictLabel('commercial'), 'Bairro Comercial');
+  assert.equal(getNeighborhoodDistrictLabel('industrial'), 'Distrito Industrial');
+
+  // Verify gradual neighborhood maturity gate: a lone Lv. 2 building surrounded only by grass & Lv. 1 houses
+  // must NOT prematurely evolve to Lv. 3 until its neighborhood peers fill and grow together!
+  for (let y = 0; y < city.gridHeight; y++) {
+    for (let x = 0; x < city.gridWidth; x++) {
+      const t = getTile(city, x, y)!;
+      t.type = 'grass';
+      t.level = 0;
+      t.lotRole = undefined;
+      t.lotWidth = undefined;
+      t.lotHeight = undefined;
+      t.lotDx = undefined;
+      t.lotDy = undefined;
+      t.establishmentId = undefined;
+    }
+  }
+  // Lay a road along y = 16 and put a single Lv. 2 commercial building at (16, 15) beside only 2 Lv. 1 shops
+  for (let x = 10; x <= 22; x++) {
+    const r = getTile(city, x, 16)!;
+    r.type = 'road';
+    r.level = 2;
+  }
+  const loneTower = getTile(city, 16, 15)!;
+  loneTower.type = 'commercial';
+  loneTower.level = 2;
+  loneTower.age = 40;
+  loneTower.upgradeCooldown = 0;
+  loneTower.evolutionProgress = 99;
+  const peer1 = getTile(city, 15, 15)!;
+  peer1.type = 'commercial';
+  peer1.level = 1;
+  const peer2 = getTile(city, 17, 15)!;
+  peer2.type = 'commercial';
+  peer2.level = 1;
+
+  city.money = 1_000_000;
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, 140);
+  }
+  recomputeFieldsAndStats(city);
+
+  const immature = getNeighborhoodMaturity(city, 16, 15);
+  assert.ok(immature.fillRatio < 0.45, `Expected low fillRatio in sparse block, got ${immature.fillRatio}`);
+  assert.ok(immature.avgLevel < 1.5, `Expected low avgLevel beside Lv.1 peers, got ${immature.avgLevel}`);
+
+  // Step several ticks: loneTower must stay <= Lv. 2 while neighborhood peers are still sparse/Lv. 1
+  for (let t = 0; t < 6; t++) {
+    stepCityTick(city);
+  }
+  assert.ok(
+    loneTower.level <= 2,
+    `Expected lone commercial building to wait for its neighborhood peers instead of jumping to Lv.${loneTower.level}`
+  );
+});
+
+test('2x2 Wide Avenues (Avenida Larga 2x2) are required for Lv. 4 Skyscrapers & Mega Condos, preserved by road reconciliation, and attract high vehicle flow', async () => {
+  const {
+    getCondoConversionInfo,
+    getRoadClassLabel,
+    isAdjacentToWideAvenue2x2,
+    isWideAvenue2x2Tile,
+    reconcileRoadHierarchy,
+    widenAvenueCorridorAt,
+  } = await import('./cityEngine');
+  const city = createNewCity(882233);
+
+  const ox = city.roadOriginX ?? 17;
+  const oy = city.roadOriginY ?? 17;
+  const aveY = oy + 3; // Planned road row right below the 2×2 block (ox+1..ox+2, oy+1..oy+2)
+
+  // Build a clean flat canvas with a single 1-tile-wide Avenida at y = aveY and a 2×2 residential block right north of it
+  for (let y = 0; y < city.gridHeight; y++) {
+    for (let x = 0; x < city.gridWidth; x++) {
+      const t = getTile(city, x, y)!;
+      t.type = 'grass';
+      t.level = 0;
+      t.variant = 0;
+      t.lotRole = undefined;
+      t.lotWidth = undefined;
+      t.lotHeight = undefined;
+      t.lotDx = undefined;
+      t.lotDy = undefined;
+      t.establishmentId = undefined;
+    }
+  }
+  for (let x = Math.max(2, ox - 4); x <= Math.min(city.gridWidth - 3, ox + 6); x++) {
+    const r = getTile(city, x, aveY)!;
+    r.type = 'road';
+    r.level = 2;
+    r.variant = 0;
+  }
+  // Place a Lv. 3 residential condo at (ox + 1, oy + 2) inside the planned 2×2 block next to the 1-tile-wide avenue
+  const bx = ox + 1;
+  const by = oy + 1;
+  const res = getTile(city, bx, by + 1)!;
+  res.type = 'residential';
+  res.level = 3;
+  res.landValue = 75;
+  const res2 = getTile(city, bx + 1, by + 1)!;
+  res2.type = 'residential';
+  res2.level = 2;
+  const res3 = getTile(city, bx, by)!;
+  res3.type = 'residential';
+  res3.level = 2;
+  const res4 = getTile(city, bx + 1, by)!;
+  res4.type = 'residential';
+  res4.level = 2;
+
+  // Populate outer rows away from the test block to >= 30,500 residents so Lv. 4 Mega Condomínio 30k milestone gate is satisfied
+  for (let y = 1; y <= 14 && city.totalPopulation < 30_500; y++) {
+    for (let x = 2; x < city.gridWidth - 2 && city.totalPopulation < 30_500; x++) {
+      const filler = getTile(city, x, y)!;
+      if (filler.type !== 'grass') continue;
+      filler.type = 'residential';
+      filler.level = 3;
+      recomputeFieldsAndStats(city);
+    }
+  }
+  assert.ok(city.totalPopulation >= 30_000, `Expected >= 30,000 pop, got ${city.totalPopulation}`);
+
+  city.money = 1_000_000;
+  recomputeFieldsAndStats(city);
+
+  // Without a 2×2 Wide Avenue on at least one side, converting Lv. 3 -> Lv. 4 Mega Condomínio must be blocked!
+  assert.equal(isAdjacentToWideAvenue2x2(city, bx, by, 2, 2), false);
+  const blockedInfo = getCondoConversionInfo(city, bx, by + 1);
+  assert.ok(blockedInfo);
+  assert.equal(blockedInfo.canConvert, false);
+  assert.ok(
+    blockedInfo.reason?.includes('Avenida Larga'),
+    `Expected Avenida Larga requirement reason, got: ${blockedInfo.reason}`
+  );
+
+  // Widen the avenue along y = aveY into a 2-tile-thick Avenida Larga 2×2 (rows aveY & aveY+1)!
+  const widened = widenAvenueCorridorAt(city, bx, aveY, 5);
+  assert.ok(widened >= 4, `Expected widenAvenueCorridorAt to form a 2×2 Wide Avenue corridor, got ${widened}`);
+
+  // Reconcile road hierarchy must preserve the 2×2 Wide Avenue tiles as level 2, variant 2
+  reconcileRoadHierarchy(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(isWideAvenue2x2Tile(city, bx, aveY), true);
+  assert.equal(getRoadClassLabel(2, 2), 'Avenida Larga 2×2 (Boulevard)');
+  assert.ok(city.stats.wideAvenueTileCount >= 8, `Expected >= 8 wide avenue tiles, got ${city.stats.wideAvenueTileCount}`);
+
+  // Now the 2×2 block borders a 2×2 Wide Avenue on its south side -> Lv. 4 Mega Condomínio conversion succeeds!
+  assert.equal(isAdjacentToWideAvenue2x2(city, bx, by, 2, 2), true);
+  const allowedInfo = getCondoConversionInfo(city, bx, by + 1);
+  assert.ok(allowedInfo);
+  assert.equal(allowedInfo.canConvert, true, `Expected Lv. 4 condo allowed next to 2×2 wide avenue, got reason: ${allowedInfo.reason}`);
+});
+
+test('Bus (4k) and Metro (14k) Public Transit unlock via Milestones, spawn buses only after built, track ridership, and round-trip save/load', async () => {
+  const {
+    deserializeCitySave,
+    evaluateCivicMilestones,
+    getMetroNetworkStations,
+    serializeCitySave,
+  } = await import('./cityEngine');
+  const city = createNewCity(993344);
+
+  // Before reaching 4,000 pop, both Bus & Metro projects are locked and NO municipal buses spawn
+  city.money = 10_000_000;
+  assert.equal(executeEmergencyAction(city, 'bus_transit_project').ok, false);
+  assert.equal(executeEmergencyAction(city, 'metro_transit_project').ok, false);
+
+  const preBusCars: CarEntity[] = [];
+  const particles = createParticlePool();
+  for (let i = 0; i < 40; i++) {
+    updateCarsAndParticles(city, preBusCars, particles, { idx: 0 }, 0.05, 1, i * 0.05);
+  }
+  assert.equal(
+    preBusCars.filter((c) => c.kind === 'bus').length,
+    0,
+    'Municipal buses must NOT spawn before the Bus Transit System is built'
+  );
+
+  // Grow city past 15,000 pop so both Bus (4k) and Metro (14k) milestones unlock
+  const grassSlots = city.tiles.filter((t) => t.type === 'grass' || t.type === 'forest');
+  for (let i = 0; i < grassSlots.length && city.totalPopulation < 15_500; i++) {
+    grassSlots[i].type = 'residential';
+    grassSlots[i].level = 3;
+    recomputeFieldsAndStats(city);
+  }
+  const unlockedIds = evaluateCivicMilestones(city);
+  assert.ok(unlockedIds.includes('civic_bus_system'), 'Expected Bus milestone at >= 4,000 pop');
+  assert.ok(unlockedIds.includes('civic_metro_system'), 'Expected Metro milestone at >= 14,000 pop');
+
+  // Execute Bus Transit Project -> places >= 2 well-spaced bus_station hubs and enables bus fleet!
+  const busRes = executeEmergencyAction(city, 'bus_transit_project');
+  assert.equal(busRes.ok, true, `Expected bus_transit_project to succeed: ${busRes.reason ?? ''}`);
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.busStationCount >= 2, `Expected >= 2 bus stations, got ${city.stats.busStationCount}`);
+  assert.ok(city.stats.monthlyTransitRiders > 0, 'Expected Bus system to generate monthly transit riders');
+  assert.ok(city.stats.transitCoveragePct > 0, 'Expected positive transit coverage percentage');
+
+  const postBusCars: CarEntity[] = [];
+  for (let i = 0; i < 35; i++) {
+    updateCarsAndParticles(city, postBusCars, particles, { idx: 0 }, 0.05, 1, i * 0.05);
+  }
+  assert.ok(
+    postBusCars.some((c) => c.kind === 'bus'),
+    'Municipal bus fleet should actively spawn once Bus Terminals are constructed'
+  );
+
+  // Execute Metro Transit Project -> places >= 2 underground-linked metro_station hubs!
+  const ridersBeforeMetro = city.stats.monthlyTransitRiders;
+  const metroRes = executeEmergencyAction(city, 'metro_transit_project');
+  assert.equal(metroRes.ok, true, `Expected metro_transit_project to succeed: ${metroRes.reason ?? ''}`);
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.metroStationCount >= 2, `Expected >= 2 metro stations, got ${city.stats.metroStationCount}`);
+  assert.ok(
+    getMetroNetworkStations(city).length >= 2,
+    'Expected Metro network helper to return >= 2 connected stations for underground line rendering'
+  );
+  assert.ok(
+    city.stats.monthlyTransitRiders > ridersBeforeMetro,
+    'Metro network should significantly boost monthly transit ridership'
+  );
+
+  // Round-trip save/load must preserve bus_station, metro_station, and transit stats
+  const saved = serializeCitySave(city);
+  const restored = deserializeCitySave(saved);
+  assert.ok(restored);
+  assert.equal(restored.stats.busStationCount, city.stats.busStationCount);
+  assert.equal(restored.stats.metroStationCount, city.stats.metroStationCount);
+  assert.equal(restored.stats.monthlyTransitRiders, city.stats.monthlyTransitRiders);
+});
+
+test('first Airport is 4x10 (40 tiles), houses require a filled 12x12 Level-1 region before evolving one-by-one, and Large Buildings (10k) & Skyscrapers (30k) obey population milestones', async () => {
+  const {
+    getCondoConversionInfo,
+    getNeighborhoodMaturity,
+    getZoneDisplayLabel,
+    placeLandmarkOnBestSlot,
+    setCityBudgetTargetPct,
+    setCondoPolicy,
+    widenAvenueCorridorAt,
+  } = await import('./cityEngine');
+  const { GROWTH_CONFIG, URBAN_MATURITY_CONFIG } = await import('./simulationConfig');
+
+  // 1. Verify Level 1 Airport footprint is strictly 4×10 (40 tiles)
+  const airportCity = createNewCity(314159, 'easy');
+  const firstAirport = placeLandmarkOnBestSlot(airportCity, 'airport', true, 1);
+  assert.ok(firstAirport, 'Expected 4×10 Level 1 Airport placement to succeed');
+  const airportTiles = airportCity.tiles.filter((t) => t.type === 'airport');
+  assert.equal(airportTiles.length, 40, `Expected 4×10 (40 tiles) airport, got ${airportTiles.length}`);
+  assert.equal(firstAirport.lotWidth, 4);
+  assert.equal(firstAirport.lotHeight, 10);
+  assert.ok(getZoneDisplayLabel(firstAirport).includes('4×10'));
+
+  // 2. Build a clean grid with a central house at (18, 18) and test the 12×12 Level-1 region rule!
+  const city = createNewCity(271828, 'easy');
+  setCondoPolicy(city, 'auto');
+  city.money = 2_000_000;
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, 100);
+  }
+  for (let y = 0; y < city.gridHeight; y++) {
+    for (let x = 0; x < city.gridWidth; x++) {
+      const t = getTile(city, x, y)!;
+      t.type = 'grass';
+      t.level = 0;
+      t.age = 0;
+      t.lotRole = undefined;
+      t.lotWidth = undefined;
+      t.lotHeight = undefined;
+      t.lotDx = undefined;
+      t.lotDy = undefined;
+      t.establishmentId = undefined;
+    }
+  }
+  const ox = city.roadOriginX ?? 17;
+  const oy = city.roadOriginY ?? 17;
+  // Lay a clean 3-tile grid of roads across the central 12×12 neighborhood
+  for (let y = oy - 6; y <= oy + 6; y++) {
+    for (let x = ox - 6; x <= ox + 6; x++) {
+      const t = getTile(city, x, y)!;
+      if ((((x - ox) % 3) + 3) % 3 === 0 || (((y - oy) % 3) + 3) % 3 === 0) {
+        t.type = 'road';
+        t.level = 2;
+      }
+    }
+  }
+  const centerHouse = getTile(city, ox + 1, oy + 1)!;
+  // Fill every buildable lot in the 12×12 region EXCEPT ONE empty grass gap at (ox + 4, oy + 4)
+  for (let dy = -6; dy <= 5; dy++) {
+    for (let dx = -6; dx <= 5; dx++) {
+      const nt = getTile(city, centerHouse.x + dx, centerHouse.y + dy);
+      if (!nt || nt.type === 'road') continue;
+      if (nt.x === ox + 4 && nt.y === oy + 4) continue; // Leave 1 empty lot inside 12×12!
+      nt.type = 'residential';
+      nt.level = 1;
+      nt.age = GROWTH_CONFIG.minAgeForUpgrade + 25;
+      nt.upgradeCooldown = 0;
+      nt.evolutionProgress = GROWTH_CONFIG.requiredProgressLv2 + 10;
+    }
+  }
+  recomputeFieldsAndStats(city);
+
+  const almostFull = getNeighborhoodMaturity(city, centerHouse.x, centerHouse.y);
+  assert.equal(almostFull.region12EmptyLots, 1, 'Expected exactly 1 empty lot inside the 12×12 region');
+  assert.equal(almostFull.region12AllLevel1, false, '12×12 region must NOT pass while any buildable lot is empty');
+
+  // With 1 empty lot inside its 12×12 region, centerHouse must remain Lv. 1!
+  stepCityTick(city);
+  assert.equal(centerHouse.level, 1, 'House must NOT evolve to Lv. 2 before its entire 12×12 region is at Lv. 1');
+
+  // Fill the final lot in the 12×12 region -> now region12AllLevel1 === true!
+  const lastGap = getTile(city, ox + 4, oy + 4)!;
+  lastGap.type = 'residential';
+  lastGap.level = 1;
+  lastGap.age = 5;
+  recomputeFieldsAndStats(city);
+
+  const full12x12 = getNeighborhoodMaturity(city, centerHouse.x, centerHouse.y);
+  assert.equal(full12x12.region12EmptyLots, 0);
+  assert.equal(full12x12.region12AllLevel1, true, '12×12 region should now be 100% Level 1');
+
+  // Step ticks: buildings evolve gradually ONE-BY-ONE (max 1 upgrade per tick) to Lv. 2,
+  // and MUST NOT jump to Lv. 3 while city population is below the 10,000 milestone!
+  let prevLv2Count = 0;
+  let maxSingleTickLv2Jump = 0;
+  for (let s = 0; s < 18; s++) {
+    stepCityTick(city);
+    const curLv2 = city.tiles.filter(
+      (t) => t.type === 'residential' && t.lotRole !== 'part' && t.level === 2
+    ).length;
+    maxSingleTickLv2Jump = Math.max(maxSingleTickLv2Jump, curLv2 - prevLv2Count);
+    prevLv2Count = curLv2;
+  }
+  assert.ok(prevLv2Count >= 1, 'Expected gradual Lv. 1 -> Lv. 2 evolutions once 12×12 region is complete');
+  assert.ok(maxSingleTickLv2Jump <= 1, `Expected buildings to evolve one-by-one (<=1/tick), saw jump of ${maxSingleTickLv2Jump}`);
+
+  // 3. Verify 10,000 hab. milestone gate for Lv. 3 Large Buildings & 30,000 hab. milestone gate for Lv. 4 Skyscrapers!
+  assert.ok(city.totalPopulation < URBAN_MATURITY_CONFIG.largeBuildingMinPopulation);
+  centerHouse.level = 2;
+  centerHouse.age = GROWTH_CONFIG.minAgeForUpgradeLv3 + 30;
+  centerHouse.upgradeCooldown = 0;
+  centerHouse.evolutionProgress = GROWTH_CONFIG.requiredProgressLv3 + 20;
+  for (let s = 0; s < 8; s++) {
+    stepCityTick(city);
+  }
+  assert.equal(
+    centerHouse.level,
+    2,
+    `Large Building (Lv. 3) must remain locked below ${URBAN_MATURITY_CONFIG.largeBuildingMinPopulation} pop`
+  );
+
+  // Check Lv. 4 Skyscraper / Mega Condomínio is strictly locked below 30,000 hab. even next to a 2×2 Wide Avenue!
+  const aveY = oy + 3;
+  widenAvenueCorridorAt(city, ox + 1, aveY, 4);
+  centerHouse.type = 'residential';
+  centerHouse.establishmentId = undefined;
+  centerHouse.lotRole = undefined;
+  centerHouse.lotWidth = 1;
+  centerHouse.lotHeight = 1;
+  centerHouse.level = 3;
+  recomputeFieldsAndStats(city);
+  assert.ok(city.totalPopulation < URBAN_MATURITY_CONFIG.skyscraperMinPopulation);
+  const blockedLv4 = getCondoConversionInfo(city, centerHouse.x, centerHouse.y);
+  assert.ok(blockedLv4);
+  assert.equal(blockedLv4.eligible, false, 'Lv. 4 Skyscraper / Mega Condomínio must be locked below 30,000 pop');
+  assert.ok(blockedLv4.reason?.includes('30.000'), `Expected 30.000 hab. requirement, got: ${blockedLv4.reason}`);
+});
+
+test('3 Shopping Mall designs unlock by population milestones (6x6 Small at 7.5k, 8x8 Medium at 16k, 9x9 Large at 26k) and track multi-month work execution progress', async () => {
+  const {
+    closeFinancialMonth,
+    evaluateCivicMilestones,
+    getCivicMilestoneStatuses,
+    getZoneDisplayLabel,
+  } = await import('./cityEngine');
+
+  const city = createNewCity(424242, 'easy');
+  city.money = 10_000_000;
+
+  const grassSlots = city.tiles.filter((t) => t.type === 'grass' || t.type === 'forest');
+  let slotIdx = 0;
+  const raisePopTo = (target: number) => {
+    while (city.totalPopulation < target && slotIdx < grassSlots.length) {
+      grassSlots[slotIdx].type = 'residential';
+      grassSlots[slotIdx].level = 3;
+      slotIdx++;
+      recomputeFieldsAndStats(city);
+    }
+    evaluateCivicMilestones(city);
+  };
+
+  // Below 7,500 pop: Shopping Pequeno (6×6) is locked
+  assert.ok(city.totalPopulation < 7500);
+  const lockedOffer = getEmergencyOffers(city).find((o) => o.id === 'shopping_evolution')!;
+  assert.ok(lockedOffer);
+  assert.equal(lockedOffer.unlocked, false);
+  assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
+
+  // 1. Reach 7,500 pop -> Shopping Pequeno (6×6 · 36 tiles · Nv. 1) unlocks & starts 3-month execution progress!
+  raisePopTo(7500);
+  const lv1Offer = getEmergencyOffers(city).find((o) => o.id === 'shopping_evolution')!;
+  assert.equal(lv1Offer.unlocked, true);
+  assert.equal(lv1Offer.durationMonths, 3);
+
+  const resLv1 = executeEmergencyAction(city, 'shopping_evolution');
+  assert.equal(resLv1.ok, true);
+  const lv1Tiles = city.tiles.filter((t) => t.type === 'shopping');
+  assert.equal(lv1Tiles.length, 36, 'Shopping Pequeno (Nv. 1) must be 6×6 (36 tiles)');
+  assert.equal(city.stats.shoppingCount, 1);
+  assert.equal(city.stats.shoppingLevel, 1);
+  const anchorLv1 = lv1Tiles.find((t) => t.lotRole === 'anchor')!;
+  assert.equal(anchorLv1.lotWidth, 6);
+  assert.equal(anchorLv1.lotHeight, 6);
+  assert.ok(getZoneDisplayLabel(anchorLv1).includes('6×6'));
+
+  // Active boost tracks remainingMonths & totalMonths for the progress bar button
+  const boostLv1 = city.activeBoosts.find((b) => b.actionId === 'shopping_evolution')!;
+  assert.ok(boostLv1, 'Expected activeBoost for shopping_evolution while work is executing');
+  assert.equal(boostLv1.totalMonths, 3);
+  assert.equal(boostLv1.remainingMonths, 3);
+  closeFinancialMonth(city);
+  assert.equal(
+    city.activeBoosts.find((b) => b.actionId === 'shopping_evolution')?.remainingMonths,
+    2
+  );
+  closeFinancialMonth(city);
+  closeFinancialMonth(city);
+  assert.equal(
+    city.activeBoosts.find((b) => b.actionId === 'shopping_evolution'),
+    undefined,
+    'Expected work progress boost to complete after 3 months'
+  );
+
+  // 2. Below 16,000 pop -> Shopping Médio (8×8 · Nv. 2) is locked; at 16,000 pop it expands to 8×8 (64 tiles)!
+  assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
+  raisePopTo(16000);
+  city.money = 10_000_000;
+  const resLv2 = executeEmergencyAction(city, 'shopping_evolution');
+  assert.equal(resLv2.ok, true);
+  const lv2Tiles = city.tiles.filter((t) => t.type === 'shopping');
+  assert.equal(lv2Tiles.length, 64, 'Shopping Médio (Nv. 2) must expand to 8×8 (64 tiles)');
+  assert.equal(city.stats.shoppingLevel, 2);
+  const anchorLv2 = lv2Tiles.find((t) => t.lotRole === 'anchor')!;
+  assert.equal(anchorLv2.lotWidth, 8);
+  assert.equal(anchorLv2.lotHeight, 8);
+  assert.ok(getZoneDisplayLabel(anchorLv2).includes('8×8'));
+
+  // 3. At 26,000 pop -> Shopping Grande (9×9 · 81 tiles · Nv. 3) unlocks & expands to 9×9!
+  assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
+  raisePopTo(26000);
+  city.money = 10_000_000;
+  const resLv3 = executeEmergencyAction(city, 'shopping_evolution');
+  assert.equal(resLv3.ok, true);
+  const lv3Tiles = city.tiles.filter((t) => t.type === 'shopping');
+  assert.equal(lv3Tiles.length, 81, 'Shopping Grande (Nv. 3) must expand to 9×9 (81 tiles)');
+  assert.equal(city.stats.shoppingLevel, 3);
+  const anchorLv3 = lv3Tiles.find((t) => t.lotRole === 'anchor')!;
+  assert.equal(anchorLv3.lotWidth, 9);
+  assert.equal(anchorLv3.lotHeight, 9);
+  assert.ok(getZoneDisplayLabel(anchorLv3).includes('9×9'));
+
+  const milestoneById = Object.fromEntries(
+    getCivicMilestoneStatuses(city).map((m) => [m.id, m])
+  );
+  assert.equal(milestoneById.civic_shopping_lv1.built, true);
+  assert.equal(milestoneById.civic_shopping_lv2.built, true);
+  assert.equal(milestoneById.civic_shopping_lv3.built, true);
+});
 
 
 

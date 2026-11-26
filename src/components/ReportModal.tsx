@@ -297,35 +297,92 @@ export function ReportModal({
             Quarteirões 2×2 · Eixos Arteriais · Anel Rodoviário · Trevos Automáticos
           </span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center tabular-nums">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center tabular-nums">
           <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
-            <div className="font-pixel text-[7px] text-[#9eb0c9]">RUAS LOCAIS</div>
+            <div className="font-pixel text-[6.5px] text-[#9eb0c9]">RUAS LOCAIS</div>
             <div className="text-[20px] font-bold text-[#eef2f7] leading-tight">
               {hud.stats.streetCount}
             </div>
           </div>
           <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
-            <div className="font-pixel text-[7px] text-[#66d98c]">AVENIDAS</div>
+            <div className="font-pixel text-[6.5px] text-[#66d98c]">AVENIDAS</div>
             <div className="text-[20px] font-bold text-[#66d98c] leading-tight">
               {hud.stats.avenueCount}
             </div>
           </div>
           <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
-            <div className="font-pixel text-[7px] text-[#f5b73b]">ESTRADAS</div>
+            <div className="font-pixel text-[6.5px] text-[#38bdf8]">AV. LARGA 2×2</div>
+            <div
+              data-testid="report-wide-avenue-count"
+              className="text-[20px] font-bold text-[#38bdf8] leading-tight"
+            >
+              {hud.stats.wideAvenueTileCount}
+            </div>
+          </div>
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#f5b73b]">ESTRADAS</div>
             <div className="text-[20px] font-bold text-[#f5b73b] leading-tight">
               {hud.stats.highwayCount}
             </div>
           </div>
           <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
-            <div className="font-pixel text-[7px] text-[#56c2ff]">TREVOS</div>
+            <div className="font-pixel text-[6.5px] text-[#56c2ff]">TREVOS</div>
             <div className="text-[20px] font-bold text-[#56c2ff] leading-tight">
               {hud.stats.interchangeCount}
             </div>
           </div>
-          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5 col-span-2 sm:col-span-1">
-            <div className="font-pixel text-[7px] text-[#c28bff]">PONTES NO RIO</div>
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#c28bff]">PONTES NO RIO</div>
             <div className="text-[20px] font-bold text-[#c28bff] leading-tight">
               {hud.stats.bridgeSpanCount}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Mobilidade Urbana: Sistema de Ônibus & Metrô Metropolitano */}
+      <section
+        data-testid="report-public-transit"
+        aria-label="Transporte público coletivo (ônibus e metrô)"
+        className="pixel-inset p-3 mb-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h3 className="font-pixel text-[9px] text-[#38bdf8]">
+            TRANSPORTE PÚBLICO COLETIVO (ÔNIBUS &amp; METRÔ)
+          </h3>
+          <span className="text-[13px] text-[#9eb0c9]">
+            Bairros coesos + Avenidas Largas 2×2 (obrigatórias para Arranha-Céus Nv.4)
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center tabular-nums">
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#0ea5e9]">TERMINAIS ÔNIBUS</div>
+            <div
+              data-testid="report-bus-count"
+              className="text-[19px] font-bold text-[#38bdf8] leading-tight"
+            >
+              {hud.stats.busStationCount}
+            </div>
+          </div>
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#a78bfa]">ESTAÇÕES METRÔ</div>
+            <div
+              data-testid="report-metro-count"
+              className="text-[19px] font-bold text-[#c084fc] leading-tight"
+            >
+              {hud.stats.metroStationCount}
+            </div>
+          </div>
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#66d98c]">PASSAGEIROS/MÊS</div>
+            <div className="text-[19px] font-bold text-[#66d98c] leading-tight">
+              {hud.stats.monthlyTransitRiders.toLocaleString('pt-BR')}
+            </div>
+          </div>
+          <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+            <div className="font-pixel text-[6.5px] text-[#ffe066]">COBERTURA REDE</div>
+            <div className="text-[19px] font-bold text-[#ffe066] leading-tight">
+              {hud.stats.transitCoveragePct}%
             </div>
           </div>
         </div>

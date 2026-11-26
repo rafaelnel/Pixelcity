@@ -42,9 +42,13 @@ import {
   expandCityLand,
   formatDateLabel,
   getCondoConversionInfo,
+  getNeighborhoodDistrict,
+  getNeighborhoodDistrictLabel,
+  getNeighborhoodMaturity,
   getRoadClassLabel,
   getTile,
   getZoneDisplayLabel,
+  isDoubleWidthBridgeTile,
   isExternalBorderRoadTile,
   isTollPlazaTile,
   loadSavedCitiesFromStorage,
@@ -82,6 +86,7 @@ import {
   DEFAULT_DIFFICULTY,
   TOLL_TARIFF_CONFIGS,
   TOLL_TARIFF_ORDER,
+  URBAN_MATURITY_CONFIG,
 } from './game/simulationConfig';
 import { soundEngine } from './game/soundEngine';
 import type {
@@ -123,6 +128,9 @@ const TILE_LABELS: Record<TileType, string> = {
   port: 'Porto Fluvial',
   airport: 'Aeroporto',
   stadium: 'Estádio',
+  bus_station: 'Terminal de Ônibus',
+  metro_station: 'Estação de Metrô',
+  shopping: 'Shopping Center',
 };
 
 function getInitialQueryParams(): {
@@ -1360,13 +1368,17 @@ export default function App() {
       tile.type === 'road'
         ? getRoadClassLabel(tile.level || 1, tile.variant || 0)
         : tile.type === 'bridge'
-          ? (tile.level || 1) >= 3
-            ? 'Ponte Estaiada de Duas Faixas'
-            : (tile.level || 1) === 2
-              ? 'Ponte de Arcos Metálicos Dupla'
-              : (tile.variant || 0) === 1
-                ? 'Ponte de Pedra Dupla'
-                : 'Ponte de Pedra'
+          ? (tile.level || 1) >= 4
+            ? isDoubleWidthBridgeTile(cityRef.current, tile.x, tile.y)
+              ? 'Megaponte Expressa (2 Espaços)'
+              : 'Megaponte Estaiada Expressa'
+            : (tile.level || 1) === 3
+              ? 'Ponte Estaiada de Duas Faixas'
+              : (tile.level || 1) === 2
+                ? 'Ponte de Arcos Metálicos Dupla'
+                : (tile.variant || 0) === 1
+                  ? 'Ponte de Pedra Dupla'
+                  : 'Ponte de Pedra'
           : tile.type === 'rural' ||
               tile.type === 'residential' ||
               tile.type === 'commercial' ||
@@ -1374,6 +1386,9 @@ export default function App() {
               tile.type === 'airport' ||
               tile.type === 'stadium' ||
               tile.type === 'port' ||
+              tile.type === 'bus_station' ||
+              tile.type === 'metro_station' ||
+              tile.type === 'shopping' ||
               tile.type === 'park' ||
               tile.type === 'abandoned'
             ? getZoneDisplayLabel(tile)
@@ -1385,11 +1400,20 @@ export default function App() {
       tile.type === 'industrial' ||
       tile.type === 'bridge' ||
       tile.type === 'port' ||
-      tile.type === 'airport'
+      tile.type === 'airport' ||
+      tile.type === 'bus_station' ||
+      tile.type === 'metro_station' ||
+      tile.type === 'shopping'
         ? ` Nv.${tile.level || 1}`
         : '';
+    const districtSuffix =
+      tile.type === 'residential' ||
+      tile.type === 'commercial' ||
+      tile.type === 'industrial'
+        ? ` · ${getNeighborhoodDistrictLabel(getNeighborhoodDistrict(cityRef.current, tile.x, tile.y))}`
+        : '';
     setHoveredInfo(
-      `${typeLabel}${lvText} · Pol ${tile.pollution}% · Val ${tile.landValue}`
+      `${typeLabel}${lvText}${districtSuffix} · Pol ${tile.pollution}% · Val ${tile.landValue}`
     );
   };
 
@@ -1787,13 +1811,17 @@ export default function App() {
                   : stTile.type === 'road'
                     ? getRoadClassLabel(stTile.level || 1, stTile.variant || 0)
                     : stTile.type === 'bridge'
-                      ? (stTile.level || 1) >= 3
-                        ? 'Ponte Estaiada de Duas Faixas'
-                        : (stTile.level || 1) === 2
-                          ? 'Ponte de Arcos Dupla'
-                          : (stTile.variant || 0) === 1
-                            ? 'Ponte de Pedra Dupla'
-                            : 'Ponte sobre o Rio'
+                      ? (stTile.level || 1) >= 4
+                        ? isDoubleWidthBridgeTile(cityRef.current, stTile.x, stTile.y)
+                          ? 'Megaponte Expressa de 2 Espaços (Nv. 4)'
+                          : 'Megaponte Estaiada Expressa (Nv. 4)'
+                        : (stTile.level || 1) === 3
+                          ? 'Ponte Estaiada de Duas Faixas'
+                          : (stTile.level || 1) === 2
+                            ? 'Ponte de Arcos Dupla'
+                            : (stTile.variant || 0) === 1
+                              ? 'Ponte de Pedra Dupla'
+                              : 'Ponte sobre o Rio'
                       : getZoneDisplayLabel(stTile);
 
               const activeConstructionStage = getTileConstructionStage(
@@ -1808,6 +1836,17 @@ export default function App() {
                     <div className="min-w-0">
                       <div className="font-pixel text-[7px] text-[#ffe066] truncate">
                         LOTE ({selectedTileCoords.tx}, {selectedTileCoords.ty})
+                        {stTile.type === 'residential' ||
+                        stTile.type === 'commercial' ||
+                        stTile.type === 'industrial'
+                          ? ` · ${getNeighborhoodDistrictLabel(
+                              getNeighborhoodDistrict(
+                                cityRef.current,
+                                selectedTileCoords.tx,
+                                selectedTileCoords.ty
+                              )
+                            ).toUpperCase()}`
+                          : ''}
                       </div>
                       <div className="text-[15.5px] font-bold text-[#eef2f7] leading-tight truncate">
                         {stLabel}
@@ -1887,6 +1926,46 @@ export default function App() {
                         {hud.stats.visitorTrafficPct}%
                       </strong>
                     </div>
+                  ) : null}
+
+                  {!onTollTile &&
+                  !onBorderPortal &&
+                  (stTile.type === 'residential' ||
+                    stTile.type === 'commercial' ||
+                    stTile.type === 'industrial') ? (
+                    (() => {
+                      const mat = getNeighborhoodMaturity(
+                        cityRef.current,
+                        selectedTileCoords.tx,
+                        selectedTileCoords.ty
+                      );
+                      const r12Pct = Math.round(mat.region12FillRatio * 100);
+                      const lv = stTile.level || 1;
+                      let evoHint = '';
+                      if (lv === 1) {
+                        evoHint = mat.region12AllLevel1
+                          ? 'Região 12×12 completa (100%) · Pronto p/ evoluir p/ Nv. 2'
+                          : `Região 12×12 no Nv. 1: ${r12Pct}% (faltam ${mat.region12EmptyLots} lotes p/ evoluir)`;
+                      } else if (lv === 2) {
+                        evoHint =
+                          hud.totalPopulation < URBAN_MATURITY_CONFIG.largeBuildingMinPopulation
+                            ? `Prédios Grandes (Nv. 3) liberam aos ${URBAN_MATURITY_CONFIG.largeBuildingMinPopulation.toLocaleString('pt-BR')} hab.`
+                            : mat.region12AllLevel1
+                              ? 'Região 12×12 consolidada · Elegível p/ Prédio Grande (Nv. 3)'
+                              : `Região 12×12: ${r12Pct}% (preencha ${mat.region12EmptyLots} lotes)`;
+                      } else if (lv === 3 && (stTile.type === 'residential' || stTile.type === 'commercial')) {
+                        evoHint =
+                          hud.totalPopulation < URBAN_MATURITY_CONFIG.skyscraperMinPopulation
+                            ? `Arranha-céus 2×2 (Nv. 4) liberam aos ${URBAN_MATURITY_CONFIG.skyscraperMinPopulation.toLocaleString('pt-BR')} hab. + Av. Larga 2×2`
+                            : 'Metrópole 30k ativa · Arranha-céu 2×2 requer Av. Larga 2×2 ao lado';
+                      }
+                      if (!evoHint) return null;
+                      return (
+                        <div className="pixel-inset px-2 py-1 text-[12.5px] text-[#cfd9e8] leading-snug">
+                          {evoHint}
+                        </div>
+                      );
+                    })()
                   ) : null}
 
                   {condoInfo ? (

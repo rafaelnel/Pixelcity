@@ -8,6 +8,7 @@ import {
   unrotateGridCoord,
 } from './isoMath';
 import {
+  getMetroNetworkStations,
   getSkyscraperRoofHeightHd,
   getSkyscraperStyleIdx,
   getTile,
@@ -1444,6 +1445,119 @@ function getRoadSprite(
     );
   }
 
+  // LEVEL 2 (variant 2): 64-Bit 2×2 Wide Grand Boulevard (Avenida Larga 2×2 — required for Skyscrapers!)
+  if (lv === 2 && variant === 2) {
+    return getOrCreateSprite(`road64_wide_ave_v2_${rotMask}_${st % 4}`, 76, 66, 38, 40, (ctx, cx, cy) => {
+      // Polished metropolitan granite sidewalk apron
+      const curb = ctx.createLinearGradient(cx - 32, cy - 16, cx + 32, cy + 16);
+      curb.addColorStop(0, '#d8e1ee');
+      curb.addColorStop(1, '#9ea9bc');
+      fillDiamond64(ctx, cx, cy, TILE_HW + 0.6, TILE_HH + 0.35, curb);
+
+      // Extra-wide multi-lane dark metropolitan asphalt filling seamlessly into parallel twin tiles!
+      const asphalt = '#252d3b';
+      fillDiamond64(ctx, cx, cy, 30.2, 15.1, '#e2eaf5');
+      fillDiamond64(ctx, cx, cy, 29.0, 14.5, asphalt);
+
+      const drawWideArm = (dx: number, dy: number) => {
+        for (let t = 1; t <= 8; t++) {
+          fillDiamond64(ctx, cx + (dx * t) / 8, cy + (dy * t) / 8, 24.0, 12.0, asphalt);
+        }
+        const perpX = dy > 0 ? -1 : 1;
+        const perpY = dx > 0 ? 0.5 : -0.5;
+        // Dedicated BRT cyan-accent transit shoulder stripe + dashed crisp white lane dividers
+        drawLine64(
+          ctx,
+          cx + dx * 0.16 + perpX * 8.2,
+          cy + dy * 0.16 + perpY * 8.2,
+          cx + dx * 0.94 + perpX * 8.2,
+          cy + dy * 0.94 + perpY * 8.2,
+          'rgba(56, 189, 248, 0.72)',
+          1.15
+        );
+        // Double golden boulevard centerline
+        drawLine64(
+          ctx,
+          cx + dx * 0.14 + perpX * 0.85,
+          cy + dy * 0.14 + perpY * 0.85,
+          cx + dx * 0.96 + perpX * 0.85,
+          cy + dy * 0.96 + perpY * 0.85,
+          '#facc15',
+          1.05
+        );
+        drawLine64(
+          ctx,
+          cx + dx * 0.14 - perpX * 0.85,
+          cy + dy * 0.14 - perpY * 0.85,
+          cx + dx * 0.96 - perpX * 0.85,
+          cy + dy * 0.96 - perpY * 0.85,
+          '#facc15',
+          1.05
+        );
+        // Dashed white fast-lane divider
+        for (const seg of [
+          [0.24, 0.48],
+          [0.64, 0.88],
+        ]) {
+          drawLine64(
+            ctx,
+            cx + dx * seg[0] - perpX * 5.2,
+            cy + dy * seg[0] - perpY * 5.2,
+            cx + dx * seg[1] - perpX * 5.2,
+            cy + dy * seg[1] - perpY * 5.2,
+            'rgba(241, 245, 249, 0.90)',
+            1.0
+          );
+          drawLine64(
+            ctx,
+            cx + dx * seg[0] + perpX * 4.8,
+            cy + dy * seg[0] + perpY * 4.8,
+            cx + dx * seg[1] + perpX * 4.8,
+            cy + dy * seg[1] + perpY * 4.8,
+            'rgba(241, 245, 249, 0.86)',
+            1.0
+          );
+        }
+      };
+
+      if (rotMask & 1) drawWideArm(16, -8);
+      if (rotMask & 2) drawWideArm(16, 8);
+      if (rotMask & 4) drawWideArm(-16, 8);
+      if (rotMask & 8) drawWideArm(-16, -8);
+
+      drawAsphaltDetails64(ctx, cx, cy, st, false);
+
+      // Sleek corner zebra stripes & architectural golden boulevard twin-lamps
+      const bits =
+        (rotMask & 1 ? 1 : 0) +
+        (rotMask & 2 ? 1 : 0) +
+        (rotMask & 4 ? 1 : 0) +
+        (rotMask & 8 ? 1 : 0);
+      if (bits >= 3) {
+        for (let s = -1; s <= 1; s++) {
+          drawLine64(
+            ctx,
+            cx - 4 + s * 2.4,
+            cy - 8.2 + s * 0.4,
+            cx + 2 + s * 2.4,
+            cy - 5.6 + s * 0.4,
+            'rgba(241, 245, 249, 0.85)',
+            1.1
+          );
+        }
+      }
+      if (st % 2 === 0) {
+        const lx = (rotMask & 2) && (rotMask & 8) ? cx + 19 : cx - 19;
+        const ly = cy - 4;
+        drawLine64(ctx, lx, ly, lx, ly - 11, '#475569', 1.6);
+        drawLine64(ctx, lx - 2.5, ly - 11, lx + 2.5, ly - 11, '#cbd5e1', 1.2);
+        drawGlow64(ctx, lx, ly - 11.5, 6, 'rgba(255, 232, 138, 0.88)');
+        ctx.fillStyle = '#fff9c4';
+        ctx.fillRect(lx - 2, ly - 12, 4, 1.5);
+      }
+    });
+  }
+
   // LEVEL 2: 64-Bit Tree-Lined Urban Boulevard (Avenida Arborizada)
   if (lv === 2) {
     return getOrCreateSprite(`road64_ave_v2_${rotMask}_${st}`, 72, 60, 36, 36, (ctx, cx, cy) => {
@@ -1583,29 +1697,36 @@ function getRoadSprite(
  * - Nv. 1: Ponte Histórica de Pedra & Madeira com arco elevado e lampiões dourados
  * - Nv. 2: Ponte de Arcos Metálicos Vermelhos com treliça dupla de aço e pista asfaltada
  * - Nv. 3: Ponte Estaiada Monumental com torres A-frame iluminadas, cabos tensores e farol aéreo
+ * - Nv. 4: Megaponte Expressa de 2 Espaços de Largura (pista dupla contígua com torres gêmeas branco/ouro e estais dourados/ciano)
  */
+type BridgeTwinSide = 'none' | 'back' | 'front';
+
 function getBridgeSprite(
   rotMask: number,
   level: number,
   variant: number,
   isCenterSpan: boolean,
-  animFrame: number
+  animFrame: number,
+  twinSide: BridgeTwinSide = 'none',
+  forceAxis?: 'ew' | 'ns'
 ): CachedSprite {
   const f = animFrame % 4;
-  const lv = Math.max(1, Math.min(3, level || 1));
+  const lv = Math.max(1, Math.min(4, level || 1));
   const isWide = variant === 1 || lv >= 2;
   const isEW =
-    ((rotMask & 2) !== 0 || (rotMask & 8) !== 0) &&
-    !((rotMask & 1) !== 0 && (rotMask & 4) !== 0);
+    forceAxis !== undefined
+      ? forceAxis === 'ew'
+      : ((rotMask & 2) !== 0 || (rotMask & 8) !== 0) &&
+        !((rotMask & 1) !== 0 && (rotMask & 4) !== 0);
   const axisKey = isEW ? 'ew' : 'ns';
   const spanKey = isCenterSpan ? 'mid' : 'edge';
 
   return getOrCreateSprite(
-    `bridge64_over_${axisKey}_lv${lv}_w${isWide ? 1 : 0}_${spanKey}_${f}`,
+    `bridge64_over_${axisKey}_lv${lv}_w${isWide ? 1 : 0}_t${twinSide}_${spanKey}_${f}`,
     96,
-    126,
+    136,
     48,
-    92,
+    102,
     (ctx, cx, cy) => {
       const adx = 16;
       const ady = isEW ? 8 : -8;
@@ -1762,116 +1883,326 @@ function getBridgeSprite(
         drawSteelArch(-sideX, -sideY, '#c93434', '#ff8066');
       } else {
         // LEVEL 3: Monumental Wide Dual-Carriageway Cable-Stayed Bridge (Ponte Estaiada de Duas Faixas)
-        drawPrism64(ctx, cx - pierOff, cy + 13, 6.2, 18, {
-          top: '#f1f5f9',
-          left: '#e2e8f0',
-          right: '#8f9fb5',
-        });
-        drawPrism64(ctx, cx + pierOff, cy + 13, 6.2, 18, {
-          top: '#f1f5f9',
-          left: '#e2e8f0',
-          right: '#8f9fb5',
-        });
+        if (lv === 3) {
+          drawPrism64(ctx, cx - pierOff, cy + 13, 6.2, 18, {
+            top: '#f1f5f9',
+            left: '#e2e8f0',
+            right: '#8f9fb5',
+          });
+          drawPrism64(ctx, cx + pierOff, cy + 13, 6.2, 18, {
+            top: '#f1f5f9',
+            left: '#e2e8f0',
+            right: '#8f9fb5',
+          });
 
-        const pylonH = 62;
-        const pylonTopY = dy - pylonH;
+          const pylonH = 62;
+          const pylonTopY = dy - pylonH;
 
-        if (isCenterSpan) {
-          // Back-side taut silver-cyan stay cables
-          for (const frac of [-0.95, -0.7, -0.45, -0.22, 0.22, 0.45, 0.7, 0.95]) {
-            const ax = cx + adx * frac + sideX;
-            const ay = dy + ady * frac + sideY;
-            drawLine64(ctx, cx, pylonTopY + 7, ax, ay, 'rgba(186, 230, 253, 0.85)', 1.05);
+          if (isCenterSpan) {
+            // Back-side taut silver-cyan stay cables
+            for (const frac of [-0.95, -0.7, -0.45, -0.22, 0.22, 0.45, 0.7, 0.95]) {
+              const ax = cx + adx * frac + sideX;
+              const ay = dy + ady * frac + sideY;
+              drawLine64(ctx, cx, pylonTopY + 7, ax, ay, 'rgba(186, 230, 253, 0.85)', 1.05);
+            }
           }
-        }
 
-        // Wide illuminated modern dual-carriageway expressway deck
-        drawDualLaneDeckMarkings(22.5, 18.2, '#272f3f', '#eef3f9');
+          // Wide illuminated modern dual-carriageway expressway deck
+          drawDualLaneDeckMarkings(22.5, 18.2, '#272f3f', '#eef3f9');
 
-        // Front architectural white parapet + cyan LED bridge edge lighting
-        drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 2, cx + adx - sideX, dy + ady - sideY - 2, '#ffffff', 2.2);
-        drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 0.4, cx + adx - sideX, dy + ady - sideY - 0.4, '#38bdf8', 1.2);
+          // Front architectural white parapet + cyan LED bridge edge lighting
+          drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 2, cx + adx - sideX, dy + ady - sideY - 2, '#ffffff', 2.2);
+          drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 0.4, cx + adx - sideX, dy + ady - sideY - 0.4, '#38bdf8', 1.2);
 
-        if (isCenterSpan) {
-          // Soaring sculptural White A-Frame Pylon Tower spanning the wider dual deck
-          drawLine64(ctx, cx + sideX, dy + sideY, cx, pylonTopY, '#ffffff', 3.6);
-          drawLine64(ctx, cx - sideX, dy - sideY, cx + 1, pylonTopY, '#94a3b8', 3.6);
-          drawLine64(ctx, cx - sideX - 1, dy - sideY, cx, pylonTopY, '#e2e8f0', 2.0);
+          if (isCenterSpan) {
+            // Soaring sculptural White A-Frame Pylon Tower spanning the wider dual deck
+            drawLine64(ctx, cx + sideX, dy + sideY, cx, pylonTopY, '#ffffff', 3.6);
+            drawLine64(ctx, cx - sideX, dy - sideY, cx + 1, pylonTopY, '#94a3b8', 3.6);
+            drawLine64(ctx, cx - sideX - 1, dy - sideY, cx, pylonTopY, '#e2e8f0', 2.0);
 
-          // Upper cross-struts & glowing cyan LED architectural spine
-          drawLine64(ctx, cx - 6, pylonTopY + 26, cx + 6, pylonTopY + 26, '#e2e8f0', 3.2);
-          drawLine64(ctx, cx - 4, pylonTopY + 14, cx + 4, pylonTopY + 14, '#f8fafc', 2.8);
-          drawLine64(ctx, cx, pylonTopY + 9, cx, pylonTopY + 38, '#38bdf8', 2.2);
-          drawGlow64(ctx, cx, pylonTopY + 20, 10, 'rgba(56, 189, 248, 0.38)', 'rgba(56, 189, 248, 0)');
+            // Upper cross-struts & glowing cyan LED architectural spine
+            drawLine64(ctx, cx - 6, pylonTopY + 26, cx + 6, pylonTopY + 26, '#e2e8f0', 3.2);
+            drawLine64(ctx, cx - 4, pylonTopY + 14, cx + 4, pylonTopY + 14, '#f8fafc', 2.8);
+            drawLine64(ctx, cx, pylonTopY + 9, cx, pylonTopY + 38, '#38bdf8', 2.2);
+            drawGlow64(ctx, cx, pylonTopY + 20, 10, 'rgba(56, 189, 248, 0.38)', 'rgba(56, 189, 248, 0)');
 
-          // Spire + glowing red aviation warning beacon
-          drawLine64(ctx, cx, pylonTopY, cx, pylonTopY - 9, '#f8fafc', 1.6);
-          drawGlow64(ctx, cx, pylonTopY - 10, 6.5, 'rgba(255, 77, 77, 0.85)', 'rgba(255, 77, 77, 0)');
-          ctx.fillStyle = '#ff6b6b';
-          ctx.beginPath();
-          ctx.arc(cx, pylonTopY - 10, 2.1, 0, Math.PI * 2);
-          ctx.fill();
+            // Spire + glowing red aviation warning beacon
+            drawLine64(ctx, cx, pylonTopY, cx, pylonTopY - 9, '#f8fafc', 1.6);
+            drawGlow64(ctx, cx, pylonTopY - 10, 6.5, 'rgba(255, 77, 77, 0.85)', 'rgba(255, 77, 77, 0)');
+            ctx.fillStyle = '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(cx, pylonTopY - 10, 2.1, 0, Math.PI * 2);
+            ctx.fill();
 
-          // Front-side gleaming white tension cables (estais)
-          for (const frac of [-0.95, -0.7, -0.45, -0.22, 0.22, 0.45, 0.7, 0.95]) {
-            const ax = cx + adx * frac - sideX;
-            const ay = dy + ady * frac - sideY - 2;
-            drawLine64(ctx, cx, pylonTopY + 7, ax, ay, '#f8fafc', 1.2);
+            // Front-side gleaming white tension cables (estais)
+            for (const frac of [-0.95, -0.7, -0.45, -0.22, 0.22, 0.45, 0.7, 0.95]) {
+              const ax = cx + adx * frac - sideX;
+              const ay = dy + ady * frac - sideY - 2;
+              drawLine64(ctx, cx, pylonTopY + 7, ax, ay, '#f8fafc', 1.2);
+            }
+          } else {
+            // Approach span: sleek white bridge light masts + approach anchor cables
+            for (const frac of [-0.45, 0.45]) {
+              const lx = cx + adx * frac - sideX;
+              const ly = dy + ady * frac - sideY;
+              drawLine64(ctx, lx, ly, lx, ly - 16, '#cbd5e1', 1.6);
+              drawGlow64(ctx, lx, ly - 17, 6, 'rgba(255, 240, 165, 0.85)', 'rgba(255, 240, 165, 0)');
+              ctx.fillStyle = '#fff9d6';
+              ctx.beginPath();
+              ctx.arc(lx, ly - 17, 1.7, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 2, cx, dy - 24, 'rgba(186, 230, 253, 0.72)', 1.05);
+            drawLine64(ctx, cx + adx - sideX, dy + ady - sideY - 2, cx, dy - 24, 'rgba(186, 230, 253, 0.72)', 1.05);
           }
         } else {
-          // Approach span: sleek white bridge light masts + approach anchor cables
-          for (const frac of [-0.45, 0.45]) {
-            const lx = cx + adx * frac - sideX;
-            const ly = dy + ady * frac - sideY;
-            drawLine64(ctx, lx, ly, lx, ly - 16, '#cbd5e1', 1.6);
-            drawGlow64(ctx, lx, ly - 17, 6, 'rgba(255, 240, 165, 0.85)', 'rgba(255, 240, 165, 0)');
-            ctx.fillStyle = '#fff9d6';
-            ctx.beginPath();
-            ctx.arc(lx, ly - 17, 1.7, 0, Math.PI * 2);
-            ctx.fill();
+          // LEVEL 4: Ultimate 2-Tile-Wide Twin-Deck Mega-Bridge (Megaponte Expressa de 2 Espaços)
+          const isTwinBack = twinSide === 'back';
+          const isTwinFront = twinSide === 'front';
+          const isTwin = isTwinBack || isTwinFront;
+          // Shift deck slightly toward the sibling deck so the 2 parallel bridge tiles fuse seamlessly over the river
+          const seamBiasX = isTwinBack ? -sideX * 0.26 : isTwinFront ? sideX * 0.26 : 0;
+          const seamBiasY = isTwinBack ? -sideY * 0.26 : isTwinFront ? sideY * 0.26 : 0;
+          const dcx = cx + seamBiasX;
+          const dcy = dy + seamBiasY;
+
+          // Reinforced monumental river caissons with golden structural collar
+          drawPrism64(ctx, cx - pierOff, cy + 13, 6.8, 19, {
+            top: '#f8fafc',
+            left: '#e2e8f0',
+            right: '#64748b',
+          });
+          drawPrism64(ctx, cx + pierOff, cy + 13, 6.8, 19, {
+            top: '#f8fafc',
+            left: '#e2e8f0',
+            right: '#64748b',
+          });
+          drawLine64(ctx, cx - pierOff - 3, cy + 6, cx - pierOff + 3, cy + 6, '#f5b73b', 1.4);
+          drawLine64(ctx, cx + pierOff - 3, cy + 6, cx + pierOff + 3, cy + 6, '#f5b73b', 1.4);
+
+          const pylonH = 72;
+          const outerDir = isTwinBack ? 1 : -1;
+          const outerEdgeX = dcx + sideX * outerDir;
+          const outerEdgeY = dcy + sideY * outerDir;
+          const pylonTipX = isTwin ? dcx + sideX * outerDir * 0.52 : cx;
+          const pylonTipY = dcy - pylonH;
+
+          // Back-side fan of gleaming golden & ice-cyan stay cables before deck
+          if (isCenterSpan && (isTwinBack || !isTwin)) {
+            for (const frac of [-0.96, -0.74, -0.52, -0.28, 0.28, 0.52, 0.74, 0.96]) {
+              const ax = dcx + adx * frac + sideX;
+              const ay = dcy + ady * frac + sideY - 1;
+              drawLine64(ctx, pylonTipX, pylonTipY + 8, ax, ay, 'rgba(254, 240, 138, 0.85)', 1.1);
+            }
           }
-          drawLine64(ctx, cx - adx - sideX, dy - ady - sideY - 2, cx, dy - 24, 'rgba(186, 230, 253, 0.72)', 1.05);
-          drawLine64(ctx, cx + adx - sideX, dy + ady - sideY - 2, cx, dy - 24, 'rgba(186, 230, 253, 0.72)', 1.05);
+
+          // Extra-wide dark expressway asphalt deck spanning seamlessly across the 2-tile width
+          const outerDeckW = isTwin ? 26.5 : 23.8;
+          const innerDeckW = isTwin ? 22.8 : 19.6;
+          for (let t = -8; t <= 8; t += 1) {
+            const ax = dcx + (adx * t) / 8;
+            const ay = dcy + (ady * t) / 8;
+            fillDiamond64(ctx, ax, ay, outerDeckW, outerDeckW * 0.5, '#e2e8f0');
+            fillDiamond64(ctx, ax, ay, innerDeckW, innerDeckW * 0.5, '#1e2636');
+          }
+
+          // Express multi-lane white dashed striping (2 full lanes per deck = 4+ lanes across 2 tiles)
+          for (const laneFrac of [-0.36, 0.36]) {
+            const lox = sideX * laneFrac;
+            const loy = sideY * laneFrac;
+            for (const seg of [
+              [-0.84, -0.44],
+              [-0.20, 0.20],
+              [0.44, 0.84],
+            ]) {
+              drawLine64(
+                ctx,
+                dcx + adx * seg[0] + lox,
+                dcy + ady * seg[0] + loy,
+                dcx + adx * seg[1] + lox,
+                dcy + ady * seg[1] + loy,
+                'rgba(248, 250, 252, 0.86)',
+                1.05
+              );
+            }
+          }
+
+          if (isTwin) {
+            // Central luminous boulevard median right on the seam joining the 2 decks
+            const seamDir = -outerDir;
+            const sx1 = dcx - adx * 0.98 + sideX * seamDir * 0.92;
+            const sy1 = dcy - ady * 0.98 + sideY * seamDir * 0.92;
+            const sx2 = dcx + adx * 0.98 + sideX * seamDir * 0.92;
+            const sy2 = dcy + ady * 0.98 + sideY * seamDir * 0.92;
+            drawLine64(ctx, sx1, sy1, sx2, sy2, '#cbd5e1', 2.4);
+            drawLine64(ctx, sx1, sy1 - 0.9, sx2, sy2 - 0.9, '#ffe066', 1.2);
+            if (isTwinBack) {
+              // Subtle central median LED beacon nodes along the seam
+              for (const mf of [-0.55, 0, 0.55]) {
+                const mx = dcx + adx * mf + sideX * seamDir * 0.92;
+                const my = dcy + ady * mf + sideY * seamDir * 0.92 - 2;
+                drawGlow64(ctx, mx, my, 4.5, 'rgba(56, 189, 248, 0.65)', 'rgba(56, 189, 248, 0)');
+              }
+            }
+          } else {
+            // Single-width Nv. 4 central golden-white express divider
+            drawLine64(ctx, dcx - adx * 0.94, dcy - ady * 0.94, dcx + adx * 0.94, dcy + ady * 0.94, '#cbd5e1', 2.5);
+            drawLine64(ctx, dcx - adx * 0.94, dcy - ady * 0.94 - 0.9, dcx + adx * 0.94, dcy + ady * 0.94 - 0.9, '#ffe066', 1.1);
+          }
+
+          // Outer architectural white/gold parapet + glowing cyan LED ribbon
+          const drawOuterParapet = (dirSign: number) => {
+            const px1 = dcx - adx + sideX * dirSign;
+            const py1 = dcy - ady + sideY * dirSign;
+            const px2 = dcx + adx + sideX * dirSign;
+            const py2 = dcy + ady + sideY * dirSign;
+            drawLine64(ctx, px1, py1 - 2.4, px2, py2 - 2.4, '#ffffff', 2.4);
+            drawLine64(ctx, px1, py1 - 0.6, px2, py2 - 0.6, '#38bdf8', 1.4);
+            drawLine64(ctx, px1, py1 - 3.6, px2, py2 - 3.6, '#f5b73b', 0.9);
+          };
+          if (isTwin) {
+            drawOuterParapet(outerDir);
+          } else {
+            drawOuterParapet(1);
+            drawOuterParapet(-1);
+          }
+
+          if (isCenterSpan) {
+            // Soaring sculptural White & Gold Mega-Pylon Tower
+            if (isTwin) {
+              // Monumental twin-deck outer angled tower leg + golden-lit inner buttress
+              drawLine64(ctx, outerEdgeX, outerEdgeY, pylonTipX, pylonTipY, '#ffffff', 4.2);
+              drawLine64(ctx, outerEdgeX + 1.5, outerEdgeY, pylonTipX + 1.2, pylonTipY, '#94a3b8', 2.4);
+              drawLine64(ctx, dcx, dcy, pylonTipX, pylonTipY + 18, '#e2e8f0', 2.6);
+              // Golden architectural crown rings & cyan vertical LED spine
+              drawLine64(ctx, pylonTipX - 4.5, pylonTipY + 26, pylonTipX + 4.5, pylonTipY + 26, '#f5b73b', 3.0);
+              drawLine64(ctx, pylonTipX - 3.5, pylonTipY + 13, pylonTipX + 3.5, pylonTipY + 13, '#ffe066', 2.6);
+              drawLine64(ctx, pylonTipX, pylonTipY + 8, pylonTipX, pylonTipY + 42, '#38bdf8', 2.4);
+              drawGlow64(ctx, pylonTipX, pylonTipY + 22, 11, 'rgba(56, 189, 248, 0.42)', 'rgba(56, 189, 248, 0)');
+            } else {
+              drawLine64(ctx, dcx + sideX, dcy + sideY, pylonTipX, pylonTipY, '#ffffff', 4.0);
+              drawLine64(ctx, dcx - sideX, dcy - sideY, pylonTipX + 1, pylonTipY, '#94a3b8', 4.0);
+              drawLine64(ctx, dcx - sideX - 1, dcy - sideY, pylonTipX, pylonTipY, '#f8fafc', 2.2);
+              drawLine64(ctx, pylonTipX - 6.5, pylonTipY + 28, pylonTipX + 6.5, pylonTipY + 28, '#f5b73b', 3.2);
+              drawLine64(ctx, pylonTipX - 4.5, pylonTipY + 14, pylonTipX + 4.5, pylonTipY + 14, '#ffe066', 2.8);
+              drawLine64(ctx, pylonTipX, pylonTipY + 8, pylonTipX, pylonTipY + 42, '#38bdf8', 2.4);
+              drawGlow64(ctx, pylonTipX, pylonTipY + 22, 11, 'rgba(255, 224, 102, 0.36)', 'rgba(255, 224, 102, 0)');
+            }
+
+            // Tall golden spire + glowing aviation beacon
+            drawLine64(ctx, pylonTipX, pylonTipY, pylonTipX, pylonTipY - 11, '#ffe066', 1.8);
+            drawGlow64(ctx, pylonTipX, pylonTipY - 12, 7.5, 'rgba(255, 77, 77, 0.9)', 'rgba(255, 77, 77, 0)');
+            ctx.fillStyle = '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(pylonTipX, pylonTipY - 12, 2.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Front-side sweeping golden & cyan tension cables
+            if (isTwinFront || !isTwin) {
+              for (const frac of [-0.96, -0.74, -0.52, -0.28, 0.28, 0.52, 0.74, 0.96]) {
+                const ax = dcx + adx * frac - sideX;
+                const ay = dcy + ady * frac - sideY - 2;
+                const col = Math.abs(frac) > 0.6 ? '#ffe066' : '#e0f2fe';
+                drawLine64(ctx, pylonTipX, pylonTipY + 8, ax, ay, col, 1.25);
+              }
+            }
+          } else {
+            // Approach spans: sleek golden-trimmed expressway light masts along the outer parapet
+            const mastDir = isTwin ? outerDir : -1;
+            for (const frac of [-0.48, 0.48]) {
+              const lx = dcx + adx * frac + sideX * mastDir;
+              const ly = dcy + ady * frac + sideY * mastDir;
+              drawLine64(ctx, lx, ly - 1, lx, ly - 18, '#e2e8f0', 1.8);
+              drawLine64(ctx, lx, ly - 18, lx - sideX * mastDir * 0.22, ly - 19, '#f5b73b', 1.4);
+              drawGlow64(ctx, lx, ly - 19, 6.5, 'rgba(255, 232, 138, 0.9)', 'rgba(255, 232, 138, 0)');
+              ctx.fillStyle = '#fff9d6';
+              ctx.beginPath();
+              ctx.arc(lx, ly - 19, 1.8, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
         }
       }
     }
   );
 }
 
-function isBridgeCenterSpan(state: CityState, tile: Tile): boolean {
-  // Measure contiguous span along N-S or E-W so long bridges (up to 8 tiles) place architectural pylons cleanly
-  const hasNS =
-    getTile(state, tile.x, tile.y - 1)?.type === 'bridge' ||
-    getTile(state, tile.x, tile.y + 1)?.type === 'bridge';
-  const hasEW =
-    getTile(state, tile.x - 1, tile.y)?.type === 'bridge' ||
-    getTile(state, tile.x + 1, tile.y)?.type === 'bridge';
+/**
+ * Determine exact crossing axis, center-pylon placement, and 2-tile-wide twin-deck side
+ * in camera-rotated screen space so 1-tile and 2-tile-wide bridges render seamlessly across all 4 rotations.
+ */
+function getBridgeRenderTopology(
+  state: CityState,
+  tile: Tile,
+  rotation: CameraRotation
+): { isCenterSpan: boolean; twinSide: BridgeTwinSide; screenAxis: 'ew' | 'ns' } {
+  let minY = tile.y;
+  let maxY = tile.y;
+  while (getTile(state, tile.x, minY - 1)?.type === 'bridge') minY--;
+  while (getTile(state, tile.x, maxY + 1)?.type === 'bridge') maxY++;
+  const lenNS = maxY - minY + 1;
 
-  if (hasNS && !hasEW) {
-    let minY = tile.y;
-    let maxY = tile.y;
-    while (getTile(state, tile.x, minY - 1)?.type === 'bridge') minY--;
-    while (getTile(state, tile.x, maxY + 1)?.type === 'bridge') maxY++;
-    const len = maxY - minY + 1;
-    const idx = tile.y - minY;
-    if (len <= 3) return idx === Math.floor(len / 2);
-    if (len <= 5) return idx === 1 || idx === len - 2;
-    return idx === 2 || idx === len - 3;
+  let minX = tile.x;
+  let maxX = tile.x;
+  while (getTile(state, minX - 1, tile.y)?.type === 'bridge') minX--;
+  while (getTile(state, maxX + 1, tile.y)?.type === 'bridge') maxX++;
+  const lenEW = maxX - minX + 1;
+
+  let worldAxis: 'ew' | 'ns';
+  if (lenEW > lenNS) {
+    worldAxis = 'ew';
+  } else if (lenNS > lenEW) {
+    worldAxis = 'ns';
+  } else {
+    // Equal run (e.g., 1x1 or 2x2 over a narrow river): check which axis connects directly to riverbank roads
+    const roadEW =
+      (getTile(state, minX - 1, tile.y)?.type === 'road' ? 1 : 0) +
+      (getTile(state, maxX + 1, tile.y)?.type === 'road' ? 1 : 0);
+    const roadNS =
+      (getTile(state, tile.x, minY - 1)?.type === 'road' ? 1 : 0) +
+      (getTile(state, tile.x, maxY + 1)?.type === 'road' ? 1 : 0);
+    worldAxis = roadEW >= roadNS ? 'ew' : 'ns';
   }
 
-  if (hasEW && !hasNS) {
-    let minX = tile.x;
-    let maxX = tile.x;
-    while (getTile(state, minX - 1, tile.y)?.type === 'bridge') minX--;
-    while (getTile(state, maxX + 1, tile.y)?.type === 'bridge') maxX++;
-    const len = maxX - minX + 1;
-    const idx = tile.x - minX;
-    if (len <= 3) return idx === Math.floor(len / 2);
-    if (len <= 5) return idx === 1 || idx === len - 2;
-    return idx === 2 || idx === len - 3;
+  const spanLen = worldAxis === 'ew' ? lenEW : lenNS;
+  const spanIdx = worldAxis === 'ew' ? tile.x - minX : tile.y - minY;
+  const isCenterSpan =
+    spanLen <= 3
+      ? spanIdx === Math.floor(spanLen / 2)
+      : spanLen <= 5
+        ? spanIdx === 1 || spanIdx === spanLen - 2
+        : spanIdx === 2 || spanIdx === spanLen - 3;
+
+  const screenAxis: 'ew' | 'ns' =
+    rotation % 2 === 0 ? worldAxis : worldAxis === 'ew' ? 'ns' : 'ew';
+
+  // Detect parallel sibling bridge tile perpendicular to the world crossing axis
+  let sibWorldBit = 0;
+  if (worldAxis === 'ew') {
+    const hasS = getTile(state, tile.x, tile.y + 1)?.type === 'bridge';
+    const hasN = getTile(state, tile.x, tile.y - 1)?.type === 'bridge';
+    if (hasS && !hasN) sibWorldBit = 4; // South
+    else if (hasN && !hasS) sibWorldBit = 1; // North
+  } else {
+    const hasE = getTile(state, tile.x + 1, tile.y)?.type === 'bridge';
+    const hasW = getTile(state, tile.x - 1, tile.y)?.type === 'bridge';
+    if (hasE && !hasW) sibWorldBit = 2; // East
+    else if (hasW && !hasE) sibWorldBit = 8; // West
   }
 
-  return true;
+  let twinSide: BridgeTwinSide = 'none';
+  if (sibWorldBit !== 0) {
+    const sibRotBit = rotateRoadMask(sibWorldBit, rotation);
+    if (screenAxis === 'ew') {
+      // S (4) is closer to camera (-side) => this tile is 'back'; N (1) is farther (+side) => this tile is 'front'
+      twinSide = sibRotBit === 4 ? 'back' : sibRotBit === 1 ? 'front' : 'none';
+    } else {
+      // E (2) is closer to camera (-side) => this tile is 'back'; W (8) is farther (+side) => this tile is 'front'
+      twinSide = sibRotBit === 2 ? 'back' : sibRotBit === 8 ? 'front' : 'none';
+    }
+  }
+
+  return { isCenterSpan, twinSide, screenAxis };
 }
 
 /**
@@ -3681,11 +4012,11 @@ function getStadiumSprite(variant: number): CachedSprite {
 /**
  * 64-Bit HD Isometric Airport (Evolves Nv. 1 -> Nv. 2 -> Nv. 3):
  * Supports the evolving multi-tile Airport Complex:
- * - Level 1 (4×8, 32 tiles): 8-tile Landing Strip (Pista de Aterrissagem), parallel taxiway/apron,
- *   vaulted Aviation Hangar (Galpão), regional passenger terminal, fuel depot & ATC control tower.
+ * - Level 1 (4×10, 40 tiles): 10-tile Regional Landing Strip (Pista de Aterrissagem), parallel taxiway/apron,
+ *   dual Aviation Hangars (Galpões), regional passenger terminal, fuel depot & ATC control tower.
  * - Level 2 & 3 (8×16, 128 tiles): Expanded 16-tile International Runway, rapid-exit taxiways,
  *   dual widebody Galpões, sweeping Glass International Terminal with jetbridges & monumental ATC tower.
- * Also supports legacy 2×2 and 1×1 compact preview cards.
+ * Also supports legacy 6×12, 4×8, 2×2, and 1×1 compact preview cards.
  */
 function getAirportSprite(
   level: number,
@@ -3804,10 +4135,11 @@ function getAirportSprite(
       };
 
       if (isLargeComplex) {
-        // 6×12 (Nv. 1) vs 8×16 (Nv. 2 & Nv. 3) vs legacy 4×8 layout along isometric axes:
+        // 4×10 (Nv. 1) vs 8×16 (Nv. 2 & Nv. 3) vs legacy 6×12 / 4×8 layout along isometric axes:
         // Note: +lotDx moves down-right (+15, +7.5), +lotDy moves down-left (-15, +7.5)!
         const isExpanded = lotW >= 8 || lotH >= 16;
         const isMedium6x12 = !isExpanded && lotW >= 6 && lotH >= 12;
+        const isCompact4x10 = !isExpanded && !isMedium6x12 && lotW === 4 && lotH >= 10;
         const apronStartCol = isExpanded ? 2 : 1;
         const runwayStartCol = isExpanded ? 4 : isMedium6x12 ? 3 : 2;
         const runwayEndCol = isExpanded ? 6 : isMedium6x12 ? 4 : 2;
@@ -3926,13 +4258,15 @@ function getAirportSprite(
             ? lotDx === apronStartCol && (lotDy === 3 || lotDy === 7 || lotDy === 11)
             : isMedium6x12
               ? lotDx === apronStartCol && (lotDy === 3 || lotDy === 6 || lotDy === 9)
-              : lotDy === 2 || lotDy === 5;
+              : isCompact4x10
+                ? lotDy === 3 || lotDy === 6
+                : lotDy === 2 || lotDy === 5;
           if (standMatch) {
             const tailColors = ['#38bdf8', '#ff785a', '#ffe066', '#22c55e'];
             drawParkedJet(
               cx - 1,
               cy + 1,
-              isExpanded || isMedium6x12 ? 0.94 : 0.82,
+              isExpanded || isMedium6x12 ? 0.94 : 0.86,
               tailColors[(lotDy + v) % tailColors.length]
             );
           }
@@ -4002,7 +4336,7 @@ function getAirportSprite(
           return;
         }
 
-        // 2. Aviation Galpões (Hangars) — dual hangars for both 6×12 (Nv. 1) & 8×16 (Nv. 2/3)
+        // 2. Aviation Galpões (Hangars) — dual hangars for 4×10 (Nv. 1), 6×12 & 8×16 (Nv. 2/3)
         const inNorthGalpao = isExpanded
           ? lotDy >= 3 && lotDy <= 6
           : isMedium6x12
@@ -4012,7 +4346,9 @@ function getAirportSprite(
           ? lotDy >= 11 && lotDy <= 14
           : isMedium6x12
             ? lotDy >= 8 && lotDy <= 10
-            : false;
+            : isCompact4x10
+              ? lotDy >= 7 && lotDy <= 8
+              : false;
 
         if (inNorthGalpao || inSouthGalpao) {
           const roofCol = inSouthGalpao
@@ -5957,12 +6293,15 @@ function getTileSprite(
     }
     case 'bridge': {
       const rotMask = rotateRoadMask(getRawRoadMask(state, tile.x, tile.y), rotation);
+      const topo = getBridgeRenderTopology(state, tile, rotation);
       return getBridgeSprite(
         rotMask,
         tile.level || 1,
         tile.variant || 0,
-        isBridgeCenterSpan(state, tile),
-        animFrame
+        topo.isCenterSpan,
+        animFrame,
+        topo.twinSide,
+        topo.screenAxis
       );
     }
     case 'rural':
@@ -6029,7 +6368,508 @@ function getTileSprite(
       );
     case 'airport':
       return getAirportSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy);
+    case 'bus_station':
+      return getBusStationSprite(tile.level || 1, tile.variant || 0);
+    case 'metro_station':
+      return getMetroStationSprite(tile.level || 1, tile.variant || 0);
+    case 'shopping':
+      return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy);
   }
+}
+
+/**
+ * 64-Bit Architectural Shopping Mall Complex Sprite (3 Evolutionary Designs):
+ * - Level 1 (Shopping Pequeno · 6×6): Galleria Regional em pedra creme/terracota com claraboia central, toldos coloridos e estacionamento arborizado.
+ * - Level 2 (Shopping Médio · 8×8): Shopping Metropolitano em vidro safira e dourado com cúpula em cruz, cinema multiplex e boulevard iluminado.
+ * - Level 3 (Shopping Grande · 9×9): Grand Lifestyle Megamall com domo geodésico de cristal, jardim suspenso no terraço, heliponto VIP e torres comerciais.
+ */
+function getShoppingMallSprite(
+  level: number,
+  variant: number,
+  lotW: number = 1,
+  lotH: number = 1,
+  lotDx: number = 0,
+  lotDy: number = 0
+): CachedSprite {
+  const lv = Math.max(1, Math.min(3, level || 1));
+  const v = variant % 4;
+
+  // Compact Diorama Sprite (used in Obras 64-bit preview card & 1×1 fallback)
+  if (lotW <= 1 || lotH <= 1) {
+    return getOrCreateSprite(`shopping64_single_lv${lv}_v${v}`, 96, 108, 48, 76, (ctx, cx, cy) => {
+      // Ornamental plaza & parking base
+      fillDiamond64(ctx, cx, cy, TILE_HW + 1, TILE_HH + 0.5, lv === 3 ? '#cbd5e1' : '#d6d3d1');
+      fillDiamond64(ctx, cx, cy, 28, 14, lv === 3 ? '#94a3b8' : '#a8a29e');
+
+      if (lv === 1) {
+        // Level 1: Warm Terracotta & Cream Galleria Mall (6×6 design miniature)
+        drawPrism64(ctx, cx, cy - 1, 22, 13, {
+          top: '#f5ebe0',
+          left: '#e3d5ca',
+          right: '#c9ada7',
+        });
+        // Terracotta accent cornice band
+        drawLine64(ctx, cx - 22, cy - 12, cx, cy - 1, '#e07a5f', 2.2);
+        drawLine64(ctx, cx, cy - 1, cx + 22, cy - 12, '#c85a32', 2.2);
+        // Glowing central glass skylight dome
+        drawPrism64(ctx, cx, cy - 14, 11, 5.5, {
+          top: '#7dd3fc',
+          left: '#38bdf8',
+          right: '#0284c7',
+        });
+        drawLine64(ctx, cx - 10, cy - 19.5, cx + 10, cy - 19.5, '#e0f2fe', 1.2);
+        drawLine64(ctx, cx, cy - 25, cx, cy - 14, '#e0f2fe', 1.2);
+        // Colorful storefront awnings
+        drawLine64(ctx, cx - 18, cy - 3, cx - 4, cy + 4, '#ef4444', 2.4);
+        drawLine64(ctx, cx + 4, cy + 4, cx + 18, cy - 3, '#f59e0b', 2.4);
+      } else if (lv === 2) {
+        // Level 2: Sapphire Glass & Gold Metropolitan Shopping Center (8×8 design miniature)
+        drawPrism64(ctx, cx, cy - 1, 24, 18, {
+          top: '#e2e8f0',
+          left: '#1e3a8a',
+          right: '#172554',
+        });
+        // Golden horizontal façade ribbons
+        drawLine64(ctx, cx - 24, cy - 11, cx, cy + 1, '#fbbf24', 1.8);
+        drawLine64(ctx, cx, cy + 1, cx + 24, cy - 11, '#d97706', 1.8);
+        drawLine64(ctx, cx - 24, cy - 17, cx, cy - 5, '#f472b6', 1.6);
+        drawLine64(ctx, cx, cy - 5, cx + 24, cy - 17, '#db2777', 1.6);
+        // Cross-shaped vaulted skylight roof & cinema dome
+        drawPrism64(ctx, cx, cy - 19, 14, 7, {
+          top: '#bae6fd',
+          left: '#38bdf8',
+          right: '#0369a1',
+        });
+        drawGlow64(ctx, cx, cy - 24, 12, 'rgba(56, 189, 248, 0.55)');
+      } else {
+        // Level 3: Grand Lifestyle Megamall 9×9 with Crystal Geodesic Dome, Twin Towers & Helipad
+        drawPrism64(ctx, cx, cy - 1, 25, 21, {
+          top: '#f8fafc',
+          left: '#312e81',
+          right: '#1e1b4b',
+        });
+        // Luminous magenta-gold luxury façade bands
+        for (const dy of [-7, -13, -19]) {
+          drawLine64(ctx, cx - 25, cy + dy, cx, cy + dy + 12, '#f472b6', 1.5);
+          drawLine64(ctx, cx, cy + dy + 12, cx + 25, cy + dy, '#fbbf24', 1.5);
+        }
+        // Soaring Crystal Geodesic Dome in the center
+        drawPrism64(ctx, cx, cy - 22, 14, 10, {
+          top: '#e0f2fe',
+          left: '#38bdf8',
+          right: '#0284c7',
+        });
+        drawPrism64(ctx, cx, cy - 32, 8, 6, {
+          top: '#fef08a',
+          left: '#7dd3fc',
+          right: '#38bdf8',
+        });
+        drawGlow64(ctx, cx, cy - 34, 16, 'rgba(244, 114, 182, 0.65)');
+      }
+      drawTree64(ctx, cx - 20, cy + 5, 'emerald', 0.68);
+      drawTree64(ctx, cx + 20, cy + 5, 'emerald', 0.68);
+    });
+  }
+
+  // Multi-Tile Shopping Mall Compound (6×6 Lv.1, 8×8 Lv.2, 9×9 Lv.3)
+  return getOrCreateSprite(
+    `shopping64_compound_${lotW}x${lotH}_lv${lv}_v${v}_${lotDx}_${lotDy}`,
+    88,
+    120,
+    44,
+    84,
+    (ctx, cx, cy) => {
+      const midX = (lotW - 1) * 0.5;
+      const midY = (lotH - 1) * 0.5;
+      const distCenter = Math.max(Math.abs(lotDx - midX), Math.abs(lotDy - midY));
+      const isPerimeter =
+        lotDx === 0 || lotDy === 0 || lotDx === lotW - 1 || lotDy === lotH - 1;
+      const isSouthFront = lotDy === lotH - 1 || (lotDx === 0 && lotDy >= lotH - 2);
+      const isMainEntrance =
+        (lotDy === lotH - 1 && Math.abs(lotDx - midX) <= 1.1) ||
+        (lotDx === 0 && Math.abs(lotDy - midY) <= 1.1);
+      const isAtriumCore = distCenter <= (lv === 3 ? 1.55 : 1.15);
+      const isCrossSkylight =
+        !isPerimeter && (Math.abs(lotDx - midX) <= 0.6 || Math.abs(lotDy - midY) <= 0.6);
+      const isCornerAnchor =
+        !isPerimeter &&
+        (lotDx === 1 || lotDx === lotW - 2) &&
+        (lotDy === 1 || lotDy === lotH - 2);
+
+      // 1. Base Plaza / Granite Promenade Foundation
+      const plazaColor =
+        lv === 3
+          ? (lotDx + lotDy) % 2 === 0
+            ? '#e2e8f0'
+            : '#cbd5e1'
+          : lv === 2
+            ? (lotDx + lotDy) % 2 === 0
+              ? '#d6d3d1'
+              : '#cbd5e1'
+            : (lotDx + lotDy) % 2 === 0
+              ? '#e7e5e4'
+              : '#d6d3d1';
+      fillDiamond64(ctx, cx, cy, TILE_HW + 0.6, TILE_HH + 0.4, plazaColor);
+
+      // 2. Perimeter Parking Bays, Fountains & Landscaped Boulevard
+      if (isPerimeter) {
+        if (isMainEntrance) {
+          // Grand Illuminated Entrance Plaza with Red/Gold Carpet & Fountain
+          fillDiamond64(ctx, cx, cy, 25, 12.5, lv === 3 ? '#f472b6' : lv === 2 ? '#38bdf8' : '#f59e0b');
+          fillDiamond64(ctx, cx, cy, 18, 9, '#fef3c7');
+          drawPrism64(ctx, cx, cy - 1, 9, 4.5, {
+            top: '#7dd3fc',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
+          drawGlow64(ctx, cx, cy - 6, 11, 'rgba(56, 189, 248, 0.75)');
+          drawBushOrFlowerbed64(ctx, cx - 16, cy + 2, 1);
+          drawBushOrFlowerbed64(ctx, cx + 16, cy + 2, 2);
+        } else if (isSouthFront) {
+          // Shopper Parking Lot Bays & Parked Pixel Cars
+          fillDiamond64(ctx, cx, cy, 27, 13.5, '#334155');
+          drawLine64(ctx, cx - 14, cy - 2, cx - 2, cy - 8, '#f8fafc', 1.0);
+          drawLine64(ctx, cx - 4, cy + 3, cx + 8, cy - 3, '#f8fafc', 1.0);
+          const carPalette = ['#ef4444', '#38bdf8', '#facc15', '#a855f7', '#22c55e', '#f97316'];
+          const carCol1 = carPalette[(lotDx * 3 + lotDy + v) % carPalette.length];
+          const carCol2 = carPalette[(lotDx + lotDy * 5 + v + 2) % carPalette.length];
+          drawPrism64(ctx, cx - 6, cy - 1, 5.5, 3.2, {
+            top: carCol1,
+            left: '#1e293b',
+            right: '#0f172a',
+          });
+          drawPrism64(ctx, cx + 6, cy + 2, 5.5, 3.2, {
+            top: carCol2,
+            left: '#1e293b',
+            right: '#0f172a',
+          });
+          if ((lotDx + lotDy) % 2 === 0) {
+            drawTree64(ctx, cx - 18, cy + 3, 'emerald', 0.65);
+          }
+        } else {
+          // Landscaped perimeter retail promenade with boutique kiosks & trees
+          fillDiamond64(ctx, cx, cy, 24, 12, '#94a3b8');
+          drawPrism64(ctx, cx, cy - 1, 16, 8 + lv * 2, {
+            top: lv === 3 ? '#f8fafc' : lv === 2 ? '#e2e8f0' : '#f5ebe0',
+            left: lv === 3 ? '#4338ca' : lv === 2 ? '#1e40af' : '#d6ccc2',
+            right: lv === 3 ? '#312e81' : lv === 2 ? '#1e3a8a' : '#b8a99a',
+          });
+          // Storefront awning & glowing display window
+          const awningCol =
+            (lotDx + lotDy) % 3 === 0 ? '#f43f5e' : (lotDx + lotDy) % 3 === 1 ? '#0ea5e9' : '#f59e0b';
+          const awningSideCol =
+            (lotDx + lotDy) % 3 === 0 ? '#be123c' : (lotDx + lotDy) % 3 === 1 ? '#0369a1' : '#b45309';
+          drawLine64(ctx, cx - 15, cy - 3, cx, cy + 4.5, awningCol, 2.2);
+          drawLine64(ctx, cx, cy + 4.5, cx + 15, cy - 3, awningSideCol, 2.2);
+          drawTree64(ctx, cx + 17, cy + 4, 'emerald', 0.62);
+        }
+        return;
+      }
+
+      // 3. Central Skylight Atrium Dome Core
+      if (isAtriumCore) {
+        const baseH = lv === 3 ? 28 : lv === 2 ? 21 : 15;
+        drawPrism64(ctx, cx, cy, 28, baseH, {
+          top: lv === 3 ? '#e0f2fe' : lv === 2 ? '#bae6fd' : '#f5ebe0',
+          left: lv === 3 ? '#312e81' : lv === 2 ? '#1e3a8a' : '#e3d5ca',
+          right: lv === 3 ? '#1e1b4b' : lv === 2 ? '#172554' : '#c9ada7',
+        });
+
+        // Stepped Crystal Skylight Dome above the atrium
+        const domeH = lv === 3 ? 16 : lv === 2 ? 11 : 7;
+        drawPrism64(ctx, cx, cy - baseH, 22, domeH, {
+          top: '#7dd3fc',
+          left: '#38bdf8',
+          right: '#0284c7',
+        });
+        // Geodesic glass ribs & golden crown on Level 2 & 3
+        drawLine64(ctx, cx - 20, cy - baseH - domeH, cx + 20, cy - baseH - domeH, '#e0f2fe', 1.4);
+        drawLine64(ctx, cx, cy - baseH - domeH - 10, cx, cy - baseH - domeH + 10, '#e0f2fe', 1.4);
+        if (lv >= 2) {
+          drawPrism64(ctx, cx, cy - baseH - domeH, 12, lv === 3 ? 9 : 5, {
+            top: lv === 3 ? '#fef08a' : '#e0f2fe',
+            left: lv === 3 ? '#f472b6' : '#7dd3fc',
+            right: lv === 3 ? '#db2777' : '#0284c7',
+          });
+          drawGlow64(
+            ctx,
+            cx,
+            cy - baseH - domeH - 5,
+            lv === 3 ? 18 : 13,
+            lv === 3 ? 'rgba(244, 114, 182, 0.7)' : 'rgba(56, 189, 248, 0.65)'
+          );
+        }
+        return;
+      }
+
+      // 4. Interior Mall Wings, Anchor Department Stores, Sky-Garden & VIP Helipad
+      const wingH = lv === 3 ? 25 : lv === 2 ? 19 : 14;
+      const topCol =
+        lv === 3
+          ? isCrossSkylight
+            ? '#bae6fd'
+            : '#f1f5f9'
+          : lv === 2
+            ? isCrossSkylight
+              ? '#7dd3fc'
+              : '#e2e8f0'
+            : isCrossSkylight
+              ? '#bae6fd'
+              : '#f5ebe0';
+      const leftCol =
+        lv === 3
+          ? '#3730a3'
+          : lv === 2
+            ? '#1d4ed8'
+            : '#d5bdaf';
+      const rightCol =
+        lv === 3
+          ? '#1e1b4b'
+          : lv === 2
+            ? '#1e3a8a'
+            : '#b0988a';
+
+      drawPrism64(ctx, cx, cy, 27.5, wingH, {
+        top: topCol,
+        left: leftCol,
+        right: rightCol,
+      });
+
+      // Illuminated ribbon windows & signage bands
+      for (let wy = 5; wy < wingH - 2; wy += 6) {
+        drawLine64(
+          ctx,
+          cx - 26,
+          cy - wy,
+          cx,
+          cy - wy + 13,
+          lv === 3 ? '#f472b6' : lv === 2 ? '#fbbf24' : '#e07a5f',
+          1.5
+        );
+        drawLine64(
+          ctx,
+          cx,
+          cy - wy + 13,
+          cx + 26,
+          cy - wy,
+          lv === 3 ? '#38bdf8' : lv === 2 ? '#60a5fa' : '#f59e0b',
+          1.5
+        );
+      }
+
+      if (isCrossSkylight) {
+        // Glass concourse skylight ridge connecting the wings to the central dome
+        drawPrism64(ctx, cx, cy - wingH, 16, 4.5, {
+          top: '#e0f2fe',
+          left: '#38bdf8',
+          right: '#0284c7',
+        });
+      } else if (lv === 3 && lotDx === lotW - 2 && lotDy === 1) {
+        // Level 3 VIP Rooftop Helipad ("H") on the North-East Anchor Wing
+        fillDiamond64(ctx, cx, cy - wingH, 16, 8, '#334155');
+        fillDiamond64(ctx, cx, cy - wingH, 12, 6, '#1e293b');
+        drawLine64(ctx, cx - 3, cy - wingH - 3, cx - 3, cy - wingH + 3, '#facc15', 1.6);
+        drawLine64(ctx, cx + 3, cy - wingH - 3, cx + 3, cy - wingH + 3, '#facc15', 1.6);
+        drawLine64(ctx, cx - 3, cy - wingH, cx + 3, cy - wingH, '#facc15', 1.6);
+      } else if (lv >= 2 && lotDx === 1 && lotDy === 1) {
+        // Rooftop Botanical Sky-Garden Terrace on North-West Anchor Wing
+        fillDiamond64(ctx, cx, cy - wingH, 18, 9, '#22c55e');
+        drawTree64(ctx, cx - 5, cy - wingH, 'emerald', 0.55);
+        drawTree64(ctx, cx + 5, cy - wingH + 1, 'emerald', 0.55);
+      } else if (isCornerAnchor) {
+        // Anchor Store Tower / Multiplex Cinema Crown
+        const towerH = lv === 3 ? 13 : lv === 2 ? 9 : 5;
+        drawPrism64(ctx, cx, cy - wingH, 17, towerH, {
+          top: lv === 3 ? '#fef08a' : lv === 2 ? '#f472b6' : '#e07a5f',
+          left: lv === 3 ? '#db2777' : lv === 2 ? '#be185d' : '#c85a32',
+          right: lv === 3 ? '#9d174d' : lv === 2 ? '#831843' : '#9c411f',
+        });
+      }
+    }
+  );
+}
+
+/** 64-Bit Architectural Municipal Bus Terminal / BRT Hub Sprite */
+function getBusStationSprite(level: number, variant: number): CachedSprite {
+  const lv = Math.max(1, Math.min(3, level || 1));
+  const v = variant % 3;
+  return getOrCreateSprite(`bus_station64_lv${lv}_v${v}`, 84, 88, 42, 60, (ctx, cx, cy) => {
+    // Granite transit plaza foundation
+    const baseGrad = ctx.createLinearGradient(cx - 32, cy - 16, cx + 32, cy + 16);
+    baseGrad.addColorStop(0, '#cbd5e1');
+    baseGrad.addColorStop(1, '#8d9bb0');
+    fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, baseGrad);
+
+    // Recessed dark asphalt boarding bay lane
+    fillDiamond64(ctx, cx, cy, 26.5, 13.2, '#283140');
+    // Dedicated cyan-blue BRT boarding zone marking
+    drawLine64(ctx, cx - 17, cy + 1, cx + 5, cy - 10, '#38bdf8', 2.2);
+    drawLine64(ctx, cx - 6, cy + 9, cx + 16, cy - 2, '#facc15', 1.4);
+
+    // Raised concrete boarding platform island
+    drawPrism64(ctx, cx - 3, cy - 2, 13, 3.5, {
+      top: '#e2e8f0',
+      left: '#cbd5e1',
+      right: '#94a3b8',
+    });
+    // Yellow tactile platform edge stripe
+    drawLine64(ctx, cx - 15, cy - 5, cx + 9, cy + 1, '#facc15', 1.0);
+
+    // Parked isometric municipal bus at the loading bay!
+    const bx = cx + 7;
+    const by = cy + 3;
+    drawPrism64(ctx, bx, by, 7.5, 6.2, {
+      top: lv >= 3 ? '#f5b73b' : '#38bdf8',
+      left: '#0284c7',
+      right: '#0369a1',
+    });
+    // Bus panoramic windows & headlights
+    drawLine64(ctx, bx - 6, by - 4.2, bx - 1, by - 1.6, '#bae6fd', 1.8);
+    drawLine64(ctx, bx + 1, by - 1.6, bx + 6, by - 4.2, '#7dd3fc', 1.8);
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(bx + 5.5, by - 1.2, 1.8, 1.4);
+
+    // Architectural steel support pillars for the BRT canopy
+    const canopyLift = lv >= 3 ? 16 : lv === 2 ? 14 : 12;
+    const pillars: Array<[number, number]> = [
+      [cx - 10, cy - 3],
+      [cx + 3, cy - 8],
+      [cx - 4, cy + 2],
+    ];
+    for (const [px, py] of pillars) {
+      drawLine64(ctx, px, py - 2, px, py - canopyLift, '#64748b', 2.0);
+    }
+
+    // Sleek vaulted transit terminal canopy roof
+    const roofTop = lv >= 3 ? '#06b6d4' : lv === 2 ? '#2563eb' : '#0ea5e9';
+    const roofLeft = lv >= 3 ? '#0891b2' : lv === 2 ? '#1d4ed8' : '#0284c7';
+    const roofRight = lv >= 3 ? '#0e7490' : lv === 2 ? '#1e40af' : '#0369a1';
+    drawPrism64(ctx, cx - 3, cy - 2 - canopyLift, 15.5, 3.2, {
+      top: roofTop,
+      left: roofLeft,
+      right: roofRight,
+    });
+    // Luminous skylight glass ribs across the canopy roof
+    drawLine64(ctx, cx - 12, cy - 3 - canopyLift, cx + 6, cy - 11 - canopyLift, '#e0f2fe', 1.5);
+    drawLine64(ctx, cx - 7, cy - 1 - canopyLift, cx + 11, cy - 9 - canopyLift, '#bae6fd', 1.3);
+    if (lv >= 2) {
+      // Secondary solar-glass wing & golden crown trim for Lv.2/3 BRT hubs
+      drawPrism64(ctx, cx - 3, cy - 5 - canopyLift, 9, 2.2, {
+        top: lv >= 3 ? '#fbbf24' : '#7dd3fc',
+        left: '#38bdf8',
+        right: '#0284c7',
+      });
+    }
+
+    // Illuminated Municipal Bus Route Sign Totem + warm glow
+    const tx = cx - 19;
+    const ty = cy + 1;
+    drawLine64(ctx, tx, ty, tx, ty - 16, '#334155', 2.1);
+    ctx.fillStyle = '#0ea5e9';
+    ctx.fillRect(tx - 4, ty - 19, 8, 6);
+    ctx.strokeStyle = '#e0f2fe';
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(tx - 4, ty - 19, 8, 6);
+    drawGlow64(ctx, tx, ty - 16, 7.5, 'rgba(56, 189, 248, 0.75)');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(tx - 2.2, ty - 17.2, 4.4, 2.4);
+
+    // Waiting passengers & benches on the platform
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(cx - 10, cy - 6, 1.8, 3.0);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(cx - 6, cy - 4.5, 1.8, 3.0);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(cx - 2, cy - 6.5, 1.8, 3.0);
+  });
+}
+
+/** 64-Bit Metropolitan Underground Metro Station Entrance Sprite */
+function getMetroStationSprite(level: number, variant: number): CachedSprite {
+  const lv = Math.max(1, Math.min(3, level || 1));
+  const v = variant % 3;
+  return getOrCreateSprite(`metro_station64_lv${lv}_v${v}`, 84, 92, 42, 64, (ctx, cx, cy) => {
+    // Sleek metropolitan charcoal-granite transit plaza
+    const plazaGrad = ctx.createLinearGradient(cx - 32, cy - 16, cx + 32, cy + 16);
+    plazaGrad.addColorStop(0, '#94a3b8');
+    plazaGrad.addColorStop(1, '#5b677a');
+    fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, plazaGrad);
+    fillDiamond64(ctx, cx, cy, 27, 13.5, '#cbd5e1');
+    fillDiamond64(ctx, cx, cy, 24.5, 12.2, '#475569');
+
+    // Deep illuminated subterranean stairwell descent opening
+    fillDiamond64(ctx, cx + 1, cy + 1, 13.5, 6.8, '#0f172a');
+    // Glowing recessed metro escalator steps descending underground
+    for (let s = 0; s < 4; s++) {
+      drawLine64(
+        ctx,
+        cx - 6 + s * 3.2,
+        cy + 1.5 - s * 1.1,
+        cx + 3 + s * 3.2,
+        cy + 5.2 - s * 1.1,
+        s % 2 === 0 ? '#38bdf8' : '#818cf8',
+        1.15
+      );
+    }
+    // Subtle subterranean concourse glow rising from the tunnel entrance
+    drawGlow64(ctx, cx + 1, cy + 1, 11, 'rgba(99, 102, 241, 0.55)');
+
+    // Glass-and-steel vaulted Metro pavilion dome rising over the entrance
+    const domeH = lv >= 3 ? 20 : lv === 2 ? 16 : 13;
+    const archTop = lv >= 3 ? '#c084fc' : lv === 2 ? '#818cf8' : '#38bdf8';
+    const archLeft = lv >= 3 ? '#7c3aed' : lv === 2 ? '#4f46e5' : '#0284c7';
+    const archRight = lv >= 3 ? '#5b21b6' : lv === 2 ? '#3730a3' : '#0369a1';
+
+    // Side structural glass walls
+    drawPrism64(ctx, cx - 2, cy - 2, 13.5, domeH * 0.55, {
+      top: '#93c5fd',
+      left: 'rgba(125, 211, 252, 0.82)',
+      right: 'rgba(99, 102, 241, 0.82)',
+    });
+    // Vaulted metallic crown canopy
+    drawPrism64(ctx, cx - 2, cy - 2 - domeH * 0.55, 14.5, 4.2, {
+      top: archTop,
+      left: archLeft,
+      right: archRight,
+    });
+    // Ribbed architectural arches along the vault
+    drawLine64(ctx, cx - 12, cy - 4 - domeH * 0.55, cx + 8, cy - 11 - domeH * 0.55, '#f8fafc', 1.4);
+    drawLine64(ctx, cx - 7, cy - 1 - domeH * 0.55, cx + 12, cy - 8 - domeH * 0.55, '#e0e7ff', 1.2);
+
+    if (lv >= 3) {
+      // Grand Central Golden-Violet Spire Crown for Lv.3 Express Metro Hub
+      drawPrism64(ctx, cx - 2, cy - 7 - domeH * 0.55, 8.2, 4.5, {
+        top: '#fbbf24',
+        left: '#a855f7',
+        right: '#6d28d9',
+      });
+    }
+
+    // Iconic Tall Illuminated "M" Metro Totem Pylon!
+    const mx = cx + 18;
+    const my = cy + 2;
+    drawLine64(ctx, mx, my, mx, my - 21, '#334155', 2.4);
+    drawGlow64(ctx, mx, my - 22, 10, lv >= 3 ? 'rgba(251, 191, 36, 0.85)' : 'rgba(139, 92, 246, 0.88)');
+    ctx.fillStyle = lv >= 3 ? '#f59e0b' : '#6366f1';
+    ctx.beginPath();
+    ctx.arc(mx, my - 22, 6.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // Crisp white "M" glyph
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8.5px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', mx, my - 21.5);
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+
+    // Landscaped corner planter accents
+    drawBushOrFlowerbed64(ctx, cx - 19, cy + 1, 2.2, v % 2 === 0);
+    drawBushOrFlowerbed64(ctx, cx - 16, cy - 6, 2.0, v % 2 === 1);
+  });
 }
 
 function strokeOrFillScreenDiamond(
@@ -8193,6 +9033,70 @@ export function renderCityCanvas(
       }
     }
 
+    // Pass 1B: Subtle Glowing Underground Metro Line & Animated Subterranean Train Light Pulses!
+    const metroStations = getMetroNetworkStations(state);
+    if (metroStations.length >= 2) {
+      const metroScreenPts = metroStations.map((ms) => {
+        const mr = rotateGridCoord(ms.x, ms.y, rot, gw, gh);
+        const mdx = mr.rx - midX;
+        const mdy = mr.ry - midY;
+        return {
+          sx: panOffsetX + (mdx - mdy) * isoHalfWZoom,
+          sy: panOffsetY + (mdx + mdy) * isoHalfHZoom,
+        };
+      });
+
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // Soft outer glowing subterranean tunnel aura
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.34)';
+      ctx.lineWidth = Math.max(2.5, 5.5 * zoom);
+      ctx.beginPath();
+      ctx.moveTo(metroScreenPts[0].sx, metroScreenPts[0].sy);
+      for (let m = 1; m < metroScreenPts.length; m++) {
+        ctx.lineTo(metroScreenPts[m].sx, metroScreenPts[m].sy);
+      }
+      ctx.stroke();
+
+      // Crisp dashed cyan-violet underground rail track
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
+      ctx.lineWidth = Math.max(1.2, 2.2 * zoom);
+      ctx.setLineDash([Math.max(3, 6 * zoom), Math.max(2, 4 * zoom)]);
+      ctx.beginPath();
+      ctx.moveTo(metroScreenPts[0].sx, metroScreenPts[0].sy);
+      for (let m = 1; m < metroScreenPts.length; m++) {
+        ctx.lineTo(metroScreenPts[m].sx, metroScreenPts[m].sy);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Animated underground metro train light streaks gliding between stations!
+      for (let seg = 0; seg < metroScreenPts.length - 1; seg++) {
+        const a = metroScreenPts[seg];
+        const b = metroScreenPts[seg + 1];
+        const cycle = (opts.timeSeconds * 0.28 + seg * 0.37) % 2;
+        const t = cycle <= 1 ? cycle : 2 - cycle;
+        const tx = a.sx + (b.sx - a.sx) * t;
+        const ty = a.sy + (b.sy - a.sy) * t;
+        const tTail = Math.max(0, Math.min(1, t + (cycle <= 1 ? -0.10 : 0.10)));
+        const tailX = a.sx + (b.sx - a.sx) * tTail;
+        const tailY = a.sy + (b.sy - a.sy) * tTail;
+
+        ctx.strokeStyle = 'rgba(224, 242, 254, 0.92)';
+        ctx.lineWidth = Math.max(1.8, 3.2 * zoom);
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+
+        drawGlow64(ctx, tx, ty, Math.max(4, 8 * zoom), 'rgba(56, 189, 248, 0.85)');
+      }
+
+      ctx.restore();
+    }
+
     // Targeted pre-draw ONLY for the exact 1-2 destination road/water tiles at `sum + 1` under active vehicles
     // (Replaces full-diagonal re-draw, eliminating ~95% of redundant tile drawImage calls in dense cities!)
     const depthBoats = boatsByDepth.get(sum);
@@ -8810,14 +9714,15 @@ export function renderCityCanvas(
  */
 export function renderLandmarkArtworkCanvas(
   ctx: CanvasRenderingContext2D,
-  kind: 'port' | 'airport' | 'bridge',
+  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping',
   level: number,
   unlocked: boolean,
   timeSec: number = 0
 ): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const lv = Math.max(1, Math.min(3, level || 1));
+  const maxLv = kind === 'bridge' ? 4 : 3;
+  const lv = Math.max(1, Math.min(maxLv, level || 1));
   const blink = Math.floor(timeSec * 3) % 2 === 0;
 
   ctx.imageSmoothingEnabled = true;
@@ -8888,7 +9793,7 @@ export function renderLandmarkArtworkCanvas(
         prevX = x;
         prevY = archY;
       }
-    } else {
+    } else if (lv === 3) {
       ctx.fillStyle = '#cbd5e1';
       ctx.fillRect(54, deckY + 4, 10, 16);
       ctx.fillStyle = '#1e293b';
@@ -8914,13 +9819,66 @@ export function renderLandmarkArtworkCanvas(
       ctx.beginPath();
       ctx.arc(peakX, peakY - 3, 1.8, 0, Math.PI * 2);
       ctx.fill();
+    } else {
+      // Nv. 4: Twin-Tower 2-Tile-Wide Monumental Golden-Cyan Mega-Bridge Profile
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(32, deckY + 5, 9, 16);
+      ctx.fillRect(78, deckY + 5, 9, 16);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(4, deckY - 1, 116, 7);
+      drawLine64(ctx, 4, deckY - 1.5, 120, deckY - 1.5, '#ffffff', 1.5);
+      drawLine64(ctx, 4, deckY + 1.5, 120, deckY + 1.5, '#ffe066', 1.3);
+      drawLine64(ctx, 4, deckY + 5.2, 120, deckY + 5.2, '#38bdf8', 1.3);
+
+      for (const peakX of [36, 82]) {
+        const peakY = 9;
+        for (const dx of [-28, -20, -12, 12, 20, 28]) {
+          drawLine64(
+            ctx,
+            peakX,
+            peakY + 4,
+            Math.max(6, Math.min(118, peakX + dx)),
+            deckY - 1,
+            Math.abs(dx) > 18 ? 'rgba(254, 240, 138, 0.85)' : 'rgba(224, 242, 254, 0.85)',
+            1.05
+          );
+        }
+        drawLine64(ctx, peakX - 6, deckY, peakX, peakY, '#ffffff', 2.8);
+        drawLine64(ctx, peakX + 6, deckY, peakX, peakY, '#cbd5e1', 2.8);
+        drawLine64(ctx, peakX - 3, peakY + 12, peakX + 3, peakY + 12, '#f5b73b', 2.2);
+        drawLine64(ctx, peakX, peakY + 6, peakX, peakY + 25, '#38bdf8', 1.9);
+        drawGlow64(
+          ctx,
+          peakX,
+          peakY - 3,
+          5.5,
+          blink ? 'rgba(255, 77, 77, 0.9)' : 'rgba(245, 183, 59, 0.7)'
+        );
+        ctx.fillStyle = blink ? '#ff4d4d' : '#f5b73b';
+        ctx.beginPath();
+        ctx.arc(peakX, peakY - 3, 1.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    const bridgeSprite = getBridgeSprite(2 | 8, lv, lv >= 2 ? 1 : 0, true, 0);
-    const scale = 0.84;
-    const dw = Math.round(bridgeSprite.canvas.width * scale);
-    const dh = Math.round(bridgeSprite.canvas.height * scale);
-    ctx.drawImage(bridgeSprite.canvas, w - dw - 8, (h - dh) / 2 + 4, dw, dh);
+    if (lv >= 4) {
+      // Show BOTH parallel decks side-by-side in isometric preview to showcase 2-tile width!
+      const backSprite = getBridgeSprite(2 | 8, 4, 1, true, 0, 'back', 'ew');
+      const frontSprite = getBridgeSprite(2 | 8, 4, 1, true, 0, 'front', 'ew');
+      const scale = 0.74;
+      const dw = Math.round(backSprite.canvas.width * scale);
+      const dh = Math.round(backSprite.canvas.height * scale);
+      const baseX = w - dw - 2;
+      const baseY = (h - dh) / 2 - 2;
+      ctx.drawImage(backSprite.canvas, baseX, baseY, dw, dh);
+      ctx.drawImage(frontSprite.canvas, baseX - 11, baseY + 6, dw, dh);
+    } else {
+      const bridgeSprite = getBridgeSprite(2 | 8, lv, lv >= 2 ? 1 : 0, true, 0, 'none', 'ew');
+      const scale = 0.84;
+      const dw = Math.round(bridgeSprite.canvas.width * scale);
+      const dh = Math.round(bridgeSprite.canvas.height * scale);
+      ctx.drawImage(bridgeSprite.canvas, w - dw - 8, (h - dh) / 2 + 4, dw, dh);
+    }
   } else if (kind === 'port') {
     const sky = ctx.createLinearGradient(0, 0, 0, h * 0.52);
     sky.addColorStop(0, '#0c1c36');
@@ -8989,7 +9947,7 @@ export function renderLandmarkArtworkCanvas(
     const dw = Math.round(portSprite.canvas.width * scale);
     const dh = Math.round(portSprite.canvas.height * scale);
     ctx.drawImage(portSprite.canvas, w - dw - 10, (h - dh) / 2 + 2, dw, dh);
-  } else {
+  } else if (kind === 'airport') {
     const sky = ctx.createLinearGradient(0, 0, 0, h * 0.6);
     sky.addColorStop(0, '#0c1629');
     sky.addColorStop(1, '#1e3c66');
@@ -9030,6 +9988,192 @@ export function renderLandmarkArtworkCanvas(
     const dw = Math.round(airportSprite.canvas.width * scale);
     const dh = Math.round(airportSprite.canvas.height * scale);
     ctx.drawImage(airportSprite.canvas, w - dw - 8, (h - dh) / 2 + 2, dw, dh);
+  } else if (kind === 'bus') {
+    // 64-Bit Urban BRT Boulevard & Articulated Municipal Bus Preview!
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.56);
+    sky.addColorStop(0, '#0d223d');
+    sky.addColorStop(1, '#1e4e7a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h * 0.56);
+
+    // Distant twilight city skyline silhouettes
+    ctx.fillStyle = '#132a47';
+    for (const [bx, bw, bh] of [
+      [10, 14, 24],
+      [28, 16, 30],
+      [48, 12, 20],
+      [66, 18, 28],
+      [90, 14, 22],
+    ]) {
+      ctx.fillRect(bx, h * 0.56 - bh, bw, bh);
+    }
+
+    // Wide Boulevard BRT Asphalt Street
+    const roadY = Math.floor(h * 0.56);
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(0, roadY, w, h - roadY);
+    // Dedicated cyan BRT lane strip & yellow markings
+    ctx.fillStyle = 'rgba(14, 165, 233, 0.25)';
+    ctx.fillRect(0, roadY + 11, w, 16);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(0, roadY + 10, w, 1.8);
+    ctx.fillStyle = '#facc15';
+    for (let sx = 6; sx < w - 80; sx += 16) {
+      ctx.fillRect(sx, roadY + 4, 8, 1.6);
+    }
+
+    // Animated 64-Bit Articulated Municipal Bus cruising along the BRT corridor!
+    const busX = 8 + ((timeSec * 24) % 92) - 18;
+    const busY = roadY + 6;
+    ctx.fillStyle = lv >= 3 ? '#f59e0b' : '#0284c7';
+    ctx.fillRect(busX, busY, 44, 14);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(busX, busY, 44, 4);
+    ctx.fillStyle = '#bae6fd';
+    for (let wx = 4; wx <= 36; wx += 8) {
+      ctx.fillRect(busX + wx, busY + 4.5, 5.5, 4.5);
+    }
+    // Articulated accordion joint
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(busX + 20, busY + 1, 2.5, 13);
+    // Wheels + glowing headlights
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.arc(busX + 9, busY + 14.5, 3, 0, Math.PI * 2);
+    ctx.arc(busX + 35, busY + 14.5, 3, 0, Math.PI * 2);
+    ctx.fill();
+    drawGlow64(ctx, busX + 45, busY + 11, 7, 'rgba(254, 240, 138, 0.85)');
+
+    const busSprite = getBusStationSprite(lv, 0);
+    const scale = 0.88;
+    const dw = Math.round(busSprite.canvas.width * scale);
+    const dh = Math.round(busSprite.canvas.height * scale);
+    ctx.drawImage(busSprite.canvas, w - dw - 6, (h - dh) / 2 + 4, dw, dh);
+  } else if (kind === 'metro') {
+    // 64-Bit Subterranean Metro Cross-Section & Glowing Underground Express Train!
+    const surfY = Math.floor(h * 0.36);
+    const sky = ctx.createLinearGradient(0, 0, 0, surfY);
+    sky.addColorStop(0, '#0f172a');
+    sky.addColorStop(1, '#263459');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, surfY);
+
+    // Surface boulevard crust
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(0, surfY - 3, w, 5);
+    // Deep subterranean earth strata
+    const earth = ctx.createLinearGradient(0, surfY + 2, 0, h);
+    earth.addColorStop(0, '#1e1b2e');
+    earth.addColorStop(1, '#0b0d17');
+    ctx.fillStyle = earth;
+    ctx.fillRect(0, surfY + 2, w, h - surfY - 2);
+
+    // Illuminated Subway Tube Cross-Section
+    const tubeY = surfY + 14;
+    ctx.fillStyle = '#090d16';
+    ctx.fillRect(0, tubeY, w - 74, 24);
+    ctx.strokeStyle = lv >= 3 ? '#f59e0b' : '#6366f1';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(0, tubeY, w - 74, 24);
+    // Glowing tunnel ceiling lights
+    for (let lx = 10; lx < w - 82; lx += 22) {
+      drawGlow64(ctx, lx, tubeY + 3, 6, 'rgba(56, 189, 248, 0.65)');
+      ctx.fillStyle = '#e0f2fe';
+      ctx.fillRect(lx - 3, tubeY + 1.5, 6, 1.5);
+    }
+    // Electrified steel rails
+    ctx.fillStyle = '#64748b';
+    ctx.fillRect(0, tubeY + 21, w - 74, 2);
+
+    // Animated Sleek 64-Bit Express Metro Train gliding smoothly through the underground tunnel!
+    const trainX = ((timeSec * 42) % 140) - 52;
+    const trainY = tubeY + 8;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, tubeY + 1, w - 75, 22);
+    ctx.clip();
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(trainX, trainY, 64, 12);
+    ctx.fillStyle = lv >= 3 ? '#f59e0b' : '#8b5cf6';
+    ctx.fillRect(trainX, trainY + 7.5, 64, 2.5);
+    ctx.fillStyle = '#38bdf8';
+    for (let wx = 4; wx <= 54; wx += 9) {
+      ctx.fillRect(trainX + wx, trainY + 2, 6, 4.2);
+    }
+    drawGlow64(ctx, trainX + 65, trainY + 7, 9, 'rgba(56, 189, 248, 0.92)');
+    ctx.restore();
+
+    const metroSprite = getMetroStationSprite(lv, 0);
+    const scale = 0.86;
+    const dw = Math.round(metroSprite.canvas.width * scale);
+    const dh = Math.round(metroSprite.canvas.height * scale);
+    ctx.drawImage(metroSprite.canvas, w - dw - 6, (h - dh) / 2 + 4, dw, dh);
+  } else if (kind === 'shopping') {
+    // 64-Bit Scenic Shopping Mall Galleria / Megamall Illustration (Lv.1 6×6, Lv.2 8×8, Lv.3 9×9)
+    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.58);
+    sky.addColorStop(0, lv === 3 ? '#1e1038' : lv === 2 ? '#121d3d' : '#1b263b');
+    sky.addColorStop(1, lv === 3 ? '#581c87' : lv === 2 ? '#1d4ed8' : '#c2410c');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h * 0.58);
+
+    const plazaY = Math.floor(h * 0.58);
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, plazaY, w, h - plazaY);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(0, plazaY, w, 9);
+
+    // Scenic Architectural Mall Elevation on the left side
+    const mallW = lv === 3 ? 114 : lv === 2 ? 104 : 92;
+    const mallH = lv === 3 ? 34 : lv === 2 ? 27 : 21;
+    const mallX = 8;
+    const mallY = plazaY - mallH;
+
+    // Main building body
+    ctx.fillStyle = lv === 3 ? '#312e81' : lv === 2 ? '#1e3a8a' : '#e3d5ca';
+    ctx.fillRect(mallX, mallY, mallW, mallH);
+
+    // Glowing glass curtain walls / storefront windows
+    ctx.fillStyle = lv === 3 ? '#f472b6' : lv === 2 ? '#38bdf8' : '#f59e0b';
+    ctx.fillRect(mallX, mallY, mallW, 3);
+    for (let wx = mallX + 5; wx < mallX + mallW - 8; wx += 12) {
+      ctx.fillStyle = blink && wx % 24 === 5 ? '#fef08a' : '#7dd3fc';
+      ctx.fillRect(wx, mallY + 6, 7, mallH - 10);
+    }
+
+    // Central Skylight Atrium Dome (scales dramatically across 6×6 -> 8×8 -> 9×9!)
+    const domeCenterX = mallX + mallW * 0.5;
+    const domeRadius = lv === 3 ? 26 : lv === 2 ? 19 : 13;
+    ctx.fillStyle = lv === 3 ? 'rgba(244, 114, 182, 0.45)' : 'rgba(56, 189, 248, 0.45)';
+    ctx.beginPath();
+    ctx.arc(domeCenterX, mallY, domeRadius, Math.PI, 0);
+    ctx.fill();
+    ctx.strokeStyle = lv === 3 ? '#fef08a' : '#e0f2fe';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(domeCenterX, mallY, domeRadius, Math.PI, 0);
+    ctx.stroke();
+
+    // Size & Design badge on the scenic plaza
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.fillRect(8, plazaY + 12, 114, 18);
+    ctx.strokeStyle = lv === 3 ? '#f472b6' : lv === 2 ? '#38bdf8' : '#fbbf24';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(8.5, plazaY + 12.5, 113, 17);
+    ctx.fillStyle = '#ffe066';
+    ctx.font = 'bold 8px monospace';
+    const sizeText =
+      lv === 3
+        ? 'GRANDE 9×9 (81 LOTES)'
+        : lv === 2
+          ? 'MÉDIO 8×8 (64 LOTES)'
+          : 'PEQUENO 6×6 (36 LOTES)';
+    ctx.fillText(sizeText, 13, plazaY + 24);
+
+    const shoppingSprite = getShoppingMallSprite(lv, 0);
+    const scale = 0.85;
+    const dw = Math.round(shoppingSprite.canvas.width * scale);
+    const dh = Math.round(shoppingSprite.canvas.height * scale);
+    ctx.drawImage(shoppingSprite.canvas, w - dw - 6, (h - dh) / 2 + 2, dw, dh);
   }
 
   // Subtle lock overlay indicator if not unlocked yet (keeps 64-bit art crystal clear!)
