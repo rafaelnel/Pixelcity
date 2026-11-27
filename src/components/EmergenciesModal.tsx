@@ -9,6 +9,7 @@ import type {
   EmergencyOfferView,
   ExpandDirection,
   HudSnapshot,
+  MandateMissionId,
 } from '../game/types';
 import { PixelModal } from './PixelModal';
 
@@ -17,10 +18,12 @@ interface EmergenciesModalProps {
   feedbackMsg: string | null;
   onExecuteAction: (actionId: EmergencyActionId) => void;
   onExpandLand: (direction: ExpandDirection) => void;
+  onClaimMission?: (missionId: MandateMissionId) => void;
+  onTriggerStadiumMatch?: () => void;
   onClose: () => void;
 }
 
-type WorksInternalTab = 'works' | 'terrain' | 'urgent';
+type WorksInternalTab = 'works' | 'missions' | 'terrain' | 'urgent';
 
 const DIRECTION_ARROWS: Record<ExpandDirection, string> = {
   norte: '↑',
@@ -29,8 +32,22 @@ const DIRECTION_ARROWS: Record<ExpandDirection, string> = {
   oeste: '←',
 };
 
+type PreviewArtworkKind =
+  | 'port'
+  | 'airport'
+  | 'bridge'
+  | 'bus'
+  | 'metro'
+  | 'shopping'
+  | 'sports'
+  | 'clean_energy'
+  | 'hospital'
+  | 'university'
+  | 'amusement'
+  | 'rail';
+
 interface LandmarkArtPreviewProps {
-  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports';
+  kind: PreviewArtworkKind;
   level: number;
   builtCount: number;
   active: boolean;
@@ -49,7 +66,14 @@ function computeWorkProgressPct(
 function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maxArtLevel = kind === 'bridge' ? 4 : kind === 'sports' ? 2 : 3;
+  const isTwoLevelKind =
+    kind === 'sports' ||
+    kind === 'clean_energy' ||
+    kind === 'hospital' ||
+    kind === 'university' ||
+    kind === 'amusement' ||
+    kind === 'rail';
+  const maxArtLevel = kind === 'bridge' ? 4 : isTwoLevelKind ? 2 : 3;
   const [previewLevel, setPreviewLevel] = useState<number>(Math.max(1, Math.min(maxArtLevel, level)));
   const [isInView, setIsInView] = useState<boolean>(true);
 
@@ -138,7 +162,7 @@ function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPrev
       {/* Quick level art preview switcher */}
       <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1 bg-[#0b101b]/85 px-1.5 py-0.5 border border-[#334361]">
         <span className="font-pixel text-[6px] text-[#9eb0c9] mr-0.5">ARTE:</span>
-        {(kind === 'bridge' ? [1, 2, 3, 4] : kind === 'sports' ? [1, 2] : [1, 2, 3]).map((lv) => (
+        {(kind === 'bridge' ? [1, 2, 3, 4] : isTwoLevelKind ? [1, 2] : [1, 2, 3]).map((lv) => (
           <button
             key={lv}
             type="button"
@@ -162,7 +186,21 @@ function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPrev
                   ? lv === 1
                     ? '2×2 Nv.1'
                     : '4×4 Nv.2'
-                  : `Nv.${lv}`}
+                  : kind === 'clean_energy'
+                    ? lv === 1
+                      ? '2×2 Solar'
+                      : '3×3 Eólico'
+                    : kind === 'hospital'
+                      ? '3×3 Nv.' + lv
+                      : kind === 'university' || kind === 'amusement'
+                        ? lv === 1
+                          ? '3×3 Nv.1'
+                          : '4×4 Nv.2'
+                        : kind === 'rail'
+                          ? lv === 1
+                            ? '3×2 Carga'
+                            : '3×3 Mono'
+                          : `Nv.${lv}`}
           </button>
         ))}
       </div>
@@ -175,6 +213,8 @@ export function EmergenciesModal({
   feedbackMsg,
   onExecuteAction,
   onExpandLand,
+  onClaimMission,
+  onTriggerStadiumMatch,
   onClose,
 }: EmergenciesModalProps) {
   const st = hud.stats;
@@ -192,15 +232,25 @@ export function EmergenciesModal({
   const isIllustratedEvolutionWork = (id: EmergencyActionId) =>
     id === 'port_evolution' ||
     id === 'sports_center_project' ||
-    id === 'airport_evolution' ||
-    id === 'shopping_evolution' ||
+    id === 'clean_energy_project' ||
     id === 'bus_transit_project' ||
+    id === 'hospital_project' ||
+    id === 'airport_evolution' ||
+    id === 'tech_university_project' ||
+    id === 'shopping_evolution' ||
+    id === 'amusement_park_project' ||
+    id === 'rail_freight_project' ||
     id === 'metro_transit_project';
 
   // Automatic budget-driven programs (read-only status in Tab 3: Ações & Urgências)
   const budgetPrograms = evaluateBudgetCampaignStatus(st.coverage, hud.money);
 
   const pendingWorks = hud.pendingWorks ?? [];
+  const mandateMissions = hud.mandateMissions ?? [];
+  const claimableMissionsCount = mandateMissions.filter(
+    (m) => m.completed && !m.claimed
+  ).length;
+  const completedMissionsCount = mandateMissions.filter((m) => m.claimed).length;
   const readyStructuralCount = orderedStructuralOffers.filter(
     (o) =>
       o.unlocked &&
@@ -328,7 +378,12 @@ export function EmergenciesModal({
     const isMetro = offer.id === 'metro_transit_project';
     const isShopping = offer.id === 'shopping_evolution';
     const isSports = offer.id === 'sports_center_project';
-    const kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports' = isPort
+    const isCleanEnergy = offer.id === 'clean_energy_project';
+    const isHospital = offer.id === 'hospital_project';
+    const isUniversity = offer.id === 'tech_university_project';
+    const isAmusement = offer.id === 'amusement_park_project';
+    const isRail = offer.id === 'rail_freight_project';
+    const kind: PreviewArtworkKind = isPort
       ? 'port'
       : isBridge
         ? 'bridge'
@@ -340,7 +395,17 @@ export function EmergenciesModal({
               ? 'shopping'
               : isSports
                 ? 'sports'
-                : 'airport';
+                : isCleanEnergy
+                  ? 'clean_energy'
+                  : isHospital
+                    ? 'hospital'
+                    : isUniversity
+                      ? 'university'
+                      : isAmusement
+                        ? 'amusement'
+                        : isRail
+                          ? 'rail'
+                          : 'airport';
     const builtCount = isPort
       ? st.portCount
       : isBridge
@@ -353,13 +418,25 @@ export function EmergenciesModal({
               ? st.shoppingCount
               : isSports
                 ? st.sportsCenterCount
-                : st.airportCount;
+                : isCleanEnergy
+                  ? st.cleanEnergyCount
+                  : isHospital
+                    ? st.hospitalCount
+                    : isUniversity
+                      ? st.universityCount
+                      : isAmusement
+                        ? st.amusementParkCount
+                        : isRail
+                          ? st.railTerminalCount
+                          : st.airportCount;
     const isBuilt = builtCount > 0;
+    const isTwoTierNewWork =
+      isSports || isCleanEnergy || isHospital || isUniversity || isAmusement || isRail;
     const artLevel = isBridge
       ? Math.max(1, Math.min(4, isBuilt ? Math.max(st.bridgeLevel, offer.tier) : offer.tier))
       : isShopping
         ? Math.max(1, Math.min(3, isBuilt ? Math.max(st.shoppingLevel || 1, offer.tier) : offer.tier))
-        : isSports
+        : isTwoTierNewWork
           ? Math.max(1, Math.min(2, offer.tier))
           : Math.max(1, Math.min(3, isBuilt ? Math.max(1, offer.tier - 1) : offer.tier));
     const canAfford = hud.money >= offer.cost;
@@ -380,7 +457,17 @@ export function EmergenciesModal({
             ? ['Pequeno 5×5', 'Médio 7×7', 'Grande 9×9']
             : isSports
               ? ['1º Centro 2×2', '2º Complexo 4×4']
-              : ['Fase I · Nv.1', 'Fase II · Nv.2', 'Fase III · Nv.3', 'Fase IV · Hub'];
+              : isCleanEnergy
+                ? ['Solar 2×2', 'Eólico & Solar 3×3']
+                : isHospital
+                  ? ['Hospital 3×3', 'Centro Médico 3×3']
+                  : isUniversity
+                    ? ['Campus 3×3', 'Parque Tec. 4×4']
+                    : isAmusement
+                      ? ['Roda-Gigante 3×3', 'Mundo Temático 4×4']
+                      : isRail
+                        ? ['Ferrovia 3×2', 'Monotrilho 3×3']
+                        : ['Fase I · Nv.1', 'Fase II · Nv.2', 'Fase III · Nv.3', 'Fase IV · Hub'];
 
     return (
       <div
@@ -388,19 +475,7 @@ export function EmergenciesModal({
         data-testid={`emergency-card-${offer.id}`}
         className="pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2"
         style={{
-          borderColor: isPort
-            ? 'rgba(56, 189, 248, 0.45)'
-            : isBridge
-              ? 'rgba(102, 217, 140, 0.45)'
-              : isBus
-                ? 'rgba(14, 165, 233, 0.5)'
-                : isMetro
-                  ? 'rgba(139, 92, 246, 0.52)'
-                  : isShopping
-                    ? 'rgba(244, 114, 182, 0.55)'
-                    : isSports
-                      ? 'rgba(102, 217, 140, 0.52)'
-                      : 'rgba(255, 224, 102, 0.45)',
+          borderColor: `${offer.accentColor}88`,
         }}
       >
         <div className="flex flex-col gap-2">
@@ -604,11 +679,11 @@ export function EmergenciesModal({
       onClose={onClose}
       testId="emergencies-modal"
     >
-      {/* Internal Navigation Tabs (Obras & Marcos | Terreno | Ações & Urgências) */}
+      {/* Internal Navigation Tabs (Obras & Marcos | Missões do Mandato | Terreno | Ações & Urgências) */}
       <div
         role="tablist"
         aria-label="Seções de Obras e Ações"
-        className="grid grid-cols-3 gap-1.5 mb-3"
+        className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-3"
       >
         <button
           type="button"
@@ -630,6 +705,29 @@ export function EmergenciesModal({
           ) : readyStructuralCount > 0 ? (
             <span className="px-1 py-0.5 bg-[#16a34a] text-white text-[6.5px] tabular-nums">
               {readyStructuralCount}
+            </span>
+          ) : null}
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          data-testid="works-tab-missions"
+          aria-selected={activeSubTab === 'missions'}
+          onClick={() => setActiveSubTab('missions')}
+          className={`pixel-btn py-2 px-2 font-pixel text-[7px] sm:text-[8px] flex items-center justify-center gap-1.5 whitespace-nowrap ${
+            activeSubTab === 'missions'
+              ? 'bg-[#2c3c5c] text-[#ffe066] border-[#ffe066]'
+              : 'bg-[#161f33] text-[#bfd0e6] hover:bg-[#22304d]'
+          }`}
+        >
+          <span>Missões ({completedMissionsCount}/{mandateMissions.length || 8})</span>
+          {claimableMissionsCount > 0 ? (
+            <span
+              data-testid="missions-claimable-badge"
+              className="px-1 py-0.5 bg-[#16a34a] text-white text-[6.5px] tabular-nums"
+            >
+              +{claimableMissionsCount}
             </span>
           ) : null}
         </button>
@@ -791,6 +889,122 @@ export function EmergenciesModal({
             </div>
           </section>
         </div>
+      ) : null}
+
+      {/* TAB 1B: MISSÕES DO MANDATO & EVENTOS AO VIVO */}
+      {activeSubTab === 'missions' ? (
+        <section
+          aria-label="Metas e missões do mandato com recompensas em caixa"
+          data-testid="mandate-missions-section"
+          className="flex flex-col gap-3"
+        >
+          <div className="pixel-inset p-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-pixel text-[9px] text-[#ffe066]">
+                METAS &amp; MISSÕES DO MANDATO (RECOMPENSAS EM CAIXA)
+              </h3>
+              <p className="text-[14.5px] text-[#9eb0c9] leading-tight mt-0.5">
+                Cumpra objetivos estratégicos de infraestrutura, energia limpa, saúde, educação e logística para resgatar bônus diretos no Tesouro Municipal.
+              </p>
+            </div>
+            {st.stadiumCount > 0 ? (
+              <button
+                type="button"
+                data-testid="trigger-stadium-match-btn"
+                disabled={Boolean(hud.stadiumMatchActive)}
+                onClick={() => onTriggerStadiumMatch?.()}
+                className={`pixel-btn px-3 py-2 font-pixel text-[7.5px] ${
+                  hud.stadiumMatchActive
+                    ? 'bg-[#143326] border-[#4ade80] text-[#4ade80]'
+                    : 'bg-[#1e3a8a] hover:bg-[#1d4ed8] border-[#ffe066] text-[#ffe066]'
+                }`}
+              >
+                {hud.stadiumMatchActive
+                  ? '⚽ DIA DE JOGO ATIVO (FOGOS & REFLETORES NO MAPA)'
+                  : '⚽ REALIZAR DIA DE JOGO NO ESTÁDIO (FOGOS & TURISMO)'}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {mandateMissions.map((mission) => {
+              const pct = Math.min(
+                100,
+                Math.round((mission.currentValue / Math.max(1, mission.targetValue)) * 100)
+              );
+              const canClaim = mission.completed && !mission.claimed;
+
+              return (
+                <div
+                  key={mission.id}
+                  data-testid={`mandate-mission-card-${mission.id}`}
+                  className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
+                    mission.claimed
+                      ? 'border-[#2e7d52]/60 bg-[#0d1b18]'
+                      : canClaim
+                        ? 'border-[#4ade80] bg-[#11261f]'
+                        : 'border-[#334361]'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div>
+                        <span
+                          className="font-pixel text-[6.5px] px-1.5 py-0.5 border"
+                          style={{
+                            borderColor: mission.accentColor,
+                            color: mission.accentColor,
+                          }}
+                        >
+                          {mission.categoryLabel}
+                        </span>
+                        <h4 className="font-pixel text-[9px] text-[#eef2f7] mt-1">
+                          {mission.title}
+                        </h4>
+                      </div>
+                      <span className="font-pixel text-[8px] px-2 py-1 bg-[#143326] border border-[#66d98c] text-[#ffe066] shrink-0">
+                        +${mission.rewardCash.toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                    <p className="text-[14.5px] text-[#cfd9e8] leading-snug mb-2">
+                      {mission.description}
+                    </p>
+                    <div className="w-full h-3 bg-[#0b101b] border border-[#334361] overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#0284c7] to-[#4ade80] transition-all duration-300"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[13px] text-[#9eb0c9] mt-1 tabular-nums">
+                      <span>Progresso: {mission.progressLabel}</span>
+                      <span>{pct}%</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid={`claim-mission-btn-${mission.id}`}
+                    disabled={!canClaim}
+                    onClick={() => onClaimMission?.(mission.id)}
+                    className={`pixel-btn w-full py-2 px-3 font-pixel text-[7.5px] ${
+                      mission.claimed
+                        ? 'bg-[#143326] border-[#2e7d52] text-[#66d98c]'
+                        : canClaim
+                          ? 'bg-[#16a34a] hover:bg-[#15803d] border-[#4ade80] text-white shadow-[0_0_12px_rgba(22,163,74,0.45)]'
+                          : 'bg-[#1f293d] text-[#8fa4bf]'
+                    }`}
+                  >
+                    {mission.claimed
+                      ? `RECOMPENSA RESGATADA (+$${mission.rewardCash.toLocaleString('pt-BR')})`
+                      : canClaim
+                        ? `RESGATAR RECOMPENSA (+$${mission.rewardCash.toLocaleString('pt-BR')})`
+                        : 'EM ANDAMENTO · CUMPRIR META'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       ) : null}
 
       {/* TAB 2: TERRENO */}

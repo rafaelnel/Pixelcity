@@ -3534,9 +3534,14 @@ test('available works and milestones are ordered by first necessity and 2x2 mark
     [
       'port_evolution',          // 1,200 hab.
       'sports_center_project',   // 2,000 hab.
+      'clean_energy_project',    // 3,200 hab.
       'bus_transit_project',     // 4,000 hab.
+      'hospital_project',        // 4,800 hab.
       'airport_evolution',       // 5,000 hab.
+      'tech_university_project', // 6,500 hab.
       'shopping_evolution',      // 7,500 hab.
+      'amusement_park_project',  // 8,500 hab.
+      'rail_freight_project',    // 9,500 hab.
       'metro_transit_project',   // 14,000 hab.
       'toll_plaza_project',      // 20,000 hab. ($18,500)
       'landmark_project',        // 20,000 hab. ($26,000)
@@ -3547,10 +3552,10 @@ test('available works and milestones are ordered by first necessity and 2x2 mark
   city.workTiers.port_evolution = 2;
   const reorderedOffers = getEmergencyOffers(city);
   assert.equal(reorderedOffers[0].id, 'sports_center_project', 'Sports Center (2k) should move ahead of Port Phase II (10k)');
-  assert.equal(reorderedOffers[1].id, 'bus_transit_project');
-  assert.equal(reorderedOffers[2].id, 'airport_evolution');
-  assert.equal(reorderedOffers[3].id, 'shopping_evolution');
-  assert.equal(reorderedOffers[4].id, 'port_evolution');
+  assert.equal(reorderedOffers[1].id, 'clean_energy_project');
+  assert.equal(reorderedOffers[2].id, 'bus_transit_project');
+  assert.equal(reorderedOffers[3].id, 'hospital_project');
+  assert.equal(reorderedOffers[4].id, 'airport_evolution');
 
   // 3. 2×2 Market (municipal_market and 2×2 commercial lots) config and labels
   const marketDef = ESTABLISHMENT_CATALOG.find((e) => e.id === 'municipal_market')!;
@@ -3748,6 +3753,119 @@ test('Mercado (2x2) is a basic early-game commercial establishment that boosts l
   city.totalPopulation = 100000;
   const offerAt100k = getEmergencyOffers(city).find((o) => o.id === 'landmark_project')!;
   assert.equal(offerAt100k.unlocked, true);
+});
+
+test('5 new evolutionary landmarks (Clean Energy, Hospital 3x3, Tech University, Amusement Park, Rail Terminal), 3 live map animations (Stadium Match Day fireworks, Helipad helicopters, Freight Convoys), and Mandate Missions work end-to-end', async () => {
+  const {
+    claimMandateMission,
+    createParticlePool,
+    getMandateMissionStatuses,
+    triggerStadiumMatchDay,
+    updateBoatsAndPlanes,
+    updateCarsAndParticles,
+  } = await import('./cityEngine');
+  const typeMod = await import('./types');
+
+  const city = createNewCity(774411, 'easy');
+  city.money = 10_000_000;
+
+  // Populate city to 25,000 hab. so all new landmarks unlock
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 24500) {
+      t.type = 'residential';
+      t.level = 3;
+      recomputeFieldsAndStats(city);
+    }
+  }
+  assert.ok(city.totalPopulation >= 22000);
+
+  // 1. Build Clean Energy Tier 1 (2×2 Solar Power Plant)
+  assert.equal(executeEmergencyAction(city, 'clean_energy_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.cleanEnergyCount, 1);
+  assert.equal(city.stats.cleanEnergyLevel, 1);
+
+  // 2. Build Hospital Central Tier 1 (3×3 with Helipad)
+  assert.equal(executeEmergencyAction(city, 'hospital_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.hospitalCount, 1);
+  assert.ok(city.stats.helipadCount >= 1, 'Hospital Central 3×3 should register a rooftop helipad');
+
+  // 3. Build Tech University Tier 1 (3×3) and Tier 2 (4×4 Tech Park with Helipad)
+  assert.equal(executeEmergencyAction(city, 'tech_university_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(executeEmergencyAction(city, 'tech_university_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.universityCount >= 2);
+  assert.ok(city.stats.helipadCount >= 2, '4×4 Tech Park should add a 2nd rooftop helipad');
+
+  // 4. Build Amusement Park Tier 1 (3×3 with Illuminated Ferris Wheel)
+  assert.equal(executeEmergencyAction(city, 'amusement_park_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.amusementParkCount, 1);
+
+  // 5. Build Port + Rail Freight Terminal (3×2) and verify Freight Convoys spawn between Industry, Rail Terminal, and Port
+  assert.equal(executeEmergencyAction(city, 'port_evolution').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(executeEmergencyAction(city, 'rail_freight_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.portCount, 1);
+  assert.equal(city.stats.railTerminalCount, 1);
+
+  const cars: import('./types').CarEntity[] = [];
+  const particles = createParticlePool();
+  const cursor = { idx: 0 };
+  for (let step = 0; step < 30; step++) {
+    updateCarsAndParticles(city, cars, particles, cursor, 0.25, 1.0, step * 0.25);
+  }
+  const freightConvoys = cars.filter((c) => c.role === 'freight_convoy' && c.kind === 'truck');
+  assert.ok(
+    freightConvoys.length >= 1,
+    `Expected Freight Convoy trucks to spawn when Port + Industry/Rail exist, got ${freightConvoys.length}`
+  );
+
+  // 6. Verify Helicopter flights spawn and target rooftop helipads (Hospital 3×3 / Tech Park 4×4)
+  const boats: import('./types').BoatEntity[] = [];
+  const planes: import('./types').PlaneEntity[] = [];
+  const helicopters: import('./types').HelicopterEntity[] = [];
+  for (let step = 0; step < 25; step++) {
+    updateBoatsAndPlanes(city, boats, planes, particles, cursor, 0.25, 1.0, helicopters);
+  }
+  assert.ok(
+    helicopters.length >= 1,
+    'Expected helicopters to spawn and fly between Hospital 3×3 and Tech University 4×4 helipads'
+  );
+
+  // 7. Build Stadium and verify Stadium Match Day triggers fireworks & tourism bonus
+  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.stadiumCount, 1);
+  assert.equal(triggerStadiumMatchDay(city, 2).ok, true);
+  assert.ok((city.stadiumMatchRemainingMonths ?? 0) >= 2);
+  for (let step = 0; step < 15; step++) {
+    updateCarsAndParticles(city, cars, particles, cursor, 0.2, 1.0, step * 0.2);
+  }
+  const activeFireworks = particles.filter((p) => p.active && p.maxLife <= 1.25);
+  assert.ok(activeFireworks.length > 0, 'Expected colorful firework particles above stadium on Match Day');
+
+  // 8. Verify Mandate Missions & Cash Rewards
+  const missions = getMandateMissionStatuses(city);
+  assert.equal(missions.length, 8);
+  const completedMission = missions.find((m) => m.completed && !m.claimed);
+  assert.ok(completedMission, 'Expected at least one Mandate Mission to be completed');
+  const cashBefore = city.money;
+  const claimRes = claimMandateMission(city, completedMission!.id);
+  assert.equal(claimRes.ok, true);
+  assert.equal(city.money, cashBefore + completedMission!.rewardCash);
+  // Claiming again must fail
+  assert.equal(claimMandateMission(city, completedMission!.id).ok, false);
+  void typeMod;
 });
 
 

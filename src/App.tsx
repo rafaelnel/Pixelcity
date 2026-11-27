@@ -29,6 +29,7 @@ import { TitleOverlay } from './components/TitleOverlay';
 import { TopHud } from './components/TopHud';
 import {
   advanceSimulationTime,
+  claimMandateMission,
   convertBuildingToCondo,
   createHudSnapshot,
   createNewCity,
@@ -63,6 +64,7 @@ import {
   setCondoPolicy,
   setTaxRate,
   setTollTariff,
+  triggerStadiumMatchDay,
   updateBoatsAndPlanes,
   updateCarsAndParticles,
   type CitySaveRecord,
@@ -103,6 +105,7 @@ import type {
   ExpandDirection,
   HelicopterEntity,
   HudSnapshot,
+  MandateMissionId,
   MapFilter,
   ModalTab,
   ParticleEntity,
@@ -131,6 +134,8 @@ const TILE_LABELS: Record<TileType, string> = {
   bus_station: 'Terminal de Ônibus',
   metro_station: 'Estação de Metrô',
   shopping: 'Shopping Center',
+  clean_energy: 'Usina de Energia Limpa',
+  rail_terminal: 'Ferrovia de Carga & Monotrilho',
 };
 
 function getInitialQueryParams(): {
@@ -818,6 +823,34 @@ export default function App() {
     },
     [flushSounds, syncHud]
   );
+
+  const handleClaimMission = useCallback(
+    (missionId: MandateMissionId) => {
+      if (!cityRef.current) return;
+      const res = claimMandateMission(cityRef.current, missionId);
+      if (res.ok) {
+        flushSounds(cityRef.current);
+        setEmergencyFeedback(
+          `Missão "${res.title}" concluída! +$${(res.rewardCash ?? 0).toLocaleString('pt-BR')} creditados no caixa.`
+        );
+        syncHud();
+      } else if (res.reason) {
+        setEmergencyFeedback(res.reason);
+      }
+    },
+    [flushSounds, syncHud]
+  );
+
+  const handleTriggerStadiumMatch = useCallback(() => {
+    if (!cityRef.current) return;
+    if (triggerStadiumMatchDay(cityRef.current, 2).ok) {
+      flushSounds(cityRef.current);
+      setEmergencyFeedback(
+        'Dia de Jogo no Estádio iniciado! Refletores acesos e show de fogos em andamento no mapa.'
+      );
+      syncHud();
+    }
+  }, [flushSounds, syncHud]);
 
   const handleNavigateNeed = useCallback((tab: ModalTab) => {
     setEmergencyFeedback(null);
@@ -1550,6 +1583,10 @@ export default function App() {
       o.tier === 1 &&
       hud.money >= o.cost
   ).length;
+  const claimableMissionsCount = (hud.mandateMissions ?? []).filter(
+    (m) => m.completed && !m.claimed
+  ).length;
+  const totalReadyWorksOrMissions = readyMilestoneWorksCount + claimableMissionsCount;
 
   const worksBadge: NavBadgeSpec | null = hud.activeUrbanIncident
     ? {
@@ -1563,13 +1600,13 @@ export default function App() {
           ariaLabel: `${pendingWorksCount} ${pendingWorksCount === 1 ? 'obra em andamento' : 'obras em andamento'}`,
           tone: 'active',
         }
-      : hud.recentMilestoneBanner || readyMilestoneWorksCount > 0
+      : hud.recentMilestoneBanner || totalReadyWorksOrMissions > 0
         ? {
             text:
-              readyMilestoneWorksCount > 0
-                ? String(readyMilestoneWorksCount)
+              totalReadyWorksOrMissions > 0
+                ? String(totalReadyWorksOrMissions)
                 : '★',
-            ariaLabel: 'Nova obra ou marco disponível para construção',
+            ariaLabel: 'Nova obra, marco ou missão disponível',
             tone: 'ready',
           }
         : null;
@@ -2321,6 +2358,8 @@ export default function App() {
           feedbackMsg={emergencyFeedback}
           onExecuteAction={handleExecuteEmergency}
           onExpandLand={handleExpandLand}
+          onClaimMission={handleClaimMission}
+          onTriggerStadiumMatch={handleTriggerStadiumMatch}
           onClose={() => {
             setEmergencyFeedback(null);
             setActiveModal(null);

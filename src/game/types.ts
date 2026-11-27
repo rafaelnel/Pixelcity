@@ -17,7 +17,9 @@ export type TileType =
   | 'stadium'
   | 'bus_station'
   | 'metro_station'
-  | 'shopping';
+  | 'shopping'
+  | 'clean_energy'
+  | 'rail_terminal';
 
 /** Coherent urban neighborhood (bairro) macro-zone classification */
 export type NeighborhoodDistrictType = 'residential' | 'commercial' | 'industrial';
@@ -71,11 +73,16 @@ export type ModalTab = 'budget' | 'finances' | 'emergencies' | 'report';
 
 export type EmergencyActionId =
   | 'sports_center_project'
+  | 'clean_energy_project'
   | 'bus_transit_project'
+  | 'hospital_project'
+  | 'airport_evolution'
+  | 'tech_university_project'
+  | 'shopping_evolution'
+  | 'amusement_park_project'
+  | 'rail_freight_project'
   | 'metro_transit_project'
   | 'port_evolution'
-  | 'airport_evolution'
-  | 'shopping_evolution'
   | 'toll_plaza_project'
   | 'environmental_cleanup'
   | 'revitalization'
@@ -304,6 +311,14 @@ export interface CityStats {
   metroStationCount: number;
   shoppingCount: number;
   shoppingLevel: number;
+  cleanEnergyCount: number;
+  cleanEnergyLevel: number;
+  hospitalCount: number;
+  universityCount: number;
+  amusementParkCount: number;
+  railTerminalCount: number;
+  railTerminalLevel: number;
+  helipadCount: number;
   wideAvenueTileCount: number;
   monthlyTransitRiders: number;
   transitCoveragePct: number;
@@ -417,7 +432,37 @@ export type CivicMilestoneKind =
   | 'stadium'
   | 'airport'
   | 'toll'
+  | 'clean_energy'
+  | 'hospital'
+  | 'university'
+  | 'amusement'
+  | 'rail'
   | 'megapolis';
+
+export type MandateMissionId =
+  | 'mission_local_market'
+  | 'mission_clean_energy'
+  | 'mission_hospital_care'
+  | 'mission_tech_campus'
+  | 'mission_amusement_wheel'
+  | 'mission_freight_corridor'
+  | 'mission_skyline_helipads'
+  | 'mission_stadium_match_night';
+
+export interface MandateMissionStatus {
+  id: MandateMissionId;
+  title: string;
+  categoryLabel: string;
+  description: string;
+  rewardCash: number;
+  accentColor: string;
+  progressPct: number;
+  progressLabel: string;
+  currentValue: number;
+  targetValue: number;
+  completed: boolean;
+  claimed: boolean;
+}
 
 export interface CivicMilestoneStatus {
   id: string;
@@ -513,8 +558,13 @@ export interface CarEntity {
   color: string;
   laneOffset: number;
   kind?: VehicleKind;
-  /** Distinguishes city commuters from external visitors entering/exiting through the border highway */
-  role?: 'local' | 'visitor_in' | 'visitor_out';
+  /** Distinguishes city commuters, external highway visitors, and industrial-port freight convoys */
+  role?: 'local' | 'visitor_in' | 'visitor_out' | 'freight_convoy';
+  /** Optional target destination for freight convoys routing between industrial zones, rail terminal, and port */
+  targetX?: number;
+  targetY?: number;
+  /** Secondary container color for articulated freight convoys */
+  cargoColor?: string;
 }
 
 export type BoatKind = 'small' | 'medium' | 'yacht' | 'cargo' | 'cruise';
@@ -679,6 +729,12 @@ export interface CityState {
   rngState: number;
   pendingSounds: SoundCue[];
   milestonesReached: Record<string, boolean>;
+  /** Mandate missions claimed by the mayor for cash rewards */
+  claimedMissions?: Record<string, boolean>;
+  /** Remaining months of an active Stadium Match Day event (refletores + fogos + bilheteria) */
+  stadiumMatchRemainingMonths?: number;
+  /** Total Stadium Match Days hosted during the city's history */
+  stadiumMatchesHosted?: number;
   recentMilestoneBanner: MilestoneBanner | null;
   /** Dynamic 4-season & shifting weather simulation state */
   weather: WeatherState;
@@ -724,6 +780,9 @@ export interface HudSnapshot {
   emergencyOffers: EmergencyOfferView[];
   landExpansions: LandExpansionStatus[];
   civicMilestones: CivicMilestoneStatus[];
+  mandateMissions: MandateMissionStatus[];
+  stadiumMatchActive: boolean;
+  stadiumMatchesHosted: number;
   recentMilestoneBanner: MilestoneBanner | null;
   news: NewsItem[];
   activeBoosts: CityBoost[];

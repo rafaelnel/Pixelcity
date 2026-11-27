@@ -2901,128 +2901,161 @@ function getCommercialSprite(
   // Dedicated 2×2 Neighborhood & Municipal Market / Supermarket Complex (Level 1..3)
   if (lotW === 2 && lotH === 2 && level <= 3) {
     const mIdx = Math.abs(anchorXCoord * 7 + anchorYCoord * 13 + variant) % 3;
+    const palIdx = (mIdx * 3 + level) % COMMERCIAL_PALETTES.length;
+    const pal = COMMERCIAL_PALETTES[palIdx];
     return getOrCreateSprite(
-      `com64_market2x2_lv${level}_v${mIdx}_${lotDx}${lotDy}`,
+      `com64_market2x2_v2_lv${level}_v${mIdx}_${lotDx}${lotDy}`,
       88,
       140,
       44,
       104,
       (ctx, cx, cy) => {
-        const roofPal =
-          mIdx === 0
-            ? { top: '#0284c7', hi: '#38bdf8', accent: '#22c55e' }
-            : mIdx === 1
-              ? { top: '#059669', hi: '#34d399', accent: '#f59e0b' }
-              : { top: '#dc2626', hi: '#f87171', accent: '#38bdf8' };
-        const hallH = level === 3 ? 28 : level === 2 ? 22 : 18;
+        const hallH = level === 3 ? 28 : level === 2 ? 23 : 19;
 
-        // Base plaza slab
-        fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#94a3b8');
-        fillDiamond64(ctx, cx, cy, 29.5, 14.8, '#cbd5e1');
+        // Authentic stone sidewalk plaza foundation matching city commercial blocks
+        const plaza = ctx.createLinearGradient(cx - 32, cy - 16, cx + 32, cy + 16);
+        plaza.addColorStop(0, '#d2dce8');
+        plaza.addColorStop(1, '#98a6b8');
+        fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, plaza);
+        drawSidewalkPaving64(ctx, cx, cy, palIdx + lotDx + lotDy);
 
         if (lotDx === 0 && lotDy === 0) {
-          // (0,0) Rear-West: Main Modern Market & Supermarket Hall + Elevated Clerestory & "MERCADO" Sign
-          drawPrism64(
-            ctx,
-            cx,
-            cy + 2,
-            24,
-            hallH,
-            {
-              top: '#f8fafc',
-              topHi: '#ffffff',
-              left: '#f1f5f9',
-              leftBot: '#cbd5e1',
-              right: '#94a3b8',
-              rightBot: '#64748b',
-            },
-            { rimColor: '#ffffff', outlineColor: '#e2e8f0', castShadow: true, parapet: true }
-          );
-          drawWindows64(ctx, cx, cy + 2, 24, hallH - 4, Math.max(2, level + 1), 4, {
-            litColor: '#fef08a',
-            glassLeft: '#38bdf8',
-            glassRight: '#0284c7',
-            seed: mIdx + 3,
-            curtainWall: true,
-          });
-          // Elevated modern glass clerestory roof ("parte alta" of the 2x2 market)
-          drawPrism64(ctx, cx, cy + 2 - hallH, 16, 7, {
-            top: roofPal.hi,
-            left: roofPal.top,
-            right: '#0f172a',
-          });
-          // Glowing "MERCADO" rooftop signboard
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(cx - 11, cy - hallH - 12, 22, 6.5);
-          ctx.fillStyle = roofPal.accent;
-          ctx.fillRect(cx - 9.5, cy - hallH - 10.5, 19, 3.5);
-        } else if (lotDx === 1 && lotDy === 0) {
-          // (1,0) Rear-East: Covered Supermarket Wing & Fresh Produce Hall
+          // (0,0) Rear-West: Main Heritage Brick/Stone Market Hall + Clerestory Monitor Roof
           drawPrism64(
             ctx,
             cx,
             cy + 2,
             23,
-            hallH - 3,
+            hallH,
             {
-              top: roofPal.top,
-              topHi: roofPal.hi,
-              left: '#e2e8f0',
-              leftBot: '#cbd5e1',
-              right: '#94a3b8',
-              rightBot: '#64748b',
+              top: pal.top,
+              topHi: pal.topHi,
+              left: pal.left,
+              leftBot: pal.leftBot,
+              right: pal.right,
+              rightBot: pal.rightBot,
             },
-            { outlineColor: '#f8fafc', castShadow: true, parapet: true }
+            {
+              outlineColor: pal.trim,
+              castShadow: true,
+              parapet: true,
+              material: pal.material,
+              seed: palIdx,
+            }
           );
-          drawWindows64(ctx, cx, cy + 2, 23, hallH - 6, Math.max(1, level), 3, {
-            litColor: '#bae6fd',
-            glassLeft: '#0284c7',
-            glassRight: '#0369a1',
-            seed: mIdx + 7,
-            curtainWall: true,
+          drawWindows64(ctx, cx, cy + 2, 23, hallH - 3, Math.max(2, level + 1), 4, {
+            litColor: '#ffe066',
+            glassLeft: '#3a7ca5',
+            glassRight: '#1e4e6e',
+            seed: palIdx + 3,
           });
-          // Skylight ridge
-          drawPrism64(ctx, cx, cy + 5 - hallH, 13, 4.5, {
-            top: '#e0f2fe',
-            left: '#38bdf8',
-            right: '#0284c7',
+          drawFacadeMicroDetails64(ctx, cx, cy + 2, 23, hallH, palIdx, {
+            hasAwning: true,
+            awningColor: pal.accent,
+            hasMarquee: true,
           });
+          // Raised architectural clerestory skylight monitor roof
+          drawPrism64(
+            ctx,
+            cx,
+            cy + 2 - hallH,
+            13,
+            5.5,
+            {
+              top: pal.roofMid,
+              topHi: pal.roofHi,
+              left: pal.left,
+              right: pal.right,
+            },
+            { outlineColor: pal.trim, material: pal.material, seed: palIdx + 1 }
+          );
+          drawWindows64(ctx, cx, cy + 2 - hallH, 13, 5, 1, 2, {
+            litColor: '#ffe066',
+            glassLeft: '#38bdf8',
+            glassRight: '#0284c7',
+            seed: palIdx + 5,
+          });
+        } else if (lotDx === 1 && lotDy === 0) {
+          // (1,0) Rear-East: Market Annex Wing & Bakery/Butcher Hall
+          const wingH = hallH - 3;
+          drawPrism64(
+            ctx,
+            cx,
+            cy + 2,
+            22,
+            wingH,
+            {
+              top: pal.top,
+              topHi: pal.topHi,
+              left: pal.left,
+              leftBot: pal.leftBot,
+              right: pal.right,
+              rightBot: pal.rightBot,
+            },
+            {
+              outlineColor: pal.trim,
+              castShadow: true,
+              parapet: true,
+              material: pal.material,
+              seed: palIdx + 2,
+            }
+          );
+          drawWindows64(ctx, cx, cy + 2, 22, wingH - 3, Math.max(2, level), 3, {
+            litColor: '#ffe066',
+            glassLeft: '#3a7ca5',
+            glassRight: '#1e4e6e',
+            seed: palIdx + 7,
+          });
+          drawFacadeMicroDetails64(ctx, cx, cy + 2, 22, wingH, palIdx + 2, {
+            hasAwning: true,
+            awningColor: pal.accent,
+          });
+          drawRooftopProps64(ctx, cx, cy + 2 - wingH, 22, palIdx + 2, 'low');
         } else if (lotDx === 0 && lotDy === 1) {
-          // (0,1) Front-West: Covered Market Promenade & Colorful Fresh Produce Stalls
-          fillDiamond64(ctx, cx, cy, 27.5, 13.8, '#e2e8f0');
-          drawPrism64(ctx, cx - 3, cy - 1, 16, 10, {
-            top: roofPal.hi,
-            left: '#f8fafc',
-            right: '#cbd5e1',
+          // (0,1) Front-West: Corner Delicatessen & Covered Produce Arcade
+          const pavH = Math.max(14, hallH - 5);
+          drawPrism64(
+            ctx,
+            cx - 2,
+            cy + 1,
+            19,
+            pavH,
+            {
+              top: pal.top,
+              topHi: pal.topHi,
+              left: pal.left,
+              leftBot: pal.leftBot,
+              right: pal.right,
+              rightBot: pal.rightBot,
+            },
+            {
+              outlineColor: pal.trim,
+              castShadow: true,
+              parapet: true,
+              material: pal.material,
+              seed: palIdx + 4,
+            }
+          );
+          drawWindows64(ctx, cx - 2, cy + 1, 19, pavH - 3, 2, 3, {
+            litColor: '#ffe066',
+            glassLeft: '#3a7ca5',
+            glassRight: '#1e4e6e',
+            seed: palIdx + 9,
           });
-          const stallCols = ['#ef4444', '#22c55e', '#f59e0b', '#38bdf8'];
-          for (let s = 0; s < 3; s++) {
-            const sx = cx - 12 + s * 10;
-            const sy = cy + 4 - (s % 2) * 3;
-            drawPrism64(ctx, sx, sy, 5.5, 5, {
-              top: stallCols[(s + mIdx) % stallCols.length],
-              left: '#fef3c7',
-              right: '#d97706',
-            });
-          }
+          drawFacadeMicroDetails64(ctx, cx - 2, cy + 1, 19, pavH, palIdx + 4, {
+            hasAwning: true,
+            awningColor: pal.accent,
+          });
+          drawTree64(ctx, cx + 15, cy + 4, 'emerald', 0.78);
         } else {
-          // (1,1) Front-East: Market Customer Parking Lot with Bays & Parked 3D Cars
-          fillDiamond64(ctx, cx, cy, 27.5, 13.8, '#1e293b');
-          fillDiamond64(ctx, cx, cy, 24.5, 12.2, '#334155');
-          drawLine64(ctx, cx - 14, cy - 2, cx - 2, cy - 8, '#f8fafc', 1.1);
-          drawLine64(ctx, cx - 4, cy + 3, cx + 8, cy - 3, '#f8fafc', 1.1);
-          drawLine64(ctx, cx + 4, cy + 7, cx + 15, cy + 1, '#f8fafc', 1.1);
-          const carCols = ['#ef4444', '#38bdf8', '#facc15', '#22c55e'];
-          drawPrism64(ctx, cx - 6, cy - 1, 5.5, 3.2, {
-            top: carCols[mIdx % carCols.length],
-            left: '#0f172a',
-            right: '#1e293b',
-          });
-          drawPrism64(ctx, cx + 5, cy + 3, 5.5, 3.2, {
-            top: carCols[(mIdx + 2) % carCols.length],
-            left: '#0f172a',
-            right: '#1e293b',
-          });
+          // (1,1) Front-East: Recessed Asphalt Customer Parking Court & Parked 3D Cars
+          fillDiamond64(ctx, cx, cy, 24.5, 12.2, '#2c3545', '#64748b', 0.8);
+          drawLine64(ctx, cx - 13, cy - 2, cx - 2, cy - 7.5, 'rgba(241, 245, 249, 0.72)', 0.95);
+          drawLine64(ctx, cx - 4, cy + 2.5, cx + 7, cy - 3, 'rgba(241, 245, 249, 0.72)', 0.95);
+          drawLine64(ctx, cx + 4, cy + 6.5, cx + 14, cy + 1, 'rgba(241, 245, 249, 0.72)', 0.95);
+          const carCols = ['#ef4444', '#38bdf8', '#eab308', '#22c55e'];
+          drawShoppingParkedCar64(ctx, cx - 5, cy - 1, carCols[mIdx % carCols.length], 'ne', 0.86);
+          drawShoppingParkedCar64(ctx, cx + 5, cy + 3, carCols[(mIdx + 2) % carCols.length], 'ne', 0.86);
           drawStreetProp64(ctx, cx - 18, cy + 2, 'lamp');
         }
       }
@@ -5064,23 +5097,24 @@ function getEstablishmentSprite(
     const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
     if (!rotLot.isFrontCorner) {
       return getOrCreateSprite(
-        `est64_market2x2_base_v${v}_x${rotLot.rDx}y${rotLot.rDy}`,
+        `est64_market2x2_v2_base_v${v}_x${rotLot.rDx}y${rotLot.rDy}`,
         98,
         128,
         49,
         94,
         (ctx, cx, cy) => {
-          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#7b8798');
-          fillDiamond64(ctx, cx, cy, 29.5, 14.8, '#cbd5e1');
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+          fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+          drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
         }
       );
     }
     return getOrCreateSprite(
-      `est64_market2x2_hero_v${v}`,
-      210,
-      180,
-      105,
-      128,
+      `est64_market2x2_v2_hero_v${v}_f${f}`,
+      216,
+      188,
+      108,
+      132,
       (ctx, cx, cy) => {
         const dRx = -0.5;
         const dRy = -0.5;
@@ -5090,200 +5124,653 @@ function getEstablishmentSprite(
           mx + (u - wv) * TILE_HW,
           my + (u + wv) * TILE_HH - z,
         ];
-        const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
-          ctx.beginPath();
-          ctx.moveTo(pts[0][0], pts[0][1]);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-          ctx.closePath();
-          ctx.fillStyle = fill;
-          ctx.fill();
-          if (stroke) {
-            ctx.strokeStyle = stroke;
-            ctx.lineWidth = lw;
-            ctx.stroke();
-          }
-        };
 
-        // 1. Full 2×2 Market Plaza Perimeter & Customer Parking Apron
-        poly([pt(-0.98, -0.98), pt(0.98, -0.98), pt(0.98, 0.98), pt(-0.98, 0.98)], '#4b8f3b', '#1e293b', 1.1);
-        poly([pt(-0.92, -0.92), pt(0.92, -0.92), pt(0.92, 0.92), pt(-0.92, 0.92)], '#cbd5e1', '#94a3b8', 0.9);
-        // Front-right asphalt parking bay
-        poly([pt(0.05, -0.86), pt(0.88, -0.86), pt(0.88, 0.88), pt(0.05, 0.88)], '#334155', '#475569', 0.9);
-        for (const pv of [-0.55, -0.20, 0.15, 0.50]) {
-          const [p0x, p0y] = pt(0.14, pv, 0.3);
-          const [p1x, p1y] = pt(0.46, pv, 0.3);
-          drawLine64(ctx, p0x, p0y, p1x, p1y, '#f8fafc', 1.0);
+        // 1. Seamless 2×2 Stone Market Plaza Foundation & Customer Parking Apron (#8c97a8 / #cbd5e1)
+        drawIsoQuad64(ctx, pt, -0.98, 0.98, -0.98, 0.98, 0, '#8c97a8');
+        drawIsoSpanBox64(ctx, pt, -0.94, 0.94, -0.94, 0.94, 0, 1.8, {
+          top: '#cbd5e1',
+          topHi: '#e2e8f0',
+          left: '#94a3b8',
+          right: '#64748b',
+        });
+        // Landscaped green corner planter bed
+        drawIsoQuad64(ctx, pt, -0.90, -0.52, 0.48, 0.90, 1.9, '#3f7a46');
+        // Recessed dark slate customer parking & delivery bay on the right (u: 0.22..0.88)
+        drawIsoQuad64(ctx, pt, 0.22, 0.88, -0.86, 0.88, 1.9, '#2c3545');
+        for (const pv of [-0.48, -0.10, 0.28, 0.64]) {
+          const [p0x, p0y] = pt(0.28, pv, 2.0);
+          const [p1x, p1y] = pt(0.76, pv, 2.0);
+          drawLine64(ctx, p0x, p0y, p1x, p1y, 'rgba(241, 245, 249, 0.72)', 0.9);
         }
 
-        // 2. Main 2×2 Modern Neighborhood 'MERCADO' Building (Back-Left & Center)
-        const roofCol = v === 0 ? '#0f766e' : v === 1 ? '#15803d' : '#b45309';
-        const roofHi = v === 0 ? '#14b8a6' : v === 1 ? '#22c55e' : '#f59e0b';
-        drawIsoSpanBox64(
-          ctx,
-          pt,
-          -0.88,
-          0.12,
-          -0.88,
-          0.32,
-          0,
-          24,
-          {
-            top: '#e2e8f0',
-            left: '#f8fafc',
-            right: '#cbd5e1',
-            stroke: '#1e293b',
-          },
-          1.0
-        );
-        // Colored market roof fascia & skylight clerestory
-        poly(
-          [
-            pt(-0.84, -0.84, 24.4),
-            pt(0.08, -0.84, 24.4),
-            pt(0.08, 0.28, 24.4),
-            pt(-0.84, 0.28, 24.4),
-          ],
-          roofCol,
-          '#ffffff',
-          0.9
-        );
-        drawIsoSpanBox64(
-          ctx,
-          pt,
-          -0.64,
-          -0.12,
-          -0.62,
-          0.06,
-          24,
-          5.5,
-          {
-            top: '#7dd3fc',
-            left: roofHi,
-            right: roofCol,
-            stroke: '#0f172a',
-          },
-          0.85
-        );
+        // 2. Main 2×2 Architectural Municipal Market Hall (Heritage Brick / Sandstone & Copper/Terracotta Roof)
+        const pal =
+          v === 0
+            ? {
+                roof: '#0f766e',
+                roofHi: '#14b8a6',
+                wallL: '#f3d5b5',
+                wallLBot: '#d4a373',
+                wallR: '#b5835a',
+                wallRBot: '#8c5e37',
+                trim: '#0d9488',
+              }
+            : v === 1
+              ? {
+                  roof: '#b91c1c',
+                  roofHi: '#ef4444',
+                  wallL: '#f5ebe0',
+                  wallLBot: '#d5bdaf',
+                  wallR: '#a89f91',
+                  wallRBot: '#7f7567',
+                  trim: '#dc2626',
+                }
+              : {
+                  roof: '#1d4ed8',
+                  roofHi: '#3b82f6',
+                  wallL: '#e2e8f0',
+                  wallLBot: '#cbd5e1',
+                  wallR: '#94a3b8',
+                  wallRBot: '#64748b',
+                  trim: '#2563eb',
+                };
 
-        // Glass curtain storefront & automatic sliding entrance doors on front-right facade
-        poly(
-          [
-            pt(0.13, -0.74, 2),
-            pt(0.13, 0.22, 2),
-            pt(0.13, 0.22, 18),
-            pt(0.13, -0.74, 18),
-          ],
-          '#38bdf8',
-          '#0284c7',
-          1.0
-        );
-        // Entrance canopy awning
-        drawIsoSpanBox64(
-          ctx,
-          pt,
-          0.12,
-          0.28,
-          -0.42,
-          0.12,
-          11,
-          2.6,
-          {
-            top: roofHi,
-            left: '#f8fafc',
-            right: roofCol,
-            stroke: '#0f172a',
-          },
-          0.85
-        );
+        // Main market hall masonry body (u: -0.88..0.18, v: -0.88..0.38)
+        drawIsoSpanBox64(ctx, pt, -0.88, 0.18, -0.88, 0.38, 1.9, 24, {
+          top: pal.roof,
+          topHi: pal.roofHi,
+          left: pal.wallL,
+          leftBot: pal.wallLBot,
+          right: pal.wallR,
+          rightBot: pal.wallRBot,
+          parapetColor: pal.roof,
+        });
 
-        // Illuminated "MERCADO" Rooftop Signboard facing the front avenue
-        const [sg0x, sg0y] = pt(0.10, -0.68, 24);
-        const [sg1x, sg1y] = pt(0.10, 0.18, 24);
-        poly(
-          [
-            [sg0x, sg0y],
-            [sg1x, sg1y],
-            [sg1x, sg1y - 10],
-            [sg0x, sg0y - 10],
-          ],
-          roofCol,
-          '#ffffff',
-          1.1
-        );
-        ctx.save();
-        ctx.translate((sg0x + sg1x) * 0.5, (sg0y + sg1y) * 0.5 - 3.5);
-        ctx.rotate(Math.atan2(sg1y - sg0y, sg1x - sg0x));
-        ctx.font = 'bold 6.8px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#fef08a';
-        ctx.fillText('MERCADO', 0, 0);
-        ctx.restore();
+        // Multi-pane arched/storefront windows on both market facades with warm interior glow (#ffe066)
+        drawIsoGlassGrid64(ctx, pt, 'left', -0.84, 0.14, -0.88, 0.38, 2.2, 21, 3, 2, '#1e3a5f', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', -0.88, 0.18, -0.82, 0.32, 2.2, 21, 4, 2, '#172554', '#0284c7');
 
-        // 3. Open-Air Fresh Produce Market Stalls (Front-Left Promenade)
-        const stallCols = ['#ef4444', '#22c55e', '#f59e0b', '#3b82f6'];
+        // Raised Central Clerestory Skylight Monitor Roof with Lit Windows
+        drawIsoSpanBox64(ctx, pt, -0.68, -0.02, -0.68, 0.16, 25.9, 6.2, {
+          top: pal.roof,
+          topHi: pal.roofHi,
+          left: '#e2e8f0',
+          right: '#94a3b8',
+          parapetColor: '#38bdf8',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', -0.64, -0.06, -0.68, 0.16, 26.2, 5.2, 3, 1, '#0284c7', '#ffe066');
+        drawIsoGlassGrid64(ctx, pt, 'right', -0.68, -0.02, -0.64, 0.12, 26.2, 5.2, 3, 1, '#0369a1', '#ffe066');
+
+        // Projecting Entrance Canopy Awning over the main market doors (right-front facade)
+        drawIsoSpanBox64(ctx, pt, 0.16, 0.34, -0.46, 0.18, 11.5, 2.8, {
+          top: pal.roofHi,
+          left: '#f8fafc',
+          right: pal.roof,
+        });
+
+        // 3. Open-Air Fresh Produce Market Stalls with Striped Awnings (Front-Left Promenade)
+        const stallPalettes = [
+          { top: '#ef4444', hi: '#fca5a5', crate: '#f59e0b' },
+          { top: '#16a34a', hi: '#86efac', crate: '#ef4444' },
+          { top: '#d97706', hi: '#fde047', crate: '#22c55e' },
+        ];
         for (let s = 0; s < 3; s++) {
-          const su0 = -0.80 + s * 0.28;
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            su0,
-            su0 + 0.21,
-            0.44,
-            0.78,
-            0,
-            7.5,
-            {
-              top: stallCols[(s + v) % stallCols.length],
-              left: '#fef3c7',
-              right: '#d97706',
-              stroke: '#1e293b',
-            },
-            0.8
-          );
+          const su0 = -0.44 + s * 0.22;
+          const sp = stallPalettes[(s + v) % stallPalettes.length];
+          // Wooden produce counter base
+          drawIsoSpanBox64(ctx, pt, su0, su0 + 0.17, 0.46, 0.78, 1.9, 3.6, {
+            top: sp.crate,
+            left: '#d97706',
+            right: '#92400e',
+          });
+          // Canopy awning overhead
+          drawIsoSpanBox64(ctx, pt, su0 - 0.01, su0 + 0.18, 0.44, 0.80, 7.2, 2.0, {
+            top: sp.top,
+            topHi: sp.hi,
+            left: '#f8fafc',
+            right: sp.top,
+          });
         }
 
-        // 4. Parked Customer Cars & Delivery Van in the 2×2 Market Lot
-        const carPalette = ['#ef4444', '#38bdf8', '#facc15', '#22c55e'];
+        // 4. Parked Customer Cars & White Delivery Van in the Market Lot
+        const carColors = ['#ef4444', '#38bdf8', '#eab308'];
         for (let c = 0; c < 3; c++) {
-          const cv = -0.38 + c * 0.36;
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            0.22,
-            0.48,
-            cv,
-            cv + 0.18,
-            0,
-            4.5,
-            {
-              top: carPalette[(c + v) % carPalette.length],
-              left: '#1e293b',
-              right: '#0f172a',
-              stroke: '#0f172a',
-            },
-            0.7
-          );
+          const [cxCar, cyCar] = pt(0.52, -0.26 + c * 0.36, 2.0);
+          drawShoppingParkedCar64(ctx, cxCar, cyCar, carColors[(c + v) % carColors.length], 'nw', 0.88);
         }
-        // White delivery truck at back loading bay
-        drawIsoSpanBox64(
+        // White delivery box van at back-right loading bay
+        const [vx, vy] = pt(0.54, -0.68, 2.0);
+        drawPrism64(
           ctx,
-          pt,
-          0.42,
-          0.78,
-          -0.80,
-          -0.54,
-          0,
-          7.5,
+          vx,
+          vy,
+          6.2,
+          5.8,
           {
             top: '#ffffff',
-            left: '#f1f5f9',
-            right: '#94a3b8',
-            stroke: '#1e293b',
+            left: '#f8fafc',
+            right: '#cbd5e1',
           },
-          0.8
+          { castShadow: true }
         );
-        const [tx, ty] = pt(-0.84, 0.84, 0);
-        drawTree64(ctx, tx, ty, 'emerald', 0.85);
+
+        // Corner shade tree
+        const [tx, ty] = pt(-0.74, 0.72, 2.0);
+        drawTree64(ctx, tx, ty, 'emerald', 0.82);
+      }
+    );
+  }
+
+  // Multi-tile Hospital Central & Centro Médico Regional 3×3 com Heliponto ('general_hospital')
+  if (estId === 'general_hospital' && isMulti && lotW >= 3 && lotH >= 3) {
+    const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+    if (!rotLot.isFrontCorner) {
+      return getOrCreateSprite(
+        `est64_hosp3x3_v2_base_v${v}_x${rotLot.rDx}y${rotLot.rDy}`,
+        98,
+        128,
+        49,
+        94,
+        (ctx, cx, cy) => {
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+          fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+          drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
+        }
+      );
+    }
+    return getOrCreateSprite(
+      `est64_hosp3x3_v2_hero_v${v}_f${f}`,
+      276,
+      242,
+      138,
+      174,
+      (ctx, cx, cy) => {
+        const dRx = -(rotLot.rotW - 1) / 2;
+        const dRy = -(rotLot.rotH - 1) / 2;
+        const mx = cx + (dRx - dRy) * TILE_HW;
+        const my = cy + (dRx + dRy) * TILE_HH;
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+          mx + (u - wv) * TILE_HW,
+          my + (u + wv) * TILE_HH - z,
+        ];
+
+        // 1. Stone Hospital Plaza Foundation (#8c97a8 / #cbd5e1) & Emergency Driveway (#2c3545)
+        drawIsoQuad64(ctx, pt, -1.48, 1.48, -1.48, 1.48, 0, '#8c97a8');
+        drawIsoSpanBox64(ctx, pt, -1.44, 1.44, -1.44, 1.44, 0, 2.2, {
+          top: '#cbd5e1',
+          topHi: '#e2e8f0',
+          left: '#94a3b8',
+          right: '#64748b',
+        });
+        // Landscaped healing garden lawn strips on outer edges
+        drawIsoQuad64(ctx, pt, -1.36, -0.92, 0.42, 1.36, 2.3, '#3f7a46');
+        drawIsoQuad64(ctx, pt, 0.92, 1.36, -1.36, -0.52, 2.3, '#3f7a46');
+        // Dark asphalt Emergency Ambulance Drop-Off Driveway in front (v: 0.52..1.36)
+        drawIsoQuad64(ctx, pt, -0.88, 1.36, 0.52, 1.36, 2.3, '#2c3545');
+        // Red & white emergency zone markings
+        const [em0x, em0y] = pt(-0.48, 0.85, 2.4);
+        const [em1x, em1y] = pt(0.48, 0.85, 2.4);
+        drawLine64(ctx, em0x, em0y, em1x, em1y, '#ef4444', 1.2);
+
+        // 2. 2-Story Diagnostic, Surgical & Emergency Podium Wing (u: -1.24..1.18, v: -1.24..0.46)
+        const podH = 20;
+        drawIsoSpanBox64(ctx, pt, -1.24, 1.18, -1.24, 0.46, 2.3, podH, {
+          top: '#94a3b8',
+          topHi: '#cbd5e1',
+          left: '#f8fafc',
+          leftBot: '#cbd5e1',
+          right: '#cbd5e1',
+          rightBot: '#94a3b8',
+          parapetColor: '#64748b',
+        });
+        // Cyan clinical glass windows around the podium
+        drawIsoGlassGrid64(ctx, pt, 'left', -1.18, 1.12, -1.24, 0.46, 2.3, podH - 2, 5, 2, '#1d4f7a', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', -1.24, 1.18, -1.18, 0.40, 2.3, podH - 2, 4, 2, '#163b5c', '#0284c7');
+
+        // Side East Medical Clinic Wing (u: 0.42..1.26, v: -0.45..0.52)
+        drawIsoSpanBox64(ctx, pt, 0.42, 1.26, -0.45, 0.52, 2.3, 28, {
+          top: '#94a3b8',
+          topHi: '#cbd5e1',
+          left: '#f1f5f9',
+          leftBot: '#cbd5e1',
+          right: '#94a3b8',
+          rightBot: '#64748b',
+          parapetColor: '#64748b',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', 0.46, 1.22, -0.45, 0.52, 2.3, 26, 2, 3, '#1d4f7a', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', 0.42, 1.26, -0.40, 0.48, 2.3, 26, 2, 3, '#163b5c', '#0284c7');
+        drawRooftopHvacUnit64(ctx, pt, 0.65, -0.15, 30.5, 0.36);
+
+        // 3. Central 6-Story Inpatient Clinical Tower (u: -0.92..0.48, v: -1.08..0.24)
+        const towH = 34;
+        drawIsoSpanBox64(ctx, pt, -0.92, 0.48, -1.08, 0.24, 22.3, towH, {
+          top: '#94a3b8',
+          topHi: '#cbd5e1',
+          left: '#ffffff',
+          leftBot: '#e2e8f0',
+          right: '#cbd5e1',
+          rightBot: '#94a3b8',
+          parapetColor: '#475569',
+        });
+        // Multi-story hospital ward curtain-wall windows with warm & cool lit patient rooms
+        drawIsoGlassGrid64(ctx, pt, 'left', -0.86, 0.42, -1.08, 0.24, 22.3, towH - 2, 4, 4, '#1d4f7a', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', -0.92, 0.48, -1.02, 0.18, 22.3, towH - 2, 4, 4, '#163b5c', '#0284c7');
+
+        // Iconic Red Medical Cross Emblem in circular white medallion on tower facade
+        const [crossX, crossY] = pt(-0.22, 0.25, 45);
+        drawCrossEmblem64(ctx, crossX, crossY, 5.2, '#ef4444', '#ffffff');
+
+        // 4. Authentic Octagonal Rooftop Medical Helipad ("H") atop the Clinical Tower
+        const [hx, hy] = pt(-0.22, -0.42, 22.3 + towH + 0.6);
+        drawRooftopHelipad64(ctx, hx, hy, 14);
+
+        // 5. Red Emergency Ambulance Portico Canopy & Parked 3D Ambulances
+        drawIsoSpanBox64(ctx, pt, -0.52, 0.32, 0.44, 0.86, 2.3, 9.5, {
+          top: '#dc2626',
+          topHi: '#ef4444',
+          left: '#f8fafc',
+          right: '#b91c1c',
+        });
+        const [amb1x, amb1y] = pt(-0.18, 1.04, 2.5);
+        const [amb2x, amb2y] = pt(0.68, 0.96, 2.5);
+        drawParkedMiniVehicle64(ctx, amb1x, amb1y, 'ambulance', false);
+        drawParkedMiniVehicle64(ctx, amb2x, amb2y, 'ambulance', true);
+
+        // Healing garden trees
+        const [t1x, t1y] = pt(-1.14, 0.92, 2.5);
+        const [t2x, t2y] = pt(1.14, -0.95, 2.5);
+        drawTree64(ctx, t1x, t1y, 'emerald', 0.82);
+        drawTree64(ctx, t2x, t2y, 'emerald', 0.80);
+      }
+    );
+  }
+
+  // Multi-tile Campus Universitário 3×3 & Parque Tecnológico 4×4 ('tech_university')
+  if (estId === 'tech_university' && isMulti && lotW >= 3 && lotH >= 3) {
+    const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+    if (!rotLot.isFrontCorner) {
+      return getOrCreateSprite(
+        `est64_univ_v2_base_w${rotLot.rotW}_x${rotLot.rDx}y${rotLot.rDy}`,
+        98,
+        128,
+        49,
+        94,
+        (ctx, cx, cy) => {
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+          fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+          drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
+        }
+      );
+    }
+    const is4x4 = rotLot.rotW >= 4 && rotLot.rotH >= 4;
+    return getOrCreateSprite(
+      `est64_univ_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}`,
+      is4x4 ? 340 : 276,
+      is4x4 ? 266 : 236,
+      is4x4 ? 170 : 138,
+      is4x4 ? 196 : 168,
+      (ctx, cx, cy) => {
+        const dRx = -(rotLot.rotW - 1) / 2;
+        const dRy = -(rotLot.rotH - 1) / 2;
+        const mx = cx + (dRx - dRy) * TILE_HW;
+        const my = cy + (dRx + dRy) * TILE_HH;
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+          mx + (u - wv) * TILE_HW,
+          my + (u + wv) * TILE_HH - z,
+        ];
+        const halfSpan = is4x4 ? 1.94 : 1.44;
+
+        // 1. Stone Academic Courtyard Quad Foundation matching city sidewalks (#8c97a8 / #cbd5e1)
+        drawIsoQuad64(ctx, pt, -halfSpan - 0.04, halfSpan + 0.04, -halfSpan - 0.04, halfSpan + 0.04, 0, '#8c97a8');
+        drawIsoSpanBox64(ctx, pt, -halfSpan, halfSpan, -halfSpan, halfSpan, 0, 2.2, {
+          top: '#cbd5e1',
+          topHi: '#e2e8f0',
+          left: '#94a3b8',
+          right: '#64748b',
+        });
+        // Manicured emerald campus quad lawns with stone cross-walkways
+        drawIsoQuad64(ctx, pt, -halfSpan + 0.12, halfSpan - 0.12, -halfSpan + 0.12, halfSpan - 0.12, 2.3, '#3f7a46');
+        drawIsoQuad64(ctx, pt, -0.82, 0.82, -0.82, 0.82, 2.4, '#d5dee8', '#94a3b8', 0.8);
+        drawIsoQuad64(ctx, pt, -0.22, 0.22, -halfSpan + 0.12, halfSpan - 0.12, 2.45, '#cbd5e1');
+        drawIsoQuad64(ctx, pt, -halfSpan + 0.12, halfSpan - 0.12, -0.22, 0.22, 2.45, '#cbd5e1');
+
+        // 2. Left Main R&D / Engineering Glass & Brushed-Aluminum Tower
+        const leftH = is4x4 ? 38 : 29;
+        const lU0 = -halfSpan + 0.18;
+        const lU1 = -0.24;
+        const lV0 = -halfSpan + 0.18;
+        const lV1 = 0.16;
+        drawIsoSpanBox64(ctx, pt, lU0, lU1, lV0, lV1, 2.5, leftH, {
+          top: '#64748b',
+          topHi: '#94a3b8',
+          left: '#e2e8f0',
+          leftBot: '#94a3b8',
+          right: '#94a3b8',
+          rightBot: '#475569',
+          parapetColor: '#334155',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', lU0, lU1, lV0, lV1, 2.5, leftH - 2, is4x4 ? 4 : 3, is4x4 ? 4 : 3, '#1d4f7a', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', lU0, lU1, lV0, lV1, 2.5, leftH - 2, is4x4 ? 4 : 3, is4x4 ? 4 : 3, '#163b5c', '#0284c7');
+
+        // 3. Right Academic / Innovation Hub Glass Tower
+        const rightH = is4x4 ? 31 : 24;
+        const rU0 = 0.24;
+        const rU1 = halfSpan - 0.18;
+        const rV0 = -halfSpan + 0.18;
+        const rV1 = 0.16;
+        drawIsoSpanBox64(ctx, pt, rU0, rU1, rV0, rV1, 2.5, rightH, {
+          top: '#64748b',
+          topHi: '#94a3b8',
+          left: '#e2e8f0',
+          leftBot: '#94a3b8',
+          right: '#94a3b8',
+          rightBot: '#475569',
+          parapetColor: '#334155',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', rU0, rU1, rV0, rV1, 2.5, rightH - 2, is4x4 ? 4 : 3, 3, '#1d4f7a', '#38bdf8');
+        drawIsoGlassGrid64(ctx, pt, 'right', rU0, rU1, rV0, rV1, 2.5, rightH - 2, is4x4 ? 4 : 3, 3, '#163b5c', '#0284c7');
+
+        // Rooftop solar panel array & telemetry spire on right academic tower (matching 1×1 tech_university)
+        drawIsoQuad64(ctx, pt, rU0 + 0.22, rU1 - 0.22, rV0 + 0.22, rV1 - 0.22, 2.5 + rightH + 0.5, '#0284c7', '#bae6fd', 0.8);
+        const [antX, antY] = pt((rU0 + rU1) * 0.5, (rV0 + rV1) * 0.5, 2.5 + rightH);
+        drawLine64(ctx, antX, antY, antX, antY - 14, '#cbd5e1', 1.4);
+        drawGlow64(ctx, antX, antY - 15, 5.5, 'rgba(56, 189, 248, 0.92)', 'rgba(56, 189, 248, 0)');
+
+        // 4. Elevated Enclosed Glass Skybridge connecting both towers
+        drawIsoSpanBox64(ctx, pt, -0.26, 0.26, -0.72, -0.18, 14, 7.5, {
+          top: '#cbd5e1',
+          topHi: '#f8fafc',
+          left: '#38bdf8',
+          right: '#0284c7',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', -0.24, 0.24, -0.72, -0.18, 14.5, 6.2, 2, 1, '#0284c7', '#ffe066');
+
+        // 5. Geodesic Science Observatory & Planetarium Dome in the Front Courtyard
+        const [dxDome, dyDome] = pt(0, 0.62, 2.6);
+        const domeR = is4x4 ? 15.5 : 12.5;
+        // Stone circular drum base
+        ctx.fillStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.ellipse(dxDome, dyDome, domeR + 2, (domeR + 2) * 0.52, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 0.85;
+        ctx.stroke();
+        // Radial 3D metallic-blue geodesic dome
+        const dGrad = ctx.createRadialGradient(dxDome - 4, dyDome - domeR * 0.6, 1.5, dxDome, dyDome - 2, domeR);
+        dGrad.addColorStop(0, '#f0f9ff');
+        dGrad.addColorStop(0.5, '#38bdf8');
+        dGrad.addColorStop(1, '#1e3a8a');
+        ctx.fillStyle = dGrad;
+        ctx.beginPath();
+        ctx.arc(dxDome, dyDome - 1, domeR, Math.PI, 0, false);
+        ctx.ellipse(dxDome, dyDome - 1, domeR, domeR * 0.45, 0, 0, Math.PI, false);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(224, 242, 254, 0.7)';
+        ctx.lineWidth = 0.85;
+        ctx.stroke();
+        // Geodesic rib lines on the observatory dome
+        for (const rx of [-7, -2.5, 2.5, 7]) {
+          ctx.beginPath();
+          ctx.moveTo(dxDome + rx, dyDome + 3);
+          ctx.quadraticCurveTo(dxDome + rx * 0.35, dyDome - domeR, dxDome, dyDome - domeR);
+          ctx.strokeStyle = 'rgba(240, 249, 255, 0.55)';
+          ctx.lineWidth = 0.75;
+          ctx.stroke();
+        }
+
+        // 6. Executive Rooftop Helipad on the 4×4 Parque Tecnológico R&D Tower
+        if (is4x4) {
+          const [hx, hy] = pt((lU0 + lU1) * 0.5, (lV0 + lV1) * 0.5, 2.5 + leftH + 0.6);
+          drawRooftopHelipad64(ctx, hx, hy, 13);
+        } else {
+          drawRooftopHvacUnit64(ctx, pt, (lU0 + lU1) * 0.5 - 0.2, (lV0 + lV1) * 0.5 - 0.2, 2.5 + leftH, 0.38);
+        }
+
+        // Campus quad trees
+        for (const [tu, tv] of [
+          [-halfSpan + 0.36, halfSpan - 0.36],
+          [halfSpan - 0.36, halfSpan - 0.36],
+          [-halfSpan + 0.36, 0.48],
+          [halfSpan - 0.36, 0.48],
+        ] as const) {
+          const [tx, ty] = pt(tu, tv, 2.5);
+          drawTree64(ctx, tx, ty, 'emerald', 0.82);
+        }
+      }
+    );
+  }
+
+  // Multi-tile Parque de Diversões com Roda-Gigante Iluminada 3×3 & 4×4 ('amusement_park')
+  if (estId === 'amusement_park' && isMulti && lotW >= 3 && lotH >= 3) {
+    const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+    if (!rotLot.isFrontCorner) {
+      return getOrCreateSprite(
+        `est64_amuse_v2_base_w${rotLot.rotW}_x${rotLot.rDx}y${rotLot.rDy}`,
+        98,
+        128,
+        49,
+        94,
+        (ctx, cx, cy) => {
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+          fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+          drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
+        }
+      );
+    }
+    const is4x4 = rotLot.rotW >= 4 && rotLot.rotH >= 4;
+    return getOrCreateSprite(
+      `est64_amuse_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}`,
+      is4x4 ? 340 : 276,
+      is4x4 ? 276 : 244,
+      is4x4 ? 170 : 138,
+      is4x4 ? 204 : 176,
+      (ctx, cx, cy) => {
+        const dRx = -(rotLot.rotW - 1) / 2;
+        const dRy = -(rotLot.rotH - 1) / 2;
+        const mx = cx + (dRx - dRy) * TILE_HW;
+        const my = cy + (dRx + dRy) * TILE_HH;
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+          mx + (u - wv) * TILE_HW,
+          my + (u + wv) * TILE_HH - z,
+        ];
+        const halfSpan = is4x4 ? 1.94 : 1.44;
+
+        // 1. Stone Perimeter Sidewalk Curb (#8c97a8 / #cbd5e1) & Warm Sandstone Fairground Promenade (#e9d8a6)
+        drawIsoQuad64(ctx, pt, -halfSpan - 0.04, halfSpan + 0.04, -halfSpan - 0.04, halfSpan + 0.04, 0, '#8c97a8');
+        drawIsoSpanBox64(ctx, pt, -halfSpan, halfSpan, -halfSpan, halfSpan, 0, 2.2, {
+          top: '#cbd5e1',
+          topHi: '#e2e8f0',
+          left: '#94a3b8',
+          right: '#64748b',
+        });
+        // Landscaped emerald park garden pockets
+        drawIsoQuad64(ctx, pt, -halfSpan + 0.10, halfSpan - 0.10, -halfSpan + 0.10, halfSpan - 0.10, 2.3, '#3f7a46');
+        // Warm sandstone & cobblestone central amusement esplanade (matching 1×1 amusement_park line 7430)
+        drawIsoQuad64(ctx, pt, -halfSpan + 0.24, halfSpan - 0.24, -halfSpan + 0.24, halfSpan - 0.24, 2.4, '#e9d8a6', '#b5835a', 0.8);
+
+        // 2. Back Wing: Steel Roller Coaster (Montanha-Russa) with Trestle Struts & Coaster Train
+        const [rc0x, rc0y] = pt(-halfSpan + 0.28, -0.25, 3);
+        const [rc1x, rc1y] = pt(-0.25, -halfSpan + 0.28, 3);
+        const [rc2x, rc2y] = pt(halfSpan - 0.30, -0.45, 3);
+        const peak1X = (rc0x + rc1x) * 0.5;
+        const peak1Y = Math.min(rc0y, rc1y) - (is4x4 ? 34 : 26);
+        const peak2X = (rc1x + rc2x) * 0.5;
+        const peak2Y = Math.min(rc1y, rc2y) - (is4x4 ? 24 : 18);
+
+        // Vertical steel support trestle columns under the roller coaster
+        for (let s = 1; s <= 5; s++) {
+          const t = s / 6;
+          const sx = (1 - t) * (1 - t) * rc0x + 2 * (1 - t) * t * peak1X + t * t * rc1x;
+          const sy = (1 - t) * (1 - t) * rc0y + 2 * (1 - t) * t * peak1Y + t * t * rc1y;
+          const baseY = rc0y * (1 - t) + rc1y * t;
+          drawLine64(ctx, sx, baseY, sx, sy, 'rgba(148, 163, 184, 0.75)', 1.2);
+        }
+        // Coaster track double rails
+        ctx.save();
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(rc0x, rc0y);
+        ctx.quadraticCurveTo(peak1X, peak1Y, rc1x, rc1y);
+        ctx.quadraticCurveTo(peak2X, peak2Y, rc2x, rc2y);
+        ctx.stroke();
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(rc0x, rc0y - 1.5);
+        ctx.quadraticCurveTo(peak1X, peak1Y - 1.5, rc1x, rc1y - 1.5);
+        ctx.quadraticCurveTo(peak2X, peak2Y - 1.5, rc2x, rc2y - 1.5);
+        ctx.stroke();
+        ctx.restore();
+        // Animated Coaster Cars cresting the peak
+        const carT = f === 0 ? 0.46 : 0.54;
+        const cxCar = (1 - carT) * (1 - carT) * rc0x + 2 * (1 - carT) * carT * peak1X + carT * carT * rc1x;
+        const cyCar = (1 - carT) * (1 - carT) * rc0y + 2 * (1 - carT) * carT * peak1Y + carT * carT * rc1y;
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(cxCar - 5, cyCar - 4, 4.5, 3.2);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(cxCar + 0.5, cyCar - 3.5, 4.5, 3.2);
+
+        // 3. Front-Left Wing: Ticket Booth & Arcade Hall + Striped Circus Pavilion
+        drawIsoSpanBox64(ctx, pt, -halfSpan + 0.26, -0.35, 0.35, halfSpan - 0.28, 2.5, 13, {
+          top: '#b91c1c',
+          topHi: '#ef4444',
+          left: '#fef3c7',
+          leftBot: '#fde68a',
+          right: '#d97706',
+          rightBot: '#b45309',
+          parapetColor: '#991b1b',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', -halfSpan + 0.32, -0.40, 0.35, halfSpan - 0.28, 2.5, 11.5, 3, 1, '#1e3a5f', '#ffe066');
+
+        // 4. Front-Right Wing: Ornate Golden Carousel Pavilion (Carrossel)
+        const [carX, carY] = pt(0.72, 0.72, 2.6);
+        const carR = is4x4 ? 14 : 11.5;
+        // Stepped stone platform base
+        ctx.fillStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.ellipse(carX, carY + 2, carR + 2, (carR + 2) * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Warm glowing carousel cylinder interior
+        drawGlow64(ctx, carX, carY - 3, carR * 1.1, 'rgba(254, 240, 138, 0.75)', 'rgba(254, 240, 138, 0)');
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(carX - carR * 0.75, carY - 8, carR * 1.5, 8);
+        // Carousel horses/columns
+        for (let hIdx = -2; hIdx <= 2; hIdx++) {
+          const hxCol = carX + hIdx * (carR * 0.3);
+          drawLine64(ctx, hxCol, carY, hxCol, carY - 8, '#ffffff', 1.1);
+        }
+        // Conical red-and-white striped carousel roof canopy
+        for (let seg = 0; seg < 6; seg++) {
+          const x0 = carX - carR + (seg / 6) * (carR * 2);
+          const x1 = carX - carR + ((seg + 1) / 6) * (carR * 2);
+          ctx.beginPath();
+          ctx.moveTo(carX, carY - 19);
+          ctx.lineTo(x0, carY - 7.5);
+          ctx.lineTo(x1, carY - 7.5);
+          ctx.closePath();
+          ctx.fillStyle = seg % 2 === 0 ? '#ef4444' : '#f8fafc';
+          ctx.fill();
+        }
+        // Golden finial sphere atop carousel
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath();
+        ctx.arc(carX, carY - 19.5, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 5. Centerpiece: Monumental 3D Isometric Illuminated Ferris Wheel (Roda-Gigante Iluminada)
+        const [fwBaseX, fwBaseY] = pt(-0.08, -0.08, 2.6);
+        // Boarding station platform prism under the Ferris wheel
+        drawPrism64(
+          ctx,
+          fwBaseX,
+          fwBaseY + 3,
+          16,
+          5.5,
+          {
+            top: '#e2e8f0',
+            topHi: '#f8fafc',
+            left: '#cbd5e1',
+            right: '#64748b',
+          },
+          { castShadow: true }
+        );
+
+        const wheelR = is4x4 ? 33 : 26;
+        const hubX = fwBaseX;
+        const hubY = fwBaseY - wheelR - 9;
+
+        // Ambient neon glow halo behind the illuminated Ferris wheel
+        drawGlow64(
+          ctx,
+          hubX,
+          hubY,
+          wheelR * 1.15,
+          f === 0 ? 'rgba(244, 63, 94, 0.26)' : 'rgba(56, 189, 248, 0.26)',
+          'rgba(56, 189, 248, 0)'
+        );
+
+        // Rear A-frame steel support legs
+        drawLine64(ctx, fwBaseX - 11, fwBaseY - 2, hubX - 2, hubY, '#64748b', 2.2);
+        drawLine64(ctx, fwBaseX + 11, fwBaseY - 2, hubX - 2, hubY, '#64748b', 2.2);
+
+        // Dual concentric steel & neon rims
+        ctx.save();
+        ctx.strokeStyle = f === 0 ? '#fb7185' : '#38bdf8';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.arc(hubX, hubY, wheelR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(hubX, hubY, wheelR * 0.66, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // 10 Radial truss spokes & 3D Shaded Passenger Cabin Gondolas with warm lit windows
+        const spokeCount = 10;
+        const angleOffset = f * (Math.PI / spokeCount);
+        const gondolaPalette = ['#ef4444', '#38bdf8', '#22c55e', '#f59e0b', '#a855f7'];
+        for (let i = 0; i < spokeCount; i++) {
+          const ang = angleOffset + (i * Math.PI * 2) / spokeCount;
+          const gx = hubX + Math.cos(ang) * wheelR;
+          const gy = hubY + Math.sin(ang) * wheelR;
+          drawLine64(ctx, hubX, hubY, gx, gy, 'rgba(226, 232, 240, 0.78)', 1.0);
+
+          // 3D Passenger Cabin Gondola suspended from rim pin
+          const gCol = gondolaPalette[i % gondolaPalette.length];
+          drawPrism64(ctx, gx, gy + 4.2, 4.2, 4.2, {
+            top: '#f8fafc',
+            left: gCol,
+            right: '#1e293b',
+          });
+          // Warm glowing cabin window
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(gx - 1.6, gy + 1.2, 3.2, 1.6);
+        }
+
+        // Front A-frame steel support legs & glowing central star hub
+        drawLine64(ctx, fwBaseX - 13, fwBaseY + 1, hubX, hubY, '#e2e8f0', 2.4);
+        drawLine64(ctx, fwBaseX + 13, fwBaseY + 1, hubX, hubY, '#cbd5e1', 2.4);
+        drawGlow64(ctx, hubX, hubY, 9, 'rgba(254, 240, 138, 0.95)', 'rgba(254, 240, 138, 0)');
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(hubX, hubY, 3.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Park trees along the corners
+        for (const [tu, tv] of [
+          [-halfSpan + 0.25, -halfSpan + 0.25],
+          [halfSpan - 0.25, -halfSpan + 0.25],
+          [0.05, halfSpan - 0.25],
+        ] as const) {
+          const [tx, ty] = pt(tu, tv, 2.5);
+          drawTree64(ctx, tx, ty, 'emerald', 0.8);
+        }
       }
     );
   }
@@ -5296,14 +5783,15 @@ function getEstablishmentSprite(
     const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
     if (!rotLot.isFrontCorner) {
       return getOrCreateSprite(
-        `est64_sports_base_v${v}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
+        `est64_sports_v2_base_v${v}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
         98,
         128,
         49,
         94,
         (ctx, cx, cy) => {
-          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#4b8f3b');
-          fillDiamond64(ctx, cx, cy, 29.5, 14.8, '#cbd5e1');
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+          fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+          drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
         }
       );
     }
@@ -5311,11 +5799,11 @@ function getEstablishmentSprite(
     // Case A: 4×4 Complexo de Esporte Olímpico (2º Centro de Esporte)
     if (rotLot.rotW >= 4 && rotLot.rotH >= 4) {
       return getOrCreateSprite(
-        `est64_sports4x4_hero_v${v}_f${f}`,
-        340,
-        260,
-        170,
-        195,
+        `est64_sports4x4_v2_hero_v${v}_f${f}`,
+        344,
+        266,
+        172,
+        198,
         (ctx, cx, cy) => {
           const dRx = -(rotLot.rotW - 1) / 2;
           const dRy = -(rotLot.rotH - 1) / 2;
@@ -5325,177 +5813,132 @@ function getEstablishmentSprite(
             mx + (u - wv) * TILE_HW,
             my + (u + wv) * TILE_HH - z,
           ];
-          const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
-            ctx.beginPath();
-            ctx.moveTo(pts[0][0], pts[0][1]);
-            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-            ctx.closePath();
-            ctx.fillStyle = fill;
-            ctx.fill();
-            if (stroke) {
-              ctx.strokeStyle = stroke;
-              ctx.lineWidth = lw;
-              ctx.stroke();
-            }
-          };
 
-          // 1. 4×4 Landscaped Olympic Park Campus Base
-          poly([pt(-1.96, -1.96), pt(1.96, -1.96), pt(1.96, 1.96), pt(-1.96, 1.96)], '#489339', '#1e293b', 1.2);
-          poly([pt(-1.84, -1.84), pt(1.84, -1.84), pt(1.84, 1.84), pt(-1.84, 1.84)], '#d5dee8', '#94a3b8', 1.0);
+          // 1. 4×4 Stone Campus Perimeter Foundation (#8c97a8 / #cbd5e1) & Landscaped Turf Lawns (#3f7a46)
+          drawIsoQuad64(ctx, pt, -1.98, 1.98, -1.98, 1.98, 0, '#8c97a8');
+          drawIsoSpanBox64(ctx, pt, -1.94, 1.94, -1.94, 1.94, 0, 2.2, {
+            top: '#cbd5e1',
+            topHi: '#e2e8f0',
+            left: '#94a3b8',
+            right: '#64748b',
+          });
+          // Manicured emerald turf border
+          drawIsoQuad64(ctx, pt, -1.86, 1.86, -1.86, 1.86, 2.3, '#3f7a46');
+          // Paved stone Olympic plaza deck
+          drawIsoQuad64(ctx, pt, -1.78, 1.78, -1.78, 1.78, 2.4, '#d5dee8', '#94a3b8', 0.85);
+          // Central athlete stone cross-promenade
+          drawIsoQuad64(ctx, pt, -0.16, 0.16, -1.78, 1.78, 2.5, '#94a3b8');
+          drawIsoQuad64(ctx, pt, -1.78, 1.78, -0.16, 0.16, 2.5, '#94a3b8');
 
-          // Central cross athlete promenade
-          poly([pt(-0.14, -1.82), pt(0.14, -1.82), pt(0.14, 1.82), pt(-0.14, 1.82)], '#94a3b8');
-          poly([pt(-1.82, -0.14), pt(1.82, -0.14), pt(1.82, 0.14), pt(-1.82, 0.14)], '#94a3b8');
-
-          // 2. Quadrant 1 (Back-Left): Grand Covered Indoor Sports Arena Hall ("ARENA ESPORTIVA")
-          const domeCol = v === 0 ? '#0284c7' : v === 1 ? '#0d9488' : '#2563eb';
+          // 2. Quadrant 1 (Back-Left): Grand Covered Indoor Sports Arena Hall (No floating text!)
+          const domeCol = v === 0 ? '#0369a1' : v === 1 ? '#0f766e' : '#1d4ed8';
           const domeHi = v === 0 ? '#38bdf8' : v === 1 ? '#2dd4bf' : '#60a5fa';
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -1.76,
-            -0.22,
-            -1.76,
-            -0.24,
-            0,
-            26,
-            {
-              top: '#e2e8f0',
-              left: '#f8fafc',
-              right: '#cbd5e1',
-              stroke: '#1e293b',
-            },
-            1.1
-          );
-          // Vaulted metallic arena roof tier & skylight ribs
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -1.62,
-            -0.36,
-            -1.62,
-            -0.38,
-            26,
-            7,
-            {
-              top: domeHi,
-              left: '#7dd3fc',
-              right: domeCol,
-              stroke: '#0f172a',
-            },
-            1.0
-          );
-          // Glass curtain facade on arena front
-          poly(
-            [
-              pt(-1.64, -0.23, 3),
-              pt(-0.34, -0.23, 3),
-              pt(-0.34, -0.23, 21),
-              pt(-1.64, -0.23, 21),
-            ],
-            '#38bdf8',
-            '#0369a1',
-            1.0
-          );
-          // "CENTRO ESPORTIVO" sign on arena parapet
-          const [as0x, as0y] = pt(-1.58, -0.22, 27);
-          const [as1x, as1y] = pt(-0.38, -0.22, 27);
-          poly(
-            [
-              [as0x, as0y],
-              [as1x, as1y],
-              [as1x, as1y - 9],
-              [as0x, as0y - 9],
-            ],
-            '#0f172a',
-            '#38bdf8',
-            1.0
-          );
-          ctx.save();
-          ctx.translate((as0x + as1x) * 0.5, (as0y + as1y) * 0.5 - 3.2);
-          ctx.rotate(Math.atan2(as1y - as0y, as1x - as0x));
-          ctx.font = 'bold 5.8px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = '#38bdf8';
-          ctx.fillText('COMPLEXO 4x4', 0, 0);
-          ctx.restore();
+          drawIsoSpanBox64(ctx, pt, -1.72, -0.22, -1.72, -0.22, 2.5, 25, {
+            top: '#94a3b8',
+            topHi: '#cbd5e1',
+            left: '#f1f5f9',
+            leftBot: '#cbd5e1',
+            right: '#94a3b8',
+            rightBot: '#64748b',
+            parapetColor: '#64748b',
+          });
+          // Multi-pane lit curtain-wall glass on both arena facades
+          drawIsoGlassGrid64(ctx, pt, 'left', -1.66, -0.28, -1.72, -0.22, 2.5, 23, 4, 2, '#1d4f7a', '#38bdf8');
+          drawIsoGlassGrid64(ctx, pt, 'right', -1.72, -0.22, -1.66, -0.28, 2.5, 23, 4, 2, '#163b5c', '#0284c7');
 
-          // 3. Quadrant 2 (Back-Right): Semi-Olympic Aquatic Center Pool with Racing Lanes
-          poly([pt(0.24, -1.72), pt(1.74, -1.72), pt(1.74, -0.24), pt(0.24, -0.24)], '#f1f5f9', '#94a3b8', 1.0);
-          poly([pt(0.38, -1.58), pt(1.60, -1.58), pt(1.60, -0.38), pt(0.38, -0.38)], '#0ea5e9', '#ffffff', 1.3);
+          // Stepped Metallic Vaulted Arena Roof Monitor & Structural Truss Ribs
+          drawIsoSpanBox64(ctx, pt, -1.56, -0.38, -1.56, -0.38, 27.5, 6.2, {
+            top: domeCol,
+            topHi: domeHi,
+            left: '#cbd5e1',
+            right: '#64748b',
+            parapetColor: domeCol,
+          });
+          for (const ribU of [-1.32, -0.97, -0.62]) {
+            const [r0x, r0y] = pt(ribU, -1.54, 33.8);
+            const [r1x, r1y] = pt(ribU, -0.40, 33.8);
+            drawLine64(ctx, r0x, r0y, r1x, r1y, 'rgba(240, 249, 255, 0.65)', 1.0);
+          }
+          drawRooftopHvacUnit64(ctx, pt, -1.48, -1.48, 33.8, 0.34);
+
+          // 3. Quadrant 2 (Back-Right): Semi-Olympic Aquatic Center Pool with Starting Blocks & Sun Parasols
+          drawIsoSpanBox64(ctx, pt, 0.24, 1.72, -1.72, -0.24, 2.5, 1.6, {
+            top: '#f1f5f9',
+            topHi: '#ffffff',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
+          drawIsoQuad64(ctx, pt, 0.38, 1.58, -1.58, -0.38, 4.2, '#0284c7', '#e0f2fe', 1.1);
           for (let lane = 1; lane <= 4; lane++) {
-            const lv = -1.58 + (lane / 5) * 1.2;
-            const [l0x, l0y] = pt(0.42, lv, 0.2);
-            const [l1x, l1y] = pt(1.56, lv, 0.2);
-            drawLine64(ctx, l0x, l0y, l1x, l1y, lane % 2 === 0 ? '#fde047' : '#bae6fd', 1.0);
+            const lvPos = -1.58 + (lane / 5) * 1.2;
+            const [l0x, l0y] = pt(0.42, lvPos, 4.3);
+            const [l1x, l1y] = pt(1.54, lvPos, 4.3);
+            drawLine64(ctx, l0x, l0y, l1x, l1y, lane % 2 === 0 ? '#fde047' : '#7dd3fc', 0.9);
+            // Diving starting blocks at the left end of each lane
+            const [sbX, sbY] = pt(0.35, lvPos, 4.4);
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(sbX - 1.5, sbY - 2.5, 3, 2.5);
           }
 
-          // 4. Quadrant 3 (Front-Left): Red Synthetic Athletics Track & Main Championship Multi-Sport Court + Bleachers
-          poly([pt(-1.74, 0.24), pt(-0.24, 0.24), pt(-0.24, 1.74), pt(-1.74, 1.74)], '#c2410c', '#ffffff', 1.2);
-          poly([pt(-1.54, 0.42), pt(-0.44, 0.42), pt(-0.44, 1.56), pt(-1.54, 1.56)], '#2563eb', '#ffffff', 1.2);
-          // Court keys & center circle
-          poly([pt(-1.54, 0.78), pt(-1.28, 0.78), pt(-1.28, 1.20), pt(-1.54, 1.20)], '#f97316', '#ffffff', 0.9);
-          poly([pt(-0.70, 0.78), pt(-0.44, 0.78), pt(-0.44, 1.20), pt(-0.70, 1.20)], '#f97316', '#ffffff', 0.9);
-          const [ml0x, ml0y] = pt(-0.99, 0.42, 0.2);
-          const [ml1x, ml1y] = pt(-0.99, 1.56, 0.2);
-          drawLine64(ctx, ml0x, ml0y, ml1x, ml1y, '#ffffff', 1.1);
-          const [ccx, ccy] = pt(-0.99, 0.99, 0.2);
+          // 4. Quadrant 3 (Front-Left): Terracotta Athletics Track, Championship Court & Stepped Bleachers
+          drawIsoQuad64(ctx, pt, -1.72, -0.24, 0.24, 1.72, 2.5, '#c2410c', '#f1f5f9', 1.0);
+          drawIsoQuad64(ctx, pt, -1.52, -0.44, 0.44, 1.54, 2.6, '#1d4ed8', '#ffffff', 1.1);
+          drawIsoQuad64(ctx, pt, -1.52, -1.26, 0.78, 1.18, 2.65, '#ea580c', '#ffffff', 0.85);
+          drawIsoQuad64(ctx, pt, -0.70, -0.44, 0.78, 1.18, 2.65, '#ea580c', '#ffffff', 0.85);
+          const [ml0x, ml0y] = pt(-0.98, 0.44, 2.7);
+          const [ml1x, ml1y] = pt(-0.98, 1.54, 2.7);
+          drawLine64(ctx, ml0x, ml0y, ml1x, ml1y, '#ffffff', 1.0);
+          const [ccx, ccy] = pt(-0.98, 0.99, 2.7);
           ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1.05;
+          ctx.lineWidth = 1.0;
           ctx.beginPath();
-          ctx.ellipse(ccx, ccy, 6, 3.2, 0, 0, Math.PI * 2);
+          ctx.ellipse(ccx, ccy, 6, 3.1, 0, 0, Math.PI * 2);
           ctx.stroke();
-          // Stepped spectator bleachers along back edge of main court
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -1.66,
-            -0.36,
-            0.20,
-            0.38,
-            0,
-            8,
-            {
-              top: '#f8fafc',
-              left: '#e2e8f0',
-              right: '#94a3b8',
-              stroke: '#475569',
-            },
-            0.8
-          );
 
-          // 5. Quadrant 4 (Front-Right): Twin Tennis & Volleyball Courts + Floodlight Towers & Trees
-          poly([pt(0.24, 0.24), pt(1.72, 0.24), pt(1.72, 0.92), pt(0.24, 0.92)], '#15803d', '#ffffff', 1.1);
-          const [tn0x, tn0y] = pt(0.98, 0.26, 2.0);
-          const [tn1x, tn1y] = pt(0.98, 0.90, 2.0);
-          drawLine64(ctx, tn0x, tn0y, tn1x, tn1y, '#ffffff', 1.5);
+          // Multi-tier stepped concrete bleachers along back of main court
+          drawIsoSpanBox64(ctx, pt, -1.64, -0.34, 0.18, 0.40, 2.5, 5.5, {
+            top: '#e2e8f0',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
+          drawIsoSpanBox64(ctx, pt, -1.64, -0.34, 0.16, 0.28, 8.0, 4.2, {
+            top: '#38bdf8',
+            left: '#e2e8f0',
+            right: '#64748b',
+          });
 
-          poly([pt(0.24, 1.04), pt(1.72, 1.04), pt(1.72, 1.72), pt(0.24, 1.72)], '#d97706', '#ffffff', 1.1);
-          const [vn0x, vn0y] = pt(0.98, 1.06, 2.0);
-          const [vn1x, vn1y] = pt(0.98, 1.70, 2.0);
-          drawLine64(ctx, vn0x, vn0y, vn1x, vn1y, '#ffffff', 1.5);
+          // 5. Quadrant 4 (Front-Right): Twin Tennis & Volleyball Courts + 4 Olympic Floodlight Towers
+          drawIsoQuad64(ctx, pt, 0.24, 1.70, 0.24, 0.90, 2.5, '#15803d', '#ffffff', 1.0);
+          const [tn0x, tn0y] = pt(0.97, 0.26, 4.2);
+          const [tn1x, tn1y] = pt(0.97, 0.88, 4.2);
+          drawLine64(ctx, tn0x, tn0y, tn1x, tn1y, '#f8fafc', 1.4);
+
+          drawIsoQuad64(ctx, pt, 0.24, 1.70, 1.04, 1.70, 2.5, '#d97706', '#ffffff', 1.0);
+          const [vn0x, vn0y] = pt(0.97, 1.06, 4.2);
+          const [vn1x, vn1y] = pt(0.97, 1.68, 4.2);
+          drawLine64(ctx, vn0x, vn0y, vn1x, vn1y, '#f8fafc', 1.4);
 
           // 4 Tall Olympic LED Floodlight Masts
           for (const [lu, lv] of [
-            [-1.78, 1.78],
-            [1.78, -1.78],
-            [1.78, 1.78],
-            [0.18, 1.78],
+            [-1.76, 1.76],
+            [1.76, -1.76],
+            [1.76, 1.76],
+            [0.16, 1.76],
           ]) {
-            const [lx, ly] = pt(lu, lv, 0);
-            drawLine64(ctx, lx, ly, lx, ly - 24, '#64748b', 2.0);
+            const [lx, ly] = pt(lu, lv, 2.5);
+            drawLine64(ctx, lx, ly, lx, ly - 23, '#64748b', 1.9);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(lx - 3.5, ly - 26, 7, 3);
-            drawGlow64(ctx, lx, ly - 25, 8, 'rgba(254, 249, 195, 0.85)', 'rgba(254, 249, 195, 0)');
+            ctx.fillRect(lx - 3.5, ly - 25, 7, 2.8);
+            drawGlow64(ctx, lx, ly - 24, 8, 'rgba(254, 249, 195, 0.85)', 'rgba(254, 249, 195, 0)');
           }
 
           for (const [tu, tv] of [
-            [-1.86, 0.0],
-            [0.0, 1.86],
-            [1.86, 0.0],
+            [-1.84, 0.0],
+            [0.0, 1.84],
+            [1.84, 0.0],
           ]) {
-            const [tx, ty] = pt(tu, tv, 0);
-            drawTree64(ctx, tx, ty, 'emerald', 0.88);
+            const [tx, ty] = pt(tu, tv, 2.5);
+            drawTree64(ctx, tx, ty, 'emerald', 0.84);
           }
         }
       );
@@ -5504,11 +5947,11 @@ function getEstablishmentSprite(
     // Case B: 2×2 Centro de Esporte (1º Centro de Esporte)
     if (rotLot.rotW === 2 && rotLot.rotH === 2) {
       return getOrCreateSprite(
-        `est64_sports2x2_hero_v${v}_f${f}`,
-        215,
-        185,
-        107,
-        130,
+        `est64_sports2x2_v2_hero_v${v}_f${f}`,
+        216,
+        188,
+        108,
+        132,
         (ctx, cx, cy) => {
           const dRx = -0.5;
           const dRy = -0.5;
@@ -5518,133 +5961,86 @@ function getEstablishmentSprite(
             mx + (u - wv) * TILE_HW,
             my + (u + wv) * TILE_HH - z,
           ];
-          const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
-            ctx.beginPath();
-            ctx.moveTo(pts[0][0], pts[0][1]);
-            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-            ctx.closePath();
-            ctx.fillStyle = fill;
-            ctx.fill();
-            if (stroke) {
-              ctx.strokeStyle = stroke;
-              ctx.lineWidth = lw;
-              ctx.stroke();
-            }
-          };
 
-          // 1. 2×2 Sports Center Grounds & Athletic Apron
-          poly([pt(-0.98, -0.98), pt(0.98, -0.98), pt(0.98, 0.98), pt(-0.98, 0.98)], '#489339', '#1e293b', 1.1);
-          poly([pt(-0.90, -0.90), pt(0.90, -0.90), pt(0.90, 0.90), pt(-0.90, 0.90)], '#cbd5e1', '#94a3b8', 0.9);
+          // 1. 2×2 Stone Sidewalk Curb (#8c97a8 / #cbd5e1) & Landscaped Turf Border (#3f7a46)
+          drawIsoQuad64(ctx, pt, -0.98, 0.98, -0.98, 0.98, 0, '#8c97a8');
+          drawIsoSpanBox64(ctx, pt, -0.94, 0.94, -0.94, 0.94, 0, 2.0, {
+            top: '#cbd5e1',
+            topHi: '#e2e8f0',
+            left: '#94a3b8',
+            right: '#64748b',
+          });
+          drawIsoQuad64(ctx, pt, -0.88, 0.88, -0.88, 0.88, 2.1, '#3f7a46');
+          drawIsoQuad64(ctx, pt, -0.82, 0.82, -0.82, 0.82, 2.2, '#d5dee8', '#94a3b8', 0.8);
 
-          // 2. Back Wing: Covered Gymnasium Hall ("ESPORTE 2x2")
-          const gymRoof = v === 0 ? '#0284c7' : v === 1 ? '#dc2626' : '#0d9488';
-          const gymHi = v === 0 ? '#38bdf8' : v === 1 ? '#f87171' : '#2dd4bf';
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -0.86,
-            0.86,
-            -0.86,
-            -0.08,
-            0,
-            21,
-            {
-              top: '#e2e8f0',
-              left: '#f8fafc',
-              right: '#cbd5e1',
-              stroke: '#1e293b',
-            },
-            1.0
-          );
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -0.76,
-            0.76,
-            -0.76,
-            -0.16,
-            21,
-            5,
-            {
-              top: gymHi,
-              left: gymHi,
-              right: gymRoof,
-              stroke: '#0f172a',
-            },
-            0.9
-          );
-          // Gymnasium front glass clerestory windows
-          poly(
-            [
-              pt(-0.74, -0.07, 4),
-              pt(0.74, -0.07, 4),
-              pt(0.74, -0.07, 17),
-              pt(-0.74, -0.07, 17),
-            ],
-            '#38bdf8',
-            '#0369a1',
-            0.95
-          );
-          // "ESPORTE" Rooftop Signboard
-          const [es0x, es0y] = pt(-0.55, -0.08, 22);
-          const [es1x, es1y] = pt(0.55, -0.08, 22);
-          poly(
-            [
-              [es0x, es0y],
-              [es1x, es1y],
-              [es1x, es1y - 8.5],
-              [es0x, es0y - 8.5],
-            ],
-            '#0f172a',
-            gymHi,
-            1.0
-          );
-          ctx.save();
-          ctx.translate((es0x + es1x) * 0.5, (es0y + es1y) * 0.5 - 2.8);
-          ctx.rotate(Math.atan2(es1y - es0y, es1x - es0x));
-          ctx.font = 'bold 6px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = '#fef08a';
-          ctx.fillText('ESPORTE 2x2', 0, 0);
-          ctx.restore();
+          // 2. Back Wing: Detailed Covered Gymnasium Hall (No floating text!)
+          const gymRoof = v === 0 ? '#0369a1' : v === 1 ? '#b91c1c' : '#0f766e';
+          const gymHi = v === 0 ? '#38bdf8' : v === 1 ? '#ef4444' : '#2dd4bf';
+          drawIsoSpanBox64(ctx, pt, -0.80, 0.80, -0.80, -0.06, 2.2, 21, {
+            top: '#94a3b8',
+            topHi: '#cbd5e1',
+            left: '#f1f5f9',
+            leftBot: '#cbd5e1',
+            right: '#94a3b8',
+            rightBot: '#64748b',
+            parapetColor: '#64748b',
+          });
+          // Gymnasium multi-pane lit windows on both facades
+          drawIsoGlassGrid64(ctx, pt, 'left', -0.74, 0.74, -0.80, -0.06, 2.2, 19, 4, 2, '#1d4f7a', '#38bdf8');
+          drawIsoGlassGrid64(ctx, pt, 'right', -0.80, 0.80, -0.74, -0.10, 2.2, 19, 2, 2, '#163b5c', '#0284c7');
 
-          // 3. Front Wing: Outdoor Illuminated Multi-Sport Court + Bleachers & Hoops/Goals
-          const courtMain = v === 0 ? '#2563eb' : v === 1 ? '#d97706' : '#16a34a';
-          const courtKey = v === 0 ? '#f97316' : v === 1 ? '#dc2626' : '#0284c7';
-          poly([pt(-0.82, 0.04), pt(0.82, 0.04), pt(0.82, 0.84), pt(-0.82, 0.84)], courtMain, '#ffffff', 1.25);
-          poly([pt(-0.82, 0.24), pt(-0.52, 0.24), pt(-0.52, 0.64), pt(-0.82, 0.64)], courtKey, '#ffffff', 0.9);
-          poly([pt(0.52, 0.24), pt(0.82, 0.24), pt(0.82, 0.64), pt(0.52, 0.64)], courtKey, '#ffffff', 0.9);
-          const [cl0x, cl0y] = pt(0, 0.04, 0.2);
-          const [cl1x, cl1y] = pt(0, 0.84, 0.2);
-          drawLine64(ctx, cl0x, cl0y, cl1x, cl1y, '#ffffff', 1.15);
-          const [ccx, ccy] = pt(0, 0.44, 0.2);
+          // Vaulted Clerestory Roof Monitor & Structural Ribs
+          drawIsoSpanBox64(ctx, pt, -0.68, 0.68, -0.70, -0.16, 23.2, 4.8, {
+            top: gymRoof,
+            topHi: gymHi,
+            left: '#cbd5e1',
+            right: '#64748b',
+            parapetColor: gymRoof,
+          });
+          for (const ribU of [-0.42, 0.0, 0.42]) {
+            const [r0x, r0y] = pt(ribU, -0.68, 28.1);
+            const [r1x, r1y] = pt(ribU, -0.18, 28.1);
+            drawLine64(ctx, r0x, r0y, r1x, r1y, 'rgba(240, 249, 255, 0.65)', 0.9);
+          }
+          drawRooftopHvacUnit64(ctx, pt, -0.58, -0.58, 28.1, 0.30);
+
+          // 3. Front Wing: Outdoor Illuminated Multi-Sport Court + Hoops/Goals
+          const courtMain = v === 0 ? '#1d4ed8' : v === 1 ? '#d97706' : '#15803d';
+          const courtKey = v === 0 ? '#ea580c' : v === 1 ? '#dc2626' : '#0284c7';
+          drawIsoQuad64(ctx, pt, -0.78, 0.78, 0.04, 0.80, 2.3, courtMain, '#ffffff', 1.15);
+          drawIsoQuad64(ctx, pt, -0.78, -0.48, 0.24, 0.60, 2.35, courtKey, '#ffffff', 0.85);
+          drawIsoQuad64(ctx, pt, 0.48, 0.78, 0.24, 0.60, 2.35, courtKey, '#ffffff', 0.85);
+          const [cl0x, cl0y] = pt(0, 0.04, 2.4);
+          const [cl1x, cl1y] = pt(0, 0.80, 2.4);
+          drawLine64(ctx, cl0x, cl0y, cl1x, cl1y, '#ffffff', 1.1);
+          const [ccx, ccy] = pt(0, 0.42, 2.4);
           ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1.05;
+          ctx.lineWidth = 1.0;
           ctx.beginPath();
-          ctx.ellipse(ccx, ccy, 6.2, 3.1, 0, 0, Math.PI * 2);
+          ctx.ellipse(ccx, ccy, 6.0, 3.0, 0, 0, Math.PI * 2);
           ctx.stroke();
 
           // Goals / Basketball Backboards at both ends of the outdoor court
-          for (const endU of [-0.82, 0.82]) {
-            const [gx, gy] = pt(endU, 0.44, 0);
-            drawLine64(ctx, gx, gy, gx, gy - 10, '#e2e8f0', 1.6);
+          for (const endU of [-0.78, 0.78]) {
+            const [gx, gy] = pt(endU, 0.42, 2.4);
+            drawLine64(ctx, gx, gy, gx, gy - 10, '#e2e8f0', 1.5);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.6);
             ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 0.9;
-            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.4);
+            ctx.lineWidth = 0.85;
+            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.2);
           }
 
           // Floodlight masts at front corners
           for (const [lu, lv] of [
-            [-0.88, 0.88],
-            [0.88, 0.88],
+            [-0.84, 0.84],
+            [0.84, 0.84],
           ]) {
-            const [lx, ly] = pt(lu, lv, 0);
-            drawLine64(ctx, lx, ly, lx, ly - 19, '#64748b', 1.7);
+            const [lx, ly] = pt(lu, lv, 2.3);
+            drawLine64(ctx, lx, ly, lx, ly - 18, '#64748b', 1.6);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(lx - 3, ly - 21, 6, 2.6);
-            drawGlow64(ctx, lx, ly - 20, 7, 'rgba(254, 249, 195, 0.82)', 'rgba(254, 249, 195, 0)');
+            ctx.fillRect(lx - 3, ly - 20, 6, 2.5);
+            drawGlow64(ctx, lx, ly - 19, 7, 'rgba(254, 249, 195, 0.82)', 'rgba(254, 249, 195, 0)');
           }
         }
       );
@@ -5652,11 +6048,11 @@ function getEstablishmentSprite(
 
     // Case C: 2×1 (or 1×2) Quadra Poliesportiva de Bairro placed every few blocks!
     return getOrCreateSprite(
-      `est64_sports2x1_hero_v${v}_f${f}_w${rotLot.rotW}h${rotLot.rotH}`,
-      168,
-      148,
-      84,
-      104,
+      `est64_sports2x1_v2_hero_v${v}_f${f}_w${rotLot.rotW}h${rotLot.rotH}`,
+      172,
+      152,
+      86,
+      106,
       (ctx, cx, cy) => {
         const dRx = -(rotLot.rotW - 1) / 2;
         const dRy = -(rotLot.rotH - 1) / 2;
@@ -5668,125 +6064,102 @@ function getEstablishmentSprite(
           mx + (u - wv) * TILE_HW,
           my + (u + wv) * TILE_HH - z,
         ];
-        const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
-          ctx.beginPath();
-          ctx.moveTo(pts[0][0], pts[0][1]);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-          ctx.closePath();
-          ctx.fillStyle = fill;
-          ctx.fill();
-          if (stroke) {
-            ctx.strokeStyle = stroke;
-            ctx.lineWidth = lw;
-            ctx.stroke();
-          }
-        };
 
-        // 1. 2×1 Park Surround & Concrete Apron
-        poly([pt(-halfU * 1.03, -halfV * 1.03), pt(halfU * 1.03, -halfV * 1.03), pt(halfU * 1.03, halfV * 1.03), pt(-halfU * 1.03, halfV * 1.03)], '#4d993e', '#1e293b', 1.0);
-        poly([pt(-halfU * 0.94, -halfV * 0.94), pt(halfU * 0.94, -halfV * 0.94), pt(halfU * 0.94, halfV * 0.94), pt(-halfU * 0.94, halfV * 0.94)], '#cbd5e1', '#64748b', 0.9);
+        // 1. 2×1 Stone Curb Foundation (#8c97a8 / #cbd5e1) & Landscaped Turf Surround (#3f7a46)
+        drawIsoQuad64(
+          ctx,
+          pt,
+          -halfU * 1.03,
+          halfU * 1.03,
+          -halfV * 1.03,
+          halfV * 1.03,
+          0,
+          '#8c97a8'
+        );
+        drawIsoSpanBox64(ctx, pt, -halfU * 0.98, halfU * 0.98, -halfV * 0.98, halfV * 0.98, 0, 1.8, {
+          top: '#cbd5e1',
+          topHi: '#e2e8f0',
+          left: '#94a3b8',
+          right: '#64748b',
+        });
+        drawIsoQuad64(ctx, pt, -halfU * 0.90, halfU * 0.90, -halfV * 0.90, halfV * 0.90, 1.9, '#3f7a46');
 
         // 2. Full 2×1 Multi-Sport Court Surface & Crisp White Markings
         const pal =
           v === 0
-            ? { main: '#2563eb', key: '#f97316', border: '#1d4ed8' } // Royal Blue Futsal/Basketball + Orange Key
+            ? { main: '#1d4ed8', key: '#ea580c' }
             : v === 1
-              ? { main: '#d97706', key: '#dc2626', border: '#b45309' } // Championship Orange Basketball + Crimson Key
-              : { main: '#16a34a', key: '#0284c7', border: '#15803d' }; // Emerald Tennis/Volleyball + Sky Blue Key
-        const cu = halfU * 0.82;
-        const cv = halfV * 0.78;
-        poly([pt(-cu, -cv), pt(cu, -cv), pt(cu, cv), pt(-cu, cv)], pal.main, '#ffffff', 1.3);
+              ? { main: '#d97706', key: '#dc2626' }
+              : { main: '#15803d', key: '#0284c7' };
+        const cu = halfU * 0.80;
+        const cv = halfV * 0.76;
+        drawIsoQuad64(ctx, pt, -cu, cu, -cv, cv, 2.0, pal.main, '#ffffff', 1.2);
 
         const alongU = rotLot.rotW >= rotLot.rotH;
         if (alongU) {
-          // Keys at -cu and +cu ends
-          poly([pt(-cu, -cv * 0.52), pt(-cu * 0.56, -cv * 0.52), pt(-cu * 0.56, cv * 0.52), pt(-cu, cv * 0.52)], pal.key, '#ffffff', 0.95);
-          poly([pt(cu * 0.56, -cv * 0.52), pt(cu, -cv * 0.52), pt(cu, cv * 0.52), pt(cu * 0.56, cv * 0.52)], pal.key, '#ffffff', 0.95);
-          const [m0x, m0y] = pt(0, -cv, 0.2);
-          const [m1x, m1y] = pt(0, cv, 0.2);
-          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.2);
-          // 3D Goals & Backboards at both U ends
+          drawIsoQuad64(ctx, pt, -cu, -cu * 0.56, -cv * 0.52, cv * 0.52, 2.05, pal.key, '#ffffff', 0.9);
+          drawIsoQuad64(ctx, pt, cu * 0.56, cu, -cv * 0.52, cv * 0.52, 2.05, pal.key, '#ffffff', 0.9);
+          const [m0x, m0y] = pt(0, -cv, 2.1);
+          const [m1x, m1y] = pt(0, cv, 2.1);
+          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.1);
           for (const sgn of [-1, 1]) {
-            const [gx, gy] = pt(sgn * cu * 0.96, 0, 0);
-            drawLine64(ctx, gx, gy, gx, gy - 10, '#f8fafc', 1.6);
+            const [gx, gy] = pt(sgn * cu * 0.96, 0, 2.1);
+            drawLine64(ctx, gx, gy, gx, gy - 9.5, '#f8fafc', 1.5);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.fillRect(gx - 3, gy - 12, 6, 3.6);
             ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 0.9;
-            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.2);
+            ctx.lineWidth = 0.85;
+            ctx.strokeRect(gx - 2, gy - 11, 4, 2.1);
           }
           // Concrete Bleachers along the back (-cv) edge
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -cu * 0.75,
-            cu * 0.75,
-            -halfV * 0.94,
-            -cv * 1.03,
-            0,
-            6.5,
-            {
-              top: '#f8fafc',
-              left: '#e2e8f0',
-              right: '#94a3b8',
-              stroke: '#475569',
-            },
-            0.75
-          );
+          drawIsoSpanBox64(ctx, pt, -cu * 0.75, cu * 0.75, -halfV * 0.92, -cv * 1.02, 2.0, 5.5, {
+            top: '#e2e8f0',
+            topHi: '#f8fafc',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
         } else {
-          // Keys at -cv and +cv ends
-          poly([pt(-cu * 0.52, -cv), pt(cu * 0.52, -cv), pt(cu * 0.52, -cv * 0.56), pt(-cu * 0.52, -cv * 0.56)], pal.key, '#ffffff', 0.95);
-          poly([pt(-cu * 0.52, cv * 0.56), pt(cu * 0.52, cv * 0.56), pt(cu * 0.52, cv), pt(-cu * 0.52, cv)], pal.key, '#ffffff', 0.95);
-          const [m0x, m0y] = pt(-cu, 0, 0.2);
-          const [m1x, m1y] = pt(cu, 0, 0.2);
-          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.2);
+          drawIsoQuad64(ctx, pt, -cu * 0.52, cu * 0.52, -cv, -cv * 0.56, 2.05, pal.key, '#ffffff', 0.9);
+          drawIsoQuad64(ctx, pt, -cu * 0.52, cu * 0.52, cv * 0.56, cv, 2.05, pal.key, '#ffffff', 0.9);
+          const [m0x, m0y] = pt(-cu, 0, 2.1);
+          const [m1x, m1y] = pt(cu, 0, 2.1);
+          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.1);
           for (const sgn of [-1, 1]) {
-            const [gx, gy] = pt(0, sgn * cv * 0.96, 0);
-            drawLine64(ctx, gx, gy, gx, gy - 10, '#f8fafc', 1.6);
+            const [gx, gy] = pt(0, sgn * cv * 0.96, 2.1);
+            drawLine64(ctx, gx, gy, gx, gy - 9.5, '#f8fafc', 1.5);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.fillRect(gx - 3, gy - 12, 6, 3.6);
             ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 0.9;
-            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.2);
+            ctx.lineWidth = 0.85;
+            ctx.strokeRect(gx - 2, gy - 11, 4, 2.1);
           }
-          drawIsoSpanBox64(
-            ctx,
-            pt,
-            -halfU * 0.94,
-            -cu * 1.03,
-            -cv * 0.75,
-            cv * 0.75,
-            0,
-            6.5,
-            {
-              top: '#f8fafc',
-              left: '#e2e8f0',
-              right: '#94a3b8',
-              stroke: '#475569',
-            },
-            0.75
-          );
+          drawIsoSpanBox64(ctx, pt, -halfU * 0.92, -cu * 1.02, -cv * 0.75, cv * 0.75, 2.0, 5.5, {
+            top: '#e2e8f0',
+            topHi: '#f8fafc',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
         }
 
         // Center jump circle
-        const [ccx, ccy] = pt(0, 0, 0.2);
+        const [ccx, ccy] = pt(0, 0, 2.1);
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.1;
+        ctx.lineWidth = 1.0;
         ctx.beginPath();
-        ctx.ellipse(ccx, ccy, 6.2, 3.2, 0, 0, Math.PI * 2);
+        ctx.ellipse(ccx, ccy, 6.0, 3.0, 0, 0, Math.PI * 2);
         ctx.stroke();
 
         // Corner LED Floodlights
         for (const [lu, lv] of [
-          [-halfU * 0.90, halfV * 0.90],
-          [halfU * 0.90, -halfV * 0.90],
-          [halfU * 0.90, halfV * 0.90],
+          [-halfU * 0.88, halfV * 0.88],
+          [halfU * 0.88, -halfV * 0.88],
+          [halfU * 0.88, halfV * 0.88],
         ]) {
-          const [lx, ly] = pt(lu, lv, 0);
-          drawLine64(ctx, lx, ly, lx, ly - 16, '#64748b', 1.5);
+          const [lx, ly] = pt(lu, lv, 2.0);
+          drawLine64(ctx, lx, ly, lx, ly - 15.5, '#64748b', 1.5);
           ctx.fillStyle = '#ffffff';
-          ctx.fillRect(lx - 2.5, ly - 17.5, 5, 2.2);
-          drawGlow64(ctx, lx, ly - 17, 6, 'rgba(254, 249, 195, 0.8)', 'rgba(254, 249, 195, 0)');
+          ctx.fillRect(lx - 2.5, ly - 17, 5, 2.2);
+          drawGlow64(ctx, lx, ly - 16.5, 6, 'rgba(254, 249, 195, 0.8)', 'rgba(254, 249, 195, 0)');
         }
       }
     );
@@ -7323,10 +7696,452 @@ function getTileSprite(
       return getMetroStationSprite(tile.level || 1, tile.variant || 0);
     case 'shopping':
       return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy, rotation);
+    case 'clean_energy':
+      return getCleanEnergySprite(tile.level || 1, tile.variant, animFrame, lotW, lotH, lotDx, lotDy, rotation);
+    case 'rail_terminal':
+      return getRailTerminalSprite(tile.level || 1, tile.variant, animFrame, lotW, lotH, lotDx, lotDy, rotation);
   }
 }
 
-/** Draw an asymmetric isometric box covering local tile span [u0..u1] × [v0..v1] at elevation [z0..z0+h] */
+function getCleanEnergySprite(
+  level: number,
+  variant: number,
+  animFrame: number,
+  lotW: number = 1,
+  lotH: number = 1,
+  lotDx: number = 0,
+  lotDy: number = 0,
+  rotation: CameraRotation = 0
+): CachedSprite {
+  const v = ((variant % 3) + 3) % 3;
+  const f = animFrame & 1;
+  const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+  if ((lotW > 1 || lotH > 1) && !rotLot.isFrontCorner) {
+    return getOrCreateSprite(
+      `clean_energy_base_v2_lv${level}_x${rotLot.rDx}y${rotLot.rDy}`,
+      98,
+      128,
+      49,
+      94,
+      (ctx, cx, cy) => {
+        fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+        fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+        drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
+      }
+    );
+  }
+  const isWind3x3 = level >= 2 || (rotLot.rotW >= 3 && rotLot.rotH >= 3);
+  return getOrCreateSprite(
+    `clean_energy_hero_v2_lv${level}_w${rotLot.rotW}_v${v}_f${f}`,
+    isWind3x3 ? 276 : 212,
+    isWind3x3 ? 244 : 184,
+    isWind3x3 ? 138 : 106,
+    isWind3x3 ? 176 : 130,
+    (ctx, cx, cy) => {
+      const dRx = -(rotLot.rotW - 1) / 2;
+      const dRy = -(rotLot.rotH - 1) / 2;
+      const mx = cx + (dRx - dRy) * TILE_HW;
+      const my = cy + (dRx + dRy) * TILE_HH;
+      const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+        mx + (u - wv) * TILE_HW,
+        my + (u + wv) * TILE_HH - z,
+      ];
+      const halfSpan = isWind3x3 ? 1.44 : 0.94;
+
+      // 1. Stone & Concrete Utility Compound Base matching city curbs (#8c97a8 / #cbd5e1)
+      drawIsoQuad64(ctx, pt, -halfSpan - 0.04, halfSpan + 0.04, -halfSpan - 0.04, halfSpan + 0.04, 0, '#8c97a8');
+      drawIsoSpanBox64(ctx, pt, -halfSpan, halfSpan, -halfSpan, halfSpan, 0, 2.2, {
+        top: '#cbd5e1',
+        topHi: '#e2e8f0',
+        left: '#94a3b8',
+        right: '#64748b',
+      });
+      // Landscaped eco-turf buffer zones inside the utility perimeter
+      drawIsoQuad64(ctx, pt, -halfSpan + 0.08, halfSpan - 0.08, -halfSpan + 0.08, halfSpan - 0.08, 2.3, '#3f7a46');
+      // Engineered gravel/concrete solar & substation pad
+      drawIsoQuad64(ctx, pt, -halfSpan + 0.18, halfSpan - 0.18, -halfSpan + 0.18, halfSpan - 0.18, 2.4, '#94a3b8');
+
+      // 2. Grid Control & Inverter Substation Building (Back-Left Quadrant)
+      const subU0 = -halfSpan + 0.22;
+      const subU1 = isWind3x3 ? -0.28 : -0.08;
+      const subV0 = -halfSpan + 0.22;
+      const subV1 = isWind3x3 ? -0.32 : -0.14;
+      drawIsoSpanBox64(ctx, pt, subU0, subU1, subV0, subV1, 2.4, 15, {
+        top: '#94a3b8',
+        topHi: '#cbd5e1',
+        left: '#f1f5f9',
+        leftBot: '#cbd5e1',
+        right: '#94a3b8',
+        rightBot: '#64748b',
+        parapetColor: '#64748b',
+      });
+      drawIsoGlassGrid64(ctx, pt, 'left', subU0, subU1, subV0, subV1, 2.4, 14, 3, 2, '#1e3a5f', '#38bdf8');
+      drawIsoGlassGrid64(ctx, pt, 'right', subU0, subU1, subV0, subV1, 2.4, 14, 2, 2, '#172554', '#0284c7');
+      // Rooftop HVAC & telemetry dish on substation
+      drawRooftopHvacUnit64(ctx, pt, subU0 + 0.16, subV0 + 0.16, 17.5, 0.34);
+
+      // 3. Utility-Scale Battery Megapack Storage Units & High-Voltage Transformer Yard (Back-Right)
+      const batV0 = -halfSpan + 0.24;
+      for (let b = 0; b < (isWind3x3 ? 3 : 2); b++) {
+        const bu0 = (isWind3x3 ? 0.02 : 0.08) + b * 0.38;
+        drawIsoSpanBox64(ctx, pt, bu0, bu0 + 0.28, batV0, batV0 + 0.44, 2.4, 8.5, {
+          top: '#f8fafc',
+          topHi: '#ffffff',
+          left: '#e2e8f0',
+          leftBot: '#cbd5e1',
+          right: '#94a3b8',
+          rightBot: '#64748b',
+        });
+        // Glowing green charge status LED strip on battery pack
+        const [led0x, led0y] = pt(bu0 + 0.05, batV0 + 0.45, 7.5);
+        const [led1x, led1y] = pt(bu0 + 0.23, batV0 + 0.45, 7.5);
+        drawLine64(ctx, led0x, led0y, led1x, led1y, f === 0 ? '#22c55e' : '#4ade80', 1.4);
+      }
+
+      // 4. Angled Isometric Photovoltaic Solar Panel Arrays with Metallic Frames & Sun Glints
+      const rowPositions = isWind3x3 ? [-0.12, 0.42, 0.96] : [-0.02, 0.52];
+      const colCount = isWind3x3 ? 4 : 3;
+      const panelSpanU = (halfSpan * 2 - 0.48) / colCount;
+      for (const rv of rowPositions) {
+        for (let c = 0; c < colCount; c++) {
+          const pu0 = -halfSpan + 0.24 + c * panelSpanU + 0.03;
+          const pu1 = pu0 + panelSpanU - 0.06;
+          const pv0 = rv - 0.18;
+          const pv1 = rv + 0.18;
+          // Steel mounting pedestal
+          drawIsoSpanBox64(ctx, pt, pu0 + 0.06, pu1 - 0.06, pv0 + 0.06, pv1 - 0.06, 2.4, 2.2, {
+            top: '#64748b',
+            left: '#475569',
+            right: '#334155',
+          });
+          // Tilted photovoltaic solar module
+          const p00 = pt(pu0, pv0, 6.2);
+          const p10 = pt(pu1, pv0, 6.2);
+          const p11 = pt(pu1, pv1, 3.6);
+          const p01 = pt(pu0, pv1, 3.6);
+          ctx.beginPath();
+          ctx.moveTo(p00[0], p00[1]);
+          ctx.lineTo(p10[0], p10[1]);
+          ctx.lineTo(p11[0], p11[1]);
+          ctx.lineTo(p01[0], p01[1]);
+          ctx.closePath();
+          const pGrad = ctx.createLinearGradient(p00[0], p00[1], p11[0], p11[1]);
+          pGrad.addColorStop(0, '#0284c7');
+          pGrad.addColorStop(0.5, '#1d4ed8');
+          pGrad.addColorStop(1, '#172554');
+          ctx.fillStyle = pGrad;
+          ctx.fill();
+          ctx.strokeStyle = '#bae6fd';
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+          // Internal silicon cell grid lines
+          const m0 = [(p00[0] + p01[0]) * 0.5, (p00[1] + p01[1]) * 0.5];
+          const m1 = [(p10[0] + p11[0]) * 0.5, (p10[1] + p11[1]) * 0.5];
+          drawLine64(ctx, m0[0], m0[1], m1[0], m1[1], 'rgba(186, 230, 253, 0.45)', 0.65);
+        }
+      }
+
+      // 5. Level 2 (3×3 Parque Eólico e Solar): 3 Shaded 3D Wind Turbines with Nacelles & Rotating Blades
+      if (isWind3x3) {
+        const turbines: Array<[number, number, number]> = [
+          [-1.02, 0.88, 46],
+          [0.08, -0.92, 50],
+          [1.04, 0.22, 44],
+        ];
+        turbines.forEach(([tu, tv, mastH], idx) => {
+          const [bx, by] = pt(tu, tv, 2.5);
+          const topY = by - mastH;
+          // Concrete turbine foundation pad
+          fillDiamond64(ctx, bx, by, 7.5, 3.8, '#cbd5e1', '#64748b', 0.8);
+          // Directional ground shadow of turbine mast
+          drawLine64(ctx, bx, by, bx + 16, by - 4, 'rgba(8, 14, 24, 0.28)', 3.2);
+          // Tapered 3D cylindrical tower (sunlit left half, shaded right half)
+          ctx.beginPath();
+          ctx.moveTo(bx - 2.4, by);
+          ctx.lineTo(bx - 1.1, topY);
+          ctx.lineTo(bx + 0.2, topY);
+          ctx.lineTo(bx + 0.2, by);
+          ctx.closePath();
+          ctx.fillStyle = '#f8fafc';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(bx + 0.2, by);
+          ctx.lineTo(bx + 0.2, topY);
+          ctx.lineTo(bx + 1.3, topY);
+          ctx.lineTo(bx + 2.4, by);
+          ctx.closePath();
+          ctx.fillStyle = '#94a3b8';
+          ctx.fill();
+          // 3D Generator Nacelle housing at tower top
+          drawPrism64(
+            ctx,
+            bx - 0.5,
+            topY + 2,
+            4.6,
+            3.8,
+            {
+              top: '#ffffff',
+              left: '#f1f5f9',
+              right: '#94a3b8',
+            },
+            { outlineColor: '#cbd5e1' }
+          );
+          // Red aviation warning beacon on nacelle roof
+          drawGlow64(ctx, bx, topY - 2.5, 4.5, 'rgba(239, 68, 68, 0.9)', 'rgba(239, 68, 68, 0)');
+          // 3 Aerodynamic tapered rotor blades
+          const baseAng = f * 0.52 + idx * 0.78 + v * 0.35;
+          const hubX = bx + 1.5;
+          const hubY = topY + 0.5;
+          for (let b = 0; b < 3; b++) {
+            const ang = baseAng + (b * Math.PI * 2) / 3;
+            const tipX = hubX + Math.cos(ang) * 19;
+            const tipY = hubY + Math.sin(ang) * 16;
+            const perpX = -Math.sin(ang) * 1.6;
+            const perpY = Math.cos(ang) * 1.6;
+            ctx.beginPath();
+            ctx.moveTo(hubX + perpX, hubY + perpY);
+            ctx.lineTo(tipX, tipY);
+            ctx.lineTo(hubX - perpX * 0.5, hubY - perpY * 0.5);
+            ctx.closePath();
+            ctx.fillStyle = '#f8fafc';
+            ctx.fill();
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 0.65;
+            ctx.stroke();
+          }
+          // Nose cone spinner
+          ctx.fillStyle = '#e2e8f0';
+          ctx.beginPath();
+          ctx.arc(hubX, hubY, 2.1, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // Corner landscaping trees
+      const [tx, ty] = pt(-halfSpan + 0.22, halfSpan - 0.22, 2.5);
+      drawTree64(ctx, tx, ty, 'emerald', 0.76);
+    }
+  );
+}
+
+function getRailTerminalSprite(
+  level: number,
+  variant: number,
+  animFrame: number,
+  lotW: number = 1,
+  lotH: number = 1,
+  lotDx: number = 0,
+  lotDy: number = 0,
+  rotation: CameraRotation = 0
+): CachedSprite {
+  const v = ((variant % 3) + 3) % 3;
+  const f = animFrame & 1;
+  const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+  if ((lotW > 1 || lotH > 1) && !rotLot.isFrontCorner) {
+    return getOrCreateSprite(
+      `rail_term_base_v2_lv${level}_x${rotLot.rDx}y${rotLot.rDy}`,
+      98,
+      128,
+      49,
+      94,
+      (ctx, cx, cy) => {
+        fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+        fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+        drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy + v);
+      }
+    );
+  }
+  const isMono3x3 = level >= 2 || (rotLot.rotW >= 3 && rotLot.rotH >= 3);
+  return getOrCreateSprite(
+    `rail_term_hero_v2_lv${level}_w${rotLot.rotW}h${rotLot.rotH}_v${v}_f${f}`,
+    276,
+    238,
+    138,
+    170,
+    (ctx, cx, cy) => {
+      const dRx = -(rotLot.rotW - 1) / 2;
+      const dRy = -(rotLot.rotH - 1) / 2;
+      const mx = cx + (dRx - dRy) * TILE_HW;
+      const my = cy + (dRx + dRy) * TILE_HH;
+      const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+        mx + (u - wv) * TILE_HW,
+        my + (u + wv) * TILE_HH - z,
+      ];
+      const spanU = rotLot.rotW / 2 - 0.04;
+      const spanV = rotLot.rotH / 2 - 0.04;
+
+      // 1. Stone & Concrete Intermodal Terminal Foundation matching city sidewalks (#8c97a8 / #cbd5e1)
+      drawIsoQuad64(ctx, pt, -spanU - 0.03, spanU + 0.03, -spanV - 0.03, spanV + 0.03, 0, '#8c97a8');
+      drawIsoSpanBox64(ctx, pt, -spanU, spanU, -spanV, spanV, 0, 2.4, {
+        top: '#cbd5e1',
+        topHi: '#e2e8f0',
+        left: '#94a3b8',
+        right: '#64748b',
+      });
+      // Recessed crushed-granite dark track ballast bed
+      drawIsoQuad64(ctx, pt, -spanU + 0.08, spanU - 0.08, -0.78, 0.28, 2.5, '#334155');
+
+      // 2. Dual Parallel Ballasted Railway Tracks with Cross-Ties (Sleepers) & Steel Rails
+      for (const tv of [-0.52, -0.02]) {
+        for (let su = -spanU + 0.18; su <= spanU - 0.18; su += 0.22) {
+          const [s0x, s0y] = pt(su, tv - 0.13, 2.6);
+          const [s1x, s1y] = pt(su, tv + 0.13, 2.6);
+          drawLine64(ctx, s0x, s0y, s1x, s1y, '#78350f', 1.5);
+        }
+        const [rA0x, rA0y] = pt(-spanU + 0.1, tv - 0.07, 2.8);
+        const [rA1x, rA1y] = pt(spanU - 0.1, tv - 0.07, 2.8);
+        const [rB0x, rB0y] = pt(-spanU + 0.1, tv + 0.07, 2.8);
+        const [rB1x, rB1y] = pt(spanU - 0.1, tv + 0.07, 2.8);
+        drawLine64(ctx, rA0x, rA0y, rA1x, rA1y, '#e2e8f0', 1.2);
+        drawLine64(ctx, rB0x, rB0y, rB1x, rB1y, '#94a3b8', 1.2);
+      }
+
+      // 3. Back Logistics Platform & Heritage Brick/Steel Freight Depot Building
+      const backV0 = -spanV + 0.12;
+      const backV1 = -0.78;
+      if (backV1 - backV0 > 0.25) {
+        drawIsoSpanBox64(ctx, pt, -spanU + 0.16, spanU - 0.16, backV0, backV1, 2.5, 16, {
+          top: '#64748b',
+          topHi: '#94a3b8',
+          left: v === 0 ? '#c2593f' : '#cbd5e1',
+          leftBot: v === 0 ? '#8c3824' : '#94a3b8',
+          right: v === 0 ? '#7c2d12' : '#64748b',
+          rightBot: v === 0 ? '#5c1f0b' : '#475569',
+          parapetColor: '#475569',
+        });
+        drawIsoGlassGrid64(ctx, pt, 'left', -spanU + 0.22, spanU - 0.22, backV0, backV1, 2.5, 15, 5, 2, '#1e3a5f', '#38bdf8');
+      }
+
+      // 4. Detailed 3D Diesel-Electric Freight Locomotive & Ribbed ISO Cargo Containers on Track 1
+      // Flatcar underframe
+      drawIsoSpanBox64(ctx, pt, -1.18, 1.15, -0.68, -0.36, 2.8, 1.8, {
+        top: '#334155',
+        left: '#1e293b',
+        right: '#0f172a',
+      });
+      // Locomotive body (front-left)
+      drawIsoSpanBox64(ctx, pt, -1.16, -0.44, -0.66, -0.38, 4.6, 8.2, {
+        top: '#fb923c',
+        topHi: '#fdba74',
+        left: '#f97316',
+        leftBot: '#c2410c',
+        right: '#9a3412',
+        rightBot: '#7c2d12',
+      });
+      // Locomotive raised cab & windshield
+      drawIsoSpanBox64(ctx, pt, -1.08, -0.76, -0.67, -0.37, 12.8, 3.6, {
+        top: '#f8fafc',
+        left: '#38bdf8',
+        right: '#0284c7',
+      });
+      // Warm locomotive headlamp glow
+      const [hlX, hlY] = pt(-1.18, -0.52, 8.5);
+      drawGlow64(ctx, hlX, hlY, 7, 'rgba(254, 240, 138, 0.92)', 'rgba(254, 240, 138, 0)');
+      // Container 1 (Cyan-Blue)
+      drawIsoSpanBox64(ctx, pt, -0.34, 0.36, -0.66, -0.38, 4.6, 7.2, {
+        top: '#38bdf8',
+        topHi: '#7dd3fc',
+        left: '#0284c7',
+        leftBot: '#0369a1',
+        right: '#075985',
+        rightBot: '#0c4a6e',
+      });
+      // Container 2 (Emerald Green) & Stacked Upper Container
+      drawIsoSpanBox64(ctx, pt, 0.44, 1.12, -0.66, -0.38, 4.6, 7.2, {
+        top: '#22c55e',
+        topHi: '#4ade80',
+        left: '#16a34a',
+        leftBot: '#15803d',
+        right: '#166534',
+        rightBot: '#14532d',
+      });
+
+      // 5. Front Intermodal Logistics Warehouse, Loading Docks & Yellow Overhead Gantry Crane
+      drawIsoSpanBox64(ctx, pt, -0.95, 0.95, 0.32, spanV - 0.14, 2.5, 14, {
+        top: '#94a3b8',
+        topHi: '#cbd5e1',
+        left: '#e2e8f0',
+        leftBot: '#cbd5e1',
+        right: '#94a3b8',
+        rightBot: '#64748b',
+        parapetColor: '#64748b',
+      });
+      drawIsoGlassGrid64(ctx, pt, 'left', -0.88, 0.88, 0.32, spanV - 0.14, 2.5, 13, 4, 2, '#1e3a5f', '#38bdf8');
+      drawIsoGlassGrid64(ctx, pt, 'right', -0.95, 0.95, 0.38, spanV - 0.18, 2.5, 13, 2, 2, '#172554', '#0284c7');
+
+      // Industrial Yellow Gantry Crane straddling the rail tracks (at u = 0.05)
+      const [gL0x, gL0y] = pt(0.05, -0.74, 2.8);
+      const [gL1x, gL1y] = pt(0.05, -0.74, 22);
+      const [gR0x, gR0y] = pt(0.05, 0.24, 2.8);
+      const [gR1x, gR1y] = pt(0.05, 0.24, 22);
+      drawLine64(ctx, gL0x, gL0y, gL1x, gL1y, '#eab308', 2.2);
+      drawLine64(ctx, gR0x, gR0y, gR1x, gR1y, '#ca8a04', 2.2);
+      drawLine64(ctx, gL1x, gL1y, gR1x, gR1y, '#facc15', 2.6);
+
+      // 6. Level 2 (3×3 Terminal Ferroviário & Monotrilho Elevado):
+      // Concrete T-Pillars, Elevated Viaduct Beam, Glass Boarding Station & Sleek Aerodynamic Monorail Train!
+      if (isMono3x3) {
+        // Concrete support columns
+        for (const pu of [-1.05, 0.0, 1.05]) {
+          drawIsoSpanBox64(ctx, pt, pu - 0.12, pu + 0.12, -0.12, 0.12, 2.6, 17.5, {
+            top: '#cbd5e1',
+            left: '#94a3b8',
+            right: '#64748b',
+          });
+        }
+        // Elevated Concrete Monorail Guideway Viaduct
+        drawIsoSpanBox64(ctx, pt, -spanU + 0.06, spanU - 0.06, -0.16, 0.16, 20.0, 3.4, {
+          top: '#e2e8f0',
+          topHi: '#f8fafc',
+          left: '#cbd5e1',
+          leftBot: '#94a3b8',
+          right: '#64748b',
+          rightBot: '#475569',
+        });
+        // Elevated Glass Station Canopy above central platform
+        drawIsoSpanBox64(ctx, pt, -0.58, 0.58, 0.14, 0.52, 20.0, 9.5, {
+          top: '#38bdf8',
+          topHi: '#bae6fd',
+          left: '#e0f2fe',
+          right: '#0284c7',
+        });
+        // Sleek Aerodynamic High-Speed Monorail Train on the elevated beam
+        const trainShift = f === 0 ? -0.08 : 0.08;
+        drawIsoSpanBox64(ctx, pt, -0.92 + trainShift, 0.78 + trainShift, -0.13, 0.13, 23.4, 5.8, {
+          top: '#ffffff',
+          topHi: '#f8fafc',
+          left: '#f1f5f9',
+          leftBot: '#cbd5e1',
+          right: '#94a3b8',
+          rightBot: '#64748b',
+        });
+        // Continuous cyan/lit passenger window ribbon along the monorail train
+        drawIsoGlassGrid64(
+          ctx,
+          pt,
+          'left',
+          -0.84 + trainShift,
+          0.70 + trainShift,
+          -0.13,
+          0.14,
+          24.2,
+          4.2,
+          6,
+          1,
+          '#0284c7',
+          '#7dd3fc'
+        );
+      }
+    }
+  );
+}
+
+/**
+ * 64-Bit Architectural Asymmetric Isometric Prism Box covering local tile span [u0..u1] × [v0..v1] at elevation [z0..z0+h].
+ * Matches `drawPrism64` shading: soft directional cast shadow, vertical sunlit/shaded facade gradients,
+ * subtle horizontal masonry/spandrel courses, base ambient occlusion, recessed dithered roof parapet,
+ * and specular vertical front corner highlight ridge (without harsh dark comic outlines).
+ */
 function drawIsoSpanBox64(
   ctx: CanvasRenderingContext2D,
   pt: (u: number, v: number, z?: number) => [number, number],
@@ -7338,13 +8153,16 @@ function drawIsoSpanBox64(
   h: number,
   colors: {
     top: string;
+    topHi?: string;
     left: string;
+    leftBot?: string;
     right: string;
+    rightBot?: string;
     outline?: string;
     stroke?: string;
     parapetColor?: string;
   },
-  lineW = 1.0
+  lineW = 0.8
 ): void {
   const z1 = z0 + h;
   const p01_0 = pt(u0, v1, z0);
@@ -7354,66 +8172,129 @@ function drawIsoSpanBox64(
   const p10_1 = pt(u1, v0, z1);
   const p11_1 = pt(u1, v1, z1);
   const p01_1 = pt(u0, v1, z1);
-  const strokeCol = colors.outline ?? colors.stroke ?? '#1e293b';
 
-  // Left-front face (v = v1, u from u0 to u1)
+  // 1. Soft Directional Ground Cast Shadow (for ground-level architectural volumes)
+  if (z0 <= 3.5 && h >= 6) {
+    const shLen = Math.min(24, Math.max(6, h * 0.34));
+    ctx.save();
+    ctx.fillStyle = 'rgba(8, 13, 24, 0.22)';
+    ctx.beginPath();
+    ctx.moveTo(p11_0[0], p11_0[1] + 0.5);
+    ctx.lineTo(p10_0[0], p10_0[1] + 0.5);
+    ctx.lineTo(p10_0[0] + shLen * 1.05, p10_0[1] - shLen * 0.24);
+    ctx.lineTo(p11_0[0] + shLen * 1.05, p11_0[1] - shLen * 0.24);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 2. Left-front sunlit face (v = v1, u from u0 to u1) with vertical gradient
+  const leftGrad = ctx.createLinearGradient(p01_1[0], p01_1[1], p11_0[0], p11_0[1]);
+  leftGrad.addColorStop(0, colors.left);
+  leftGrad.addColorStop(1, colors.leftBot ?? colors.left);
   ctx.beginPath();
   ctx.moveTo(p01_1[0], p01_1[1]);
   ctx.lineTo(p11_1[0], p11_1[1]);
   ctx.lineTo(p11_0[0], p11_0[1]);
   ctx.lineTo(p01_0[0], p01_0[1]);
   ctx.closePath();
-  ctx.fillStyle = colors.left;
+  ctx.fillStyle = leftGrad;
   ctx.fill();
-  ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = lineW;
-  ctx.stroke();
 
-  // Right-front face (u = u1, v from v0 to v1)
+  // 3. Right-front cool shaded face (u = u1, v from v0 to v1) with vertical gradient
+  const rightGrad = ctx.createLinearGradient(p11_1[0], p11_1[1], p10_0[0], p10_0[1]);
+  rightGrad.addColorStop(0, colors.right);
+  rightGrad.addColorStop(1, colors.rightBot ?? colors.right);
   ctx.beginPath();
   ctx.moveTo(p11_1[0], p11_1[1]);
   ctx.lineTo(p10_1[0], p10_1[1]);
   ctx.lineTo(p10_0[0], p10_0[1]);
   ctx.lineTo(p11_0[0], p11_0[1]);
   ctx.closePath();
-  ctx.fillStyle = colors.right;
+  ctx.fillStyle = rightGrad;
   ctx.fill();
-  ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = lineW;
+
+  // 3B. Subtle horizontal architectural floor/masonry course lines on tall volumes
+  if (h >= 10) {
+    const stepZ = Math.max(4.5, Math.min(7, h / 4));
+    for (let cz = z0 + stepZ; cz < z1 - 2; cz += stepZ) {
+      const cL0 = pt(u0, v1, cz);
+      const cM = pt(u1, v1, cz);
+      const cR1 = pt(u1, v0, cz);
+      drawLine64(ctx, cL0[0], cL0[1], cM[0], cM[1], 'rgba(15, 23, 42, 0.11)', 0.7);
+      drawLine64(ctx, cM[0], cM[1], cR1[0], cR1[1], 'rgba(15, 23, 42, 0.16)', 0.7);
+    }
+  }
+
+  // 3C. Base contact ambient occlusion band along bottom of walls
+  if (h >= 4.5) {
+    const aoZ = z0 + Math.min(3.8, h * 0.24);
+    const aoL = pt(u0, v1, aoZ);
+    const aoM = pt(u1, v1, aoZ);
+    const aoR = pt(u1, v0, aoZ);
+    ctx.fillStyle = 'rgba(8, 12, 22, 0.22)';
+    ctx.beginPath();
+    ctx.moveTo(aoL[0], aoL[1]);
+    ctx.lineTo(aoM[0], aoM[1]);
+    ctx.lineTo(aoR[0], aoR[1]);
+    ctx.lineTo(p10_0[0], p10_0[1]);
+    ctx.lineTo(p11_0[0], p11_0[1]);
+    ctx.lineTo(p01_0[0], p01_0[1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Soft 1px architectural silhouette outline matching drawPrism64
+  ctx.strokeStyle = 'rgba(12, 18, 30, 0.32)';
+  ctx.lineWidth = Math.min(0.85, lineW);
+  ctx.beginPath();
+  ctx.moveTo(p01_1[0], p01_1[1]);
+  ctx.lineTo(p01_0[0], p01_0[1]);
+  ctx.lineTo(p11_0[0], p11_0[1]);
+  ctx.lineTo(p10_0[0], p10_0[1]);
+  ctx.lineTo(p10_1[0], p10_1[1]);
   ctx.stroke();
 
-  // Top roof face (z = z1)
+  // 4. Top roof face (z = z1) with directional sunlit gradient
+  const roofGrad = ctx.createLinearGradient(p00_1[0], p00_1[1], p11_1[0], p11_1[1]);
+  roofGrad.addColorStop(0, colors.topHi ?? colors.top);
+  roofGrad.addColorStop(1, colors.top);
   ctx.beginPath();
   ctx.moveTo(p00_1[0], p00_1[1]);
   ctx.lineTo(p10_1[0], p10_1[1]);
   ctx.lineTo(p11_1[0], p11_1[1]);
   ctx.lineTo(p01_1[0], p01_1[1]);
   ctx.closePath();
-  ctx.fillStyle = colors.top;
+  ctx.fillStyle = roofGrad;
   ctx.fill();
-  ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = lineW;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+  ctx.lineWidth = 0.8;
   ctx.stroke();
 
-  if (colors.parapetColor) {
-    const pad = 0.14;
-    if (u1 - u0 > pad * 2.4 && v1 - v0 > pad * 2.4) {
-      const i00 = pt(u0 + pad, v0 + pad, z1);
-      const i10 = pt(u1 - pad, v0 + pad, z1);
-      const i11 = pt(u1 - pad, v1 - pad, z1);
-      const i01 = pt(u0 + pad, v1 - pad, z1);
-      ctx.beginPath();
-      ctx.moveTo(i00[0], i00[1]);
-      ctx.lineTo(i10[0], i10[1]);
-      ctx.lineTo(i11[0], i11[1]);
-      ctx.lineTo(i01[0], i01[1]);
-      ctx.closePath();
-      ctx.fillStyle = colors.parapetColor;
-      ctx.fill();
-      ctx.strokeStyle = strokeCol;
-      ctx.lineWidth = 0.85;
-      ctx.stroke();
-    }
+  // 4B. Recessed architectural roof parapet well + pixel dither texture
+  const pad = Math.min(0.14, Math.min(u1 - u0, v1 - v0) * 0.16);
+  if ((colors.parapetColor || h >= 12) && u1 - u0 > pad * 2.4 && v1 - v0 > pad * 2.4) {
+    const i00 = pt(u0 + pad, v0 + pad, z1 - 0.3);
+    const i10 = pt(u1 - pad, v0 + pad, z1 - 0.3);
+    const i11 = pt(u1 - pad, v1 - pad, z1 - 0.3);
+    const i01 = pt(u0 + pad, v1 - pad, z1 - 0.3);
+    ctx.beginPath();
+    ctx.moveTo(i00[0], i00[1]);
+    ctx.lineTo(i10[0], i10[1]);
+    ctx.lineTo(i11[0], i11[1]);
+    ctx.lineTo(i01[0], i01[1]);
+    ctx.closePath();
+    ctx.fillStyle = colors.parapetColor ?? 'rgba(14, 22, 36, 0.18)';
+    ctx.fill();
+    // Inner parapet lip shading & highlight matching drawPrism64
+    drawLine64(ctx, i01[0], i01[1], i00[0], i00[1], 'rgba(10, 16, 28, 0.34)', 0.9);
+    drawLine64(ctx, i00[0], i00[1], i10[0], i10[1], 'rgba(10, 16, 28, 0.24)', 0.9);
+    drawLine64(ctx, i01[0], i01[1], i11[0], i11[1], 'rgba(255, 255, 255, 0.26)', 0.8);
+  }
+
+  // 5. Crisp vertical specular corner highlight ridge along front spine
+  if (h >= 4) {
+    drawLine64(ctx, p11_1[0], p11_1[1] + 0.5, p11_0[0], p11_0[1] - 0.5, 'rgba(255, 255, 255, 0.42)', 1.0);
   }
 }
 
@@ -7428,7 +8309,7 @@ function drawIsoQuad64(
   z: number,
   fill: string,
   stroke?: string,
-  lineWidth: number = 0.9
+  lineWidth: number = 0.85
 ): void {
   const p00 = pt(u0, v0, z);
   const p10 = pt(u1, v0, z);
@@ -7449,7 +8330,11 @@ function drawIsoQuad64(
   }
 }
 
-/** Draw a grid of blue curtain-wall glass panes on the left-front (v=v1) or right-front (u=u1) wall of an iso box */
+/**
+ * 64-Bit Architectural Window & Curtain-Wall Grid on the left-front (v=v1) or right-front (u=u1) wall of an iso box.
+ * Matches `drawWindows64`: warm (#ffe066 / #ffd27a) and cool (#c4f1ff) lit interior panes, deep architectural glass,
+ * upper glass glints, and window sill highlights.
+ */
 function drawIsoGlassGrid64(
   ctx: CanvasRenderingContext2D,
   pt: (u: number, v: number, z?: number) => [number, number],
@@ -7462,21 +8347,23 @@ function drawIsoGlassGrid64(
   h: number,
   cols: number,
   rows: number,
-  glassFill: string = '#58a6dc',
-  hiFill: string = '#8fd3fa',
-  frameColor: string = '#29425c'
+  glassFill: string = '#1c3b5e',
+  hiFill: string = '#38bdf8',
+  frameColor: string = 'rgba(15, 23, 42, 0.28)'
 ): void {
   const padT = 0.08;
-  const padZ = Math.min(3.5, h * 0.12);
+  const padZ = Math.min(3.2, h * 0.13);
   const zStart = z0 + padZ;
-  const zSpan = Math.max(4, h - padZ * 2);
+  const zSpan = Math.max(3.5, h - padZ * 2);
+  const seedBase = Math.abs(Math.round((u0 * 17 + v1 * 23 + h) * 7));
+  const isDarkOpening = glassFill === '#1e293b' || glassFill === '#0f172a';
 
   for (let r = 0; r < rows; r++) {
-    const za = zStart + (r / rows) * zSpan + 0.7;
-    const zb = zStart + ((r + 1) / rows) * zSpan - 0.7;
+    const za = zStart + (r / rows) * zSpan + 0.65;
+    const zb = zStart + ((r + 1) / rows) * zSpan - 0.65;
     for (let c = 0; c < cols; c++) {
-      const ta = padT + (c / cols) * (1 - padT * 2) + 0.015;
-      const tb = padT + ((c + 1) / cols) * (1 - padT * 2) - 0.015;
+      const ta = padT + (c / cols) * (1 - padT * 2) + 0.018;
+      const tb = padT + ((c + 1) / cols) * (1 - padT * 2) - 0.018;
       let pA0: [number, number];
       let pB0: [number, number];
       let pB1: [number, number];
@@ -7496,28 +8383,40 @@ function drawIsoGlassGrid64(
         pB1 = pt(u1, vb, zb);
         pA1 = pt(u1, va, zb);
       }
+
+      const hash = (seedBase + r * 19 + c * 13 + (face === 'left' ? 3 : 11)) & 31;
+      const isLit = !isDarkOpening && hash < 8;
+      const litCol = hash === 2 || hash === 6 ? '#c4f1ff' : hash < 4 ? '#ffe066' : '#ffd27a';
+
       ctx.beginPath();
       ctx.moveTo(pA1[0], pA1[1]);
       ctx.lineTo(pB1[0], pB1[1]);
       ctx.lineTo(pB0[0], pB0[1]);
       ctx.lineTo(pA0[0], pA0[1]);
       ctx.closePath();
-      ctx.fillStyle = (r + c) % 3 === 0 ? hiFill : glassFill;
+      ctx.fillStyle = isLit ? litCol : (r + c) % 3 === 0 ? hiFill : glassFill;
       ctx.fill();
       ctx.strokeStyle = frameColor;
-      ctx.lineWidth = 0.85;
+      ctx.lineWidth = 0.65;
       ctx.stroke();
 
-      // Diagonal specular glass glint
-      drawLine64(
-        ctx,
-        pA1[0] + (pB1[0] - pA1[0]) * 0.2,
-        pA1[1] + 2,
-        pA0[0] + (pB0[0] - pA0[0]) * 0.55,
-        pA0[1] - 2,
-        'rgba(235, 250, 255, 0.55)',
-        0.9
-      );
+      // Window sill highlight along bottom edge (pA0 -> pB0)
+      if (!isDarkOpening) {
+        drawLine64(ctx, pA0[0], pA0[1] + 0.3, pB0[0], pB0[1] + 0.3, 'rgba(255, 250, 235, 0.34)', 0.65);
+      }
+
+      // Upper glass glint reflection on unlit panes
+      if (!isLit && !isDarkOpening) {
+        drawLine64(
+          ctx,
+          pA1[0] + (pB1[0] - pA1[0]) * 0.15,
+          pA1[1] + 0.8,
+          pA1[0] + (pB1[0] - pA1[0]) * 0.82,
+          pB1[1] + 0.8,
+          'rgba(224, 246, 255, 0.42)',
+          0.7
+        );
+      }
     }
   }
 }
@@ -7531,23 +8430,23 @@ function drawRooftopHvacUnit64(
   z: number,
   size: number = 0.42
 ): void {
-  drawIsoSpanBox64(ctx, pt, u, u + size, v, v + size, z, 5.2, {
+  drawIsoSpanBox64(ctx, pt, u, u + size, v, v + size, z, 4.8, {
     top: '#e2e8f0',
+    topHi: '#f8fafc',
     left: '#cbd5e1',
     right: '#94a3b8',
-    outline: '#334155',
   });
-  const topCenter = pt(u + size * 0.5, v + size * 0.5, z + 5.2);
-  ctx.fillStyle = '#475569';
+  const topCenter = pt(u + size * 0.5, v + size * 0.5, z + 4.8);
+  ctx.fillStyle = '#334155';
   ctx.beginPath();
-  ctx.ellipse(topCenter[0], topCenter[1], size * 11, size * 5.6, 0, 0, Math.PI * 2);
+  ctx.ellipse(topCenter[0], topCenter[1], size * 10.5, size * 5.2, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 0.75;
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 0.7;
   ctx.stroke();
 }
 
-/** Draw a colorful isometric 3D parked car matching the reference illustration */
+/** Draw a colorful isometric 3D parked car matching the city's miniature vehicle style */
 function drawShoppingParkedCar64(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -7561,49 +8460,33 @@ function drawShoppingParkedCar64(
   ctx.scale(facing === 'nw' ? -scale : scale, scale);
 
   // Drop shadow
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.38)';
+  ctx.fillStyle = 'rgba(8, 14, 24, 0.34)';
   ctx.beginPath();
-  ctx.ellipse(0, 2.2, 6.6, 3.3, -0.25, 0, Math.PI * 2);
+  ctx.ellipse(0, 2.2, 6.2, 3.0, -0.25, 0, Math.PI * 2);
   ctx.fill();
 
   // Lower body prism
-  drawPrism64(
-    ctx,
-    0,
-    1.5,
-    5.4,
-    2.8,
-    {
-      top: color,
-      left: color,
-      right: '#1e293b',
-    },
-    { outlineColor: '#0f172a' }
-  );
+  drawPrism64(ctx, 0, 1.5, 5.2, 2.6, {
+    top: color,
+    left: color,
+    right: '#1e293b',
+  });
   // Upper cabin & windshield
-  drawPrism64(
-    ctx,
-    -0.5,
-    -1.1,
-    3.4,
-    2.1,
-    {
-      top: '#f8fafc',
-      left: '#7dd3fc',
-      right: '#38bdf8',
-    },
-    { outlineColor: '#0f172a' }
-  );
+  drawPrism64(ctx, -0.5, -1.0, 3.2, 2.0, {
+    top: '#f8fafc',
+    left: '#7dd3fc',
+    right: '#0284c7',
+  });
   // Wheels
   ctx.fillStyle = '#0f172a';
   ctx.beginPath();
-  ctx.arc(-2.6, 2.4, 1.25, 0, Math.PI * 2);
-  ctx.arc(2.4, 0.2, 1.25, 0, Math.PI * 2);
+  ctx.arc(-2.5, 2.3, 1.15, 0, Math.PI * 2);
+  ctx.arc(2.3, 0.2, 1.15, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
-/** Draw skew-projected sign billboard text along a left-front (+u) or right-front (-v) wall */
+/** Draw skew-projected architectural facade sign along a left-front (+u) or right-front (-v) wall */
 function drawIsoWallSign64(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -7615,7 +8498,7 @@ function drawIsoWallSign64(
   borderColor: string,
   text: string,
   textColor: string | string[],
-  fontSize: number = 9
+  fontSize: number = 8
 ): void {
   ctx.save();
   ctx.translate(x, y);
@@ -7623,10 +8506,12 @@ function drawIsoWallSign64(
   ctx.transform(1, slope, 0, 1, 0, 0);
 
   if (bgColor !== 'transparent') {
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.28)';
+    ctx.fillRect(-boardW / 2 + 1, -boardH / 2 + 1.5, boardW, boardH);
     ctx.fillStyle = bgColor;
     ctx.fillRect(-boardW / 2, -boardH / 2, boardW, boardH);
     ctx.strokeStyle = borderColor;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.0;
     ctx.strokeRect(-boardW / 2, -boardH / 2, boardW, boardH);
   }
 
@@ -7638,8 +8523,8 @@ function drawIsoWallSign64(
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       const cw = ctx.measureText(ch).width;
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.lineWidth = 1.8;
       ctx.strokeText(ch, curX, 0.5);
       ctx.fillStyle = textColor[i % textColor.length];
       ctx.fillText(ch, curX, 0.5);
@@ -7647,8 +8532,8 @@ function drawIsoWallSign64(
     }
   } else {
     ctx.textAlign = 'center';
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
-    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)';
+    ctx.lineWidth = 1.6;
     ctx.strokeText(text, 0, 0.5);
     ctx.fillStyle = textColor;
     ctx.fillText(text, 0, 0.5);
@@ -7656,7 +8541,10 @@ function drawIsoWallSign64(
   ctx.restore();
 }
 
-/** Draw the complete multi-tile 64-bit Shopping Mall complex matching `/public/assets/aistudio/image_399eb79f.jpg` */
+/**
+ * Draw the complete multi-tile 64-bit Shopping Mall complex matching `/public/assets/aistudio/image_399eb79f.jpg`
+ * while rendered in the authentic 64-bit pixel-art palette, lighting, and material depth of Pixópolis.
+ */
 function drawShoppingMallComplexScene64(
   ctx: CanvasRenderingContext2D,
   frontCx: number,
@@ -7665,8 +8553,6 @@ function drawShoppingMallComplexScene64(
   rotW: number,
   rotH: number
 ): void {
-  // Map normalized local coordinates u ∈ [0..W], v ∈ [0..H] onto the actual rotated footprint diamond
-  // Corner (0,0) = top-back, (W,0) = right-back, (0,H) = left-front, (W,H) = bottom-front (at frontCx, frontCy)
   const W = lv === 1 ? 5 : lv === 2 ? 7 : 9;
   const H = W;
   const scaleU = rotW / W;
@@ -7682,97 +8568,102 @@ function drawShoppingMallComplexScene64(
   };
 
   // ==========================================================================
-  // LEVEL 1 (5×5): "MALL" — Blue glass curtain-wall cube, 3 rooftop AC units,
-  // blue "MALL" sign, front canopy entrance, L-shaped parking lot & pines
+  // LEVEL 1 (5×5): "MALL" — 2-Story Blue Glass Curtain-Wall Complex, 3 Rooftop
+  // AC Units, Front Canopy Entrance, L-Shaped Parking Lot & Landscaped Lawns
   // ==========================================================================
   if (lv === 1) {
-    // 1. Base terrain: rear right green lawn strip + dark asphalt parking lot + grey sidewalk apron
-    drawIsoQuad64(ctx, pt, 0, 5, 0, 5, 0, '#475569', '#1e293b', 1.2);
-    // Green grass strip along right-back (v: 0..3.4, u: 3.45..5) & left-back corner
-    drawIsoQuad64(ctx, pt, 3.45, 4.92, 0.12, 3.55, 0.3, '#55a646', '#3b7a31', 0.9);
-    drawIsoQuad64(ctx, pt, 0.08, 0.72, 0.12, 3.45, 0.3, '#55a646', '#3b7a31', 0.9);
-    // Dark asphalt L-shaped parking lot (front row v: 3.45..4.92 + right-front row u: 3.35..4.92)
-    drawIsoQuad64(ctx, pt, 0.12, 4.88, 3.45, 4.88, 0.3, '#4b5563', '#334155', 0.9);
-    drawIsoQuad64(ctx, pt, 3.35, 4.88, 1.55, 4.88, 0.3, '#4b5563', '#334155', 0.9);
-    // Light concrete sidewalk apron around the building
-    drawIsoQuad64(ctx, pt, 0.55, 3.45, 0.25, 3.55, 0.7, '#cbd5e1', '#94a3b8', 0.9);
+    // 1. Stone Perimeter Curb (#8c97a8) + Paved Sidewalk Plaza (#cbd5e1) + Asphalt Parking (#2c3545)
+    drawIsoQuad64(ctx, pt, 0, 5, 0, 5, 0, '#8c97a8');
+    drawIsoQuad64(ctx, pt, 0.08, 4.92, 0.08, 4.92, 0.3, '#cbd5e1');
+    // Landscaped emerald lawn strips along right-back & left-back border
+    drawIsoQuad64(ctx, pt, 3.45, 4.86, 0.16, 3.48, 0.35, '#3f7a46', '#8c97a8', 0.7);
+    drawIsoQuad64(ctx, pt, 0.14, 0.72, 0.16, 3.42, 0.35, '#3f7a46', '#8c97a8', 0.7);
+    // Dark slate L-shaped parking apron (front row v: 3.48..4.86 + right-front row u: 3.38..4.86)
+    drawIsoQuad64(ctx, pt, 0.16, 4.86, 3.48, 4.86, 0.35, '#2c3545');
+    drawIsoQuad64(ctx, pt, 3.38, 4.86, 1.62, 4.86, 0.35, '#2c3545');
+    // Raised stone sidewalk promenade around the mall building
+    drawIsoQuad64(ctx, pt, 0.56, 3.42, 0.26, 3.52, 0.7, '#d5dee8', '#94a3b8', 0.8);
 
     // Sidewalk paving grid lines in front of the entrance
     for (let u = 0.8; u <= 3.2; u += 0.6) {
-      const a = pt(u, 2.85, 0.7);
-      const b = pt(u, 3.52, 0.7);
-      drawLine64(ctx, a[0], a[1], b[0], b[1], '#94a3b8', 0.75);
+      const a = pt(u, 2.88, 0.75);
+      const b = pt(u, 3.50, 0.75);
+      drawLine64(ctx, a[0], a[1], b[0], b[1], 'rgba(100, 116, 139, 0.45)', 0.7);
     }
 
-    // White parking stall lines along front-left lot (v: 3.55..4.82)
+    // Crisp parking stall lines along front-left & front-right bays
     for (let u = 0.55; u <= 3.15; u += 0.62) {
-      const p0 = pt(u, 3.62, 0.4);
-      const p1 = pt(u, 4.76, 0.4);
-      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.2);
+      const p0 = pt(u, 3.64, 0.4);
+      const p1 = pt(u, 4.74, 0.4);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 1.0);
     }
-    // White parking stall lines along front-right lot (u: 3.55..4.82)
     for (let v = 2.05; v <= 4.55; v += 0.62) {
-      const p0 = pt(3.52, v, 0.4);
-      const p1 = pt(4.76, v, 0.4);
-      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.2);
+      const p0 = pt(3.54, v, 0.4);
+      const p1 = pt(4.74, v, 0.4);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 1.0);
     }
 
-    // 2. Main 2-Story Blue Glass Curtain-Wall Building (u: 0.72..3.25, v: 0.38..2.92)
+    // 2. Main 2-Story Blue Glass Curtain-Wall Mall Volume (u: 0.72..3.25, v: 0.38..2.92)
     const bH = 44;
     drawIsoSpanBox64(ctx, pt, 0.72, 3.25, 0.38, 2.92, 0.8, bH, {
-      top: '#cbd5e1',
-      left: '#d8e2ee',
-      right: '#b0bfcf',
-      outline: '#1e293b',
-      parapetColor: '#94a3b8',
+      top: '#94a3b8',
+      topHi: '#cbd5e1',
+      left: '#e2e8f0',
+      leftBot: '#cbd5e1',
+      right: '#94a3b8',
+      rightBot: '#64748b',
+      parapetColor: '#64748b',
     });
 
-    // Curtain-wall glass panes (4 cols × 2 stories on both visible faces)
-    drawIsoGlassGrid64(ctx, pt, 'left', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#5da9dd', '#8dd1f8', '#2c4763');
-    drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#4389be', '#6db6e8', '#233952');
+    // Curtain-wall glass panes with warm & cool lit interior shops (4 cols × 2 stories)
+    drawIsoGlassGrid64(ctx, pt, 'left', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#1d4f7a', '#38bdf8');
+    drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#163b5c', '#0284c7');
 
-    // Horizontal middle floor spandrel band
+    // Architectural stone middle spandrel belt
     const mL0 = pt(0.72, 2.92, 23);
     const mL1 = pt(3.25, 2.92, 23);
     const mR1 = pt(3.25, 0.38, 23);
-    drawLine64(ctx, mL0[0], mL0[1], mL1[0], mL1[1], '#cbd5e1', 3.0);
-    drawLine64(ctx, mL1[0], mL1[1], mR1[0], mR1[1], '#94a3b8', 3.0);
+    drawLine64(ctx, mL0[0], mL0[1], mL1[0], mL1[1], '#e2e8f0', 2.4);
+    drawLine64(ctx, mL1[0], mL1[1], mR1[0], mR1[1], '#94a3b8', 2.4);
 
-    // 3. Projecting White Front Entrance Canopy & Sliding Glass Doors
+    // 3. Projecting Front Entrance Vestibule Canopy & Sliding Glass Doors
     drawIsoSpanBox64(ctx, pt, 1.48, 2.52, 2.75, 3.22, 0.8, 15, {
-      top: '#f8fafc',
-      left: '#e2e8f0',
+      top: '#e2e8f0',
+      topHi: '#f8fafc',
+      left: '#f1f5f9',
+      leftBot: '#cbd5e1',
       right: '#94a3b8',
-      outline: '#1e293b',
+      rightBot: '#64748b',
     });
-    drawIsoGlassGrid64(ctx, pt, 'left', 1.56, 2.44, 2.75, 3.23, 0.8, 12.5, 2, 1, '#bae6fd', '#e0f2fe', '#1e3a5f');
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.56, 2.44, 2.75, 3.23, 0.8, 12.5, 2, 1, '#0284c7', '#bae6fd');
 
-    // 4. Rooftop Equipment: 3 Rectangular AC Units with fans + small skylight vents
+    // 4. Rooftop Equipment: 3 Detailed HVAC Units with fans + skylight hatch
     drawRooftopHvacUnit64(ctx, pt, 1.05, 0.72, bH + 0.8, 0.48);
     drawRooftopHvacUnit64(ctx, pt, 1.72, 0.72, bH + 0.8, 0.48);
     drawRooftopHvacUnit64(ctx, pt, 2.38, 0.72, bH + 0.8, 0.48);
-    drawIsoSpanBox64(ctx, pt, 1.15, 1.55, 1.65, 2.05, bH + 0.8, 2.8, {
-      top: '#f1f5f9',
+    drawIsoSpanBox64(ctx, pt, 1.15, 1.58, 1.65, 2.08, bH + 0.8, 2.8, {
+      top: '#7dd3fc',
+      topHi: '#e0f2fe',
       left: '#cbd5e1',
       right: '#94a3b8',
     });
 
-    // 5. Blue "MALL" Roof Parapet Billboard Sign above the front-left facade
-    const signPos = pt(1.98, 2.92, bH + 5.5);
-    drawIsoWallSign64(ctx, signPos[0], signPos[1], 'left', 34, 13, '#3b6ea5', '#e2e8f0', 'MALL', '#ffffff', 9);
+    // 5. Architectural "MALL" Roof Parapet Signboard above front entrance
+    const signPos = pt(1.98, 2.92, bH + 5.2);
+    drawIsoWallSign64(ctx, signPos[0], signPos[1], 'left', 32, 12, '#1e40af', '#93c5fd', 'MALL', '#ffffff', 8.5);
 
-    // 6. Trees on the green lawn & planters beside the entrance
+    // 6. Shade Trees on the green lawn & entrance planters
     for (const [tu, tv, sc] of [
       [4.15, 1.15, 0.78],
       [4.45, 2.05, 0.82],
       [3.92, 2.75, 0.75],
-      [0.35, 2.35, 0.68],
+      [0.38, 2.35, 0.68],
     ] as const) {
       const tp = pt(tu, tv, 1);
       drawTree64(ctx, tp[0], tp[1], 'emerald', sc);
     }
 
-    // 7. Colorful Parked Cars in the L-shaped Parking Lot (matching the 5×5 reference)
+    // 7. Parked Cars in the L-Shaped Parking Lot
     const carsLv1: Array<[number, number, string, 'ne' | 'nw']> = [
       [0.92, 4.18, '#f97316', 'ne'],
       [1.54, 4.18, '#3b82f6', 'ne'],
@@ -7786,102 +8677,96 @@ function drawShoppingMallComplexScene64(
       const cp = pt(cu, cv, 1);
       drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 1.0);
     }
-
-    // Pedestrians & potted shrubs along front sidewalk
-    for (const [pu, pv, pcol] of [
-      [1.35, 3.18, '#ef4444'],
-      [2.62, 3.22, '#3b82f6'],
-      [1.95, 3.38, '#f59e0b'],
-    ] as const) {
-      const pp = pt(pu, pv, 1);
-      ctx.fillStyle = pcol;
-      ctx.fillRect(pp[0] - 1.5, pp[1] - 4.5, 3, 4.5);
-      ctx.fillStyle = '#fde68a';
-      ctx.fillRect(pp[0] - 1.2, pp[1] - 6.2, 2.4, 2.0);
-    }
     return;
   }
 
   // ==========================================================================
-  // LEVEL 2 (7×7): "SHOPPING" — Tall dark-slate left anchor tower, stepped 2-story
-  // curved white/blue mall body, rainbow "SHOPPING" sign, blue disabled parking bays,
-  // palm-tree pedestrian plaza with benches, and right cargo loading dock with white box truck!
+  // LEVEL 2 (7×7): "SHOPPING" — Tall Dark-Slate Left Anchor Tower, Stepped 2-Story
+  // Mall Body, Rainbow "SHOPPING" Sign, Accessible Parking Bays, Palm-Tree
+  // Pedestrian Plaza with Benches & Cargo Loading Dock with White Box Truck!
   // ==========================================================================
   if (lv === 2) {
-    // 1. Base Slab: Green lawn border, asphalt parking lot, tiled palm plaza & rear truck yard
-    drawIsoQuad64(ctx, pt, 0, 7, 0, 7, 0, '#475569', '#1e293b', 1.2);
-    // Left-front green lawn border with shade trees
-    drawIsoQuad64(ctx, pt, 0.1, 1.05, 3.1, 6.88, 0.3, '#55a646', '#3b7a31', 0.9);
-    // Main asphalt parking lot (u: 1.05..4.65, v: 3.55..6.88)
-    drawIsoQuad64(ctx, pt, 1.05, 4.65, 3.55, 6.88, 0.3, '#4b5563', '#334155', 0.9);
-    // Rear-right asphalt delivery yard (u: 4.55..6.88, v: 1.25..4.75)
-    drawIsoQuad64(ctx, pt, 4.55, 6.88, 1.25, 4.75, 0.3, '#4b5563', '#334155', 0.9);
-    // Front-right paved palm-tree pedestrian courtyard plaza (u: 3.85..6.75, v: 4.35..6.85)
-    drawIsoQuad64(ctx, pt, 3.85, 6.75, 4.35, 6.85, 0.6, '#cbd5e1', '#94a3b8', 1.0);
+    // 1. Stone Perimeter Curb (#8c97a8) + Sidewalk Plaza (#cbd5e1) + Asphalt Parking (#2c3545)
+    drawIsoQuad64(ctx, pt, 0, 7, 0, 7, 0, '#8c97a8');
+    drawIsoQuad64(ctx, pt, 0.08, 6.92, 0.08, 6.92, 0.3, '#cbd5e1');
+    // Left-front landscaped green lawn strip
+    drawIsoQuad64(ctx, pt, 0.14, 1.05, 3.12, 6.84, 0.35, '#3f7a46', '#8c97a8', 0.7);
+    // Main asphalt parking lot (u: 1.05..4.65, v: 3.55..6.84) & rear-right delivery yard
+    drawIsoQuad64(ctx, pt, 1.05, 4.65, 3.55, 6.84, 0.35, '#2c3545');
+    drawIsoQuad64(ctx, pt, 4.55, 6.84, 1.25, 4.75, 0.35, '#2c3545');
+    // Front-right paved palm-tree pedestrian courtyard plaza
+    drawIsoQuad64(ctx, pt, 3.85, 6.78, 4.35, 6.84, 0.65, '#d5dee8', '#94a3b8', 0.85);
     // Sidewalk apron along front of mall
-    drawIsoQuad64(ctx, pt, 0.85, 5.25, 2.75, 3.72, 0.6, '#cbd5e1', '#94a3b8', 0.9);
+    drawIsoQuad64(ctx, pt, 0.85, 5.25, 2.75, 3.72, 0.65, '#d5dee8', '#94a3b8', 0.85);
 
-    // Blue Accessible/Disabled Parking Stalls near main entrance (matching reference!)
-    drawIsoQuad64(ctx, pt, 1.85, 2.52, 3.72, 4.45, 0.45, '#2563eb', '#f8fafc', 1.0);
-    drawIsoQuad64(ctx, pt, 2.58, 3.25, 3.72, 4.45, 0.45, '#2563eb', '#f8fafc', 1.0);
+    // Blue Accessible/Disabled Parking Stalls near main entrance
+    drawIsoQuad64(ctx, pt, 1.85, 2.52, 3.74, 4.45, 0.45, '#1d4ed8', '#e2e8f0', 0.8);
+    drawIsoQuad64(ctx, pt, 2.58, 3.25, 3.74, 4.45, 0.45, '#1d4ed8', '#e2e8f0', 0.8);
     for (const du of [2.18, 2.91]) {
       const dp = pt(du, 4.08, 0.5);
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(dp[0], dp[1], 1.8, 0, Math.PI * 2);
+      ctx.arc(dp[0], dp[1], 1.6, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // White parking stall lines in the parking lot
+    // Parking stall lines
     for (let u = 1.25; u <= 4.25; u += 0.65) {
       const p0 = pt(u, 4.75, 0.4);
       const p1 = pt(u, 6.72, 0.4);
-      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.1);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 1.0);
     }
 
     // 2. Main Rear 2-Story Mall Hall (u: 1.55..5.35, v: 0.35..3.05)
     const hallH = 44;
     drawIsoSpanBox64(ctx, pt, 1.55, 5.35, 0.35, 3.05, 0.8, hallH, {
       top: '#94a3b8',
-      left: '#d8e2ee',
-      right: '#9fb0c4',
-      outline: '#1e293b',
+      topHi: '#cbd5e1',
+      left: '#e2e8f0',
+      leftBot: '#cbd5e1',
+      right: '#94a3b8',
+      rightBot: '#64748b',
       parapetColor: '#64748b',
     });
-    drawIsoGlassGrid64(ctx, pt, 'left', 1.65, 5.25, 0.35, 3.05, 22, 20, 5, 1, '#58a6dc', '#8dd1f8', '#263f59');
-    drawIsoGlassGrid64(ctx, pt, 'right', 1.55, 5.35, 0.45, 2.95, 22, 20, 4, 1, '#4287bc', '#6cb5e8', '#22384f');
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.65, 5.25, 0.35, 3.05, 22, 20, 5, 1, '#1d4f7a', '#38bdf8');
+    drawIsoGlassGrid64(ctx, pt, 'right', 1.55, 5.35, 0.45, 2.95, 22, 20, 4, 1, '#163b5c', '#0284c7');
 
     // 3. Tall Dark-Slate Left Anchor Tower with vertical picture window (u: 0.42..1.88, v: 0.82..2.85)
     const towerH = 56;
     drawIsoSpanBox64(ctx, pt, 0.42, 1.88, 0.82, 2.85, 0.8, towerH, {
-      top: '#64748b',
-      left: '#6d8299',
-      right: '#4d6075',
-      outline: '#1e293b',
-      parapetColor: '#475569',
+      top: '#475569',
+      topHi: '#64748b',
+      left: '#64748b',
+      leftBot: '#475569',
+      right: '#475569',
+      rightBot: '#334155',
+      parapetColor: '#334155',
     });
-    drawIsoGlassGrid64(ctx, pt, 'left', 0.58, 1.72, 0.82, 2.85, 7, towerH - 13, 2, 3, '#63b3ed', '#90cdf4', '#1e293b');
+    drawIsoGlassGrid64(ctx, pt, 'left', 0.58, 1.72, 0.82, 2.85, 7, towerH - 13, 2, 3, '#1e3a5f', '#38bdf8');
 
     // 4. Stepped Lower Front Podium Terrace & Entrance Facade (u: 1.82..4.95, v: 1.85..3.52)
     const podH = 23;
     drawIsoSpanBox64(ctx, pt, 1.82, 4.95, 1.85, 3.52, 0.8, podH, {
-      top: '#e2e8f0',
-      left: '#f1f5f9',
-      right: '#cbd5e1',
-      outline: '#1e293b',
-    });
-    drawIsoGlassGrid64(ctx, pt, 'left', 1.92, 4.85, 1.85, 3.52, 0.8, podH - 3, 4, 1, '#58a6dc', '#bae6fd', '#29425c');
-    drawIsoGlassGrid64(ctx, pt, 'right', 1.82, 4.95, 1.92, 3.45, 0.8, podH - 3, 3, 1, '#3b82b6', '#7dd3fc', '#233952');
-
-    // 5. Right-Side Cargo Loading Dock Annex, Open Roll-Up Doors, Cardboard Crates & White Delivery Truck!
-    drawIsoSpanBox64(ctx, pt, 5.15, 6.62, 0.65, 2.35, 0.8, 22, {
       top: '#cbd5e1',
-      left: '#94a3b8',
-      right: '#cbd5e1',
-      outline: '#1e293b',
+      topHi: '#e2e8f0',
+      left: '#f1f5f9',
+      leftBot: '#cbd5e1',
+      right: '#94a3b8',
+      rightBot: '#64748b',
     });
-    // Dark roll-up cargo bay openings + brown pallet boxes
-    drawIsoGlassGrid64(ctx, pt, 'left', 5.25, 6.45, 0.65, 2.35, 0.8, 13, 2, 1, '#1e293b', '#0f172a', '#475569');
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.92, 4.85, 1.85, 3.52, 0.8, podH - 3, 4, 1, '#1d4f7a', '#38bdf8');
+    drawIsoGlassGrid64(ctx, pt, 'right', 1.82, 4.95, 1.92, 3.45, 0.8, podH - 3, 3, 1, '#163b5c', '#0284c7');
+
+    // 5. Right-Side Cargo Loading Dock Annex, Open Roll-Up Bays, Pallets & White Delivery Truck
+    drawIsoSpanBox64(ctx, pt, 5.15, 6.62, 0.65, 2.35, 0.8, 22, {
+      top: '#94a3b8',
+      topHi: '#cbd5e1',
+      left: '#cbd5e1',
+      leftBot: '#94a3b8',
+      right: '#94a3b8',
+      rightBot: '#64748b',
+    });
+    drawIsoGlassGrid64(ctx, pt, 'left', 5.25, 6.45, 0.65, 2.35, 0.8, 13, 2, 1, '#1e293b', '#0f172a');
     for (const [bu, bv] of [
       [5.05, 2.48],
       [5.55, 2.52],
@@ -7891,60 +8776,50 @@ function drawShoppingMallComplexScene64(
         top: '#eab308',
         left: '#ca8a04',
         right: '#a16207',
-        outline: '#422006',
       });
     }
-    // White Box Delivery Truck parked in front of loading dock (u: 5.55, v: 3.35)
     const truckP = pt(5.65, 3.45, 1);
     drawPrism64(
       ctx,
       truckP[0],
       truckP[1],
-      9.2,
-      8.5,
+      9.0,
+      8.2,
       {
         top: '#ffffff',
         left: '#f8fafc',
         right: '#cbd5e1',
       },
-      { outlineColor: '#1e293b', castShadow: true }
+      { castShadow: true }
     );
-    drawPrism64(
-      ctx,
-      truckP[0] - 7.5,
-      truckP[1] + 3.5,
-      5.2,
-      5.8,
-      {
-        top: '#f1f5f9',
-        left: '#38bdf8',
-        right: '#94a3b8',
-      },
-      { outlineColor: '#1e293b' }
-    );
+    drawPrism64(ctx, truckP[0] - 7.2, truckP[1] + 3.4, 5.0, 5.5, {
+      top: '#f1f5f9',
+      left: '#38bdf8',
+      right: '#94a3b8',
+    });
 
     // 6. Rooftop HVAC Units on main hall
     drawRooftopHvacUnit64(ctx, pt, 2.45, 0.72, hallH + 0.8, 0.52);
     drawRooftopHvacUnit64(ctx, pt, 3.85, 0.78, hallH + 0.8, 0.52);
     drawRooftopHvacUnit64(ctx, pt, 4.48, 0.78, hallH + 0.8, 0.52);
 
-    // 7. Colorful Rainbow 3D "SHOPPING" Sign atop the stepped terrace roof!
+    // 7. Colorful Rainbow 3D "SHOPPING" Sign atop the stepped terrace roof
     const shopSignP = pt(3.38, 3.02, hallH - 2);
     drawIsoWallSign64(
       ctx,
       shopSignP[0],
       shopSignP[1],
       'left',
-      78,
-      16,
+      74,
+      15,
       'transparent',
       'transparent',
       'SHOPPING',
       ['#ef4444', '#f97316', '#facc15', '#4ade80', '#22d3ee', '#3b82f6', '#a855f7', '#ec4899'],
-      12
+      11
     );
 
-    // 8. Front-Right Palm-Tree Courtyard Plaza with Wooden Benches & Planters (matching 8×7 reference)
+    // 8. Front-Right Palm-Tree Courtyard Plaza with Wooden Benches & Planters
     for (const [pu, pv] of [
       [4.55, 4.65],
       [5.75, 4.85],
@@ -7952,22 +8827,21 @@ function drawShoppingMallComplexScene64(
       [5.65, 6.05],
     ] as const) {
       const pp = pt(pu, pv, 0.8);
-      drawIsoQuad64(ctx, pt, pu - 0.28, pu + 0.28, pv - 0.28, pv + 0.28, 0.8, '#55a646', '#78350f', 1.1);
+      drawIsoQuad64(ctx, pt, pu - 0.26, pu + 0.26, pv - 0.26, pv + 0.26, 0.8, '#3f7a46', '#78350f', 0.9);
       drawSpeciesTree64(ctx, pp[0], pp[1], 'palm', 0.95, Math.round(pu * 10 + pv));
     }
-    // Wooden benches in the plaza
     for (const [bu, bv] of [
       [5.15, 5.25],
       [5.05, 6.35],
     ] as const) {
-      drawIsoSpanBox64(ctx, pt, bu, bu + 0.45, bv, bv + 0.22, 0.8, 2.6, {
+      drawIsoSpanBox64(ctx, pt, bu, bu + 0.45, bv, bv + 0.22, 0.8, 2.5, {
         top: '#d97706',
         left: '#b45309',
         right: '#78350f',
       });
     }
 
-    // Pine & shade trees along the left green border
+    // Shade trees along the left green border
     for (const [tu, tv] of [
       [0.65, 3.55],
       [0.55, 4.65],
@@ -7997,214 +8871,211 @@ function drawShoppingMallComplexScene64(
   }
 
   // ==========================================================================
-  // LEVEL 3 (9×9): "SHOPPING CENTER" — Lush Green Eco-Roof with Central Glass Dome
-  // & Skylights, "SHOPPING CENTER" Blue Sign, Central Circular Fountain Plaza with
-  // Flags & Palms, Multi-Level Parking Garage on Right, Bus Stop + Yellow Bus,
-  // and Large Front Parking Lot with Crosswalks & Islands!
+  // LEVEL 3 (9×9): "SHOPPING CENTER" — U-Shaped Grand Megamall with Lush Green
+  // Eco-Roof, Central Geodesic Glass Dome & Skylights, "SHOPPING CENTER" Sign,
+  // Central Circular Fountain Plaza, Multi-Story Parking Garage & Bus Stop!
   // ==========================================================================
-  // 1. Base Slab: Full 9×9 Dark Asphalt Roadways & Parking Lots + Central Stone Fountain Plaza
-  drawIsoQuad64(ctx, pt, 0, 9, 0, 9, 0, '#4b5563', '#1e293b', 1.2);
-  // Outer green lawn strips along front-left and front-bottom borders
-  drawIsoQuad64(ctx, pt, 0.08, 0.65, 3.6, 8.88, 0.3, '#55a646', '#3b7a31', 0.8);
-  drawIsoQuad64(ctx, pt, 0.65, 5.8, 8.38, 8.92, 0.3, '#55a646', '#3b7a31', 0.8);
+  // 1. Stone Perimeter Curb (#8c97a8) + Dark Slate Asphalt Roadways & Parking (#2c3545)
+  drawIsoQuad64(ctx, pt, 0, 9, 0, 9, 0, '#8c97a8');
+  drawIsoQuad64(ctx, pt, 0.08, 8.92, 0.08, 8.92, 0.25, '#2c3545');
+  // Outer landscaped green lawn strips along front-left and front-bottom borders
+  drawIsoQuad64(ctx, pt, 0.12, 0.65, 3.6, 8.85, 0.3, '#3f7a46', '#8c97a8', 0.7);
+  drawIsoQuad64(ctx, pt, 0.65, 5.8, 8.38, 8.88, 0.3, '#3f7a46', '#8c97a8', 0.7);
   // Central tiled stone pedestrian plaza & fountain courtyard (u: 2.35..6.85, v: 3.15..5.65)
-  drawIsoQuad64(ctx, pt, 2.35, 6.85, 3.15, 5.65, 0.6, '#cbd5e1', '#94a3b8', 1.0);
+  drawIsoQuad64(ctx, pt, 2.35, 6.85, 3.15, 5.65, 0.6, '#d5dee8', '#94a3b8', 0.9);
   // Front-left sidewalk promenade (u: 0.85..2.45, v: 3.15..4.15)
-  drawIsoQuad64(ctx, pt, 0.85, 2.45, 3.15, 4.15, 0.6, '#cbd5e1', '#94a3b8', 0.9);
+  drawIsoQuad64(ctx, pt, 0.85, 2.45, 3.15, 4.15, 0.6, '#d5dee8', '#94a3b8', 0.85);
 
   // Landscaped green median island dividing the main front parking lot
-  drawIsoQuad64(ctx, pt, 0.85, 3.55, 6.45, 6.92, 0.5, '#55a646', '#cbd5e1', 1.0);
+  drawIsoQuad64(ctx, pt, 0.85, 3.55, 6.45, 6.92, 0.5, '#3f7a46', '#cbd5e1', 0.85);
 
-  // White Zebra Crosswalks across the internal driveway (matching 9×9 reference!)
+  // White Zebra Crosswalks across the internal driveway
   for (let s = 0; s < 4; s++) {
     const off = s * 0.16;
-    drawIsoQuad64(ctx, pt, 2.65 + off, 2.74 + off, 5.72, 6.32, 0.35, '#f8fafc');
-    drawIsoQuad64(ctx, pt, 3.72 + off, 3.81 + off, 6.52, 7.12, 0.35, '#f8fafc');
-    drawIsoQuad64(ctx, pt, 5.65 + off, 5.74 + off, 5.82, 6.42, 0.35, '#f8fafc');
+    drawIsoQuad64(ctx, pt, 2.65 + off, 2.74 + off, 5.72, 6.32, 0.35, '#f1f5f9');
+    drawIsoQuad64(ctx, pt, 3.72 + off, 3.81 + off, 6.52, 7.12, 0.35, '#f1f5f9');
+    drawIsoQuad64(ctx, pt, 5.65 + off, 5.74 + off, 5.82, 6.42, 0.35, '#f1f5f9');
   }
 
   // Yellow dashed road lane markings along the internal avenue
   for (let u = 1.4; u <= 6.2; u += 0.9) {
     const a = pt(u, 5.95, 0.35);
     const b = pt(u + 0.42, 5.95, 0.35);
-    drawLine64(ctx, a[0], a[1], b[0], b[1], '#facc15', 1.2);
+    drawLine64(ctx, a[0], a[1], b[0], b[1], '#facc15', 1.1);
   }
 
-  // White parking bay lines in the 3 front parking sections
+  // Parking bay lines in the 3 front parking sections
   for (let u = 0.85; u <= 2.45; u += 0.52) {
     const p0 = pt(u, 4.45, 0.35);
     const p1 = pt(u, 5.45, 0.35);
-    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 0.9);
   }
   for (let u = 1.05; u <= 3.35; u += 0.55) {
     const p0 = pt(u, 7.12, 0.35);
     const p1 = pt(u, 8.22, 0.35);
-    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 0.9);
   }
   for (let u = 3.95; u <= 6.25; u += 0.55) {
     const p0 = pt(u, 7.12, 0.35);
     const p1 = pt(u, 8.22, 0.35);
-    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], 'rgba(241, 245, 249, 0.75)', 0.9);
   }
 
-  // 2. Main U-Shaped Mall Building with Lush Green Eco-Roof (Garden Roof!)
+  // 2. Main U-Shaped Mall Building with Lush Green Eco-Roof
   const mainH = 42;
   const wingH = 31;
 
   // Rear-Central Main Grand Concourse (u: 1.45..7.15, v: 0.28..2.95)
   drawIsoSpanBox64(ctx, pt, 1.45, 7.15, 0.28, 2.95, 0.8, mainH, {
-    top: '#cbd5e1',
+    top: '#94a3b8',
+    topHi: '#cbd5e1',
     left: '#e2e8f0',
-    right: '#b0bfcf',
-    outline: '#1e293b',
-    parapetColor: '#6ab04c', // Lush Green Eco-Roof!
+    leftBot: '#cbd5e1',
+    right: '#94a3b8',
+    rightBot: '#64748b',
+    parapetColor: '#4f8e3c',
   });
-  drawIsoGlassGrid64(ctx, pt, 'left', 2.45, 5.85, 0.28, 2.95, 0.8, mainH - 5, 5, 2, '#58a6dc', '#8fd3fa', '#263f59');
-  drawIsoGlassGrid64(ctx, pt, 'right', 1.45, 7.15, 0.42, 2.85, 0.8, mainH - 5, 4, 2, '#4287bc', '#6cb5e8', '#22384f');
+  drawIsoGlassGrid64(ctx, pt, 'left', 2.45, 5.85, 0.28, 2.95, 0.8, mainH - 5, 5, 2, '#1d4f7a', '#38bdf8');
+  drawIsoGlassGrid64(ctx, pt, 'right', 1.45, 7.15, 0.42, 2.85, 0.8, mainH - 5, 4, 2, '#163b5c', '#0284c7');
 
   // Projecting Left Retail Wing with Green Roof & Skylight (u: 0.72..2.58, v: 1.55..3.55)
   drawIsoSpanBox64(ctx, pt, 0.72, 2.58, 1.55, 3.55, 0.8, wingH, {
-    top: '#cbd5e1',
+    top: '#94a3b8',
+    topHi: '#cbd5e1',
     left: '#e2e8f0',
-    right: '#b0bfcf',
-    outline: '#1e293b',
-    parapetColor: '#6ab04c',
+    leftBot: '#cbd5e1',
+    right: '#94a3b8',
+    rightBot: '#64748b',
+    parapetColor: '#4f8e3c',
   });
-  drawIsoGlassGrid64(ctx, pt, 'left', 0.82, 2.48, 1.55, 3.55, 0.8, wingH - 4, 3, 2, '#58a6dc', '#8fd3fa', '#263f59');
-  drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 2.58, 1.68, 3.45, 0.8, wingH - 4, 2, 2, '#4287bc', '#6cb5e8', '#22384f');
+  drawIsoGlassGrid64(ctx, pt, 'left', 0.82, 2.48, 1.55, 3.55, 0.8, wingH - 4, 3, 2, '#1d4f7a', '#38bdf8');
+  drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 2.58, 1.68, 3.45, 0.8, wingH - 4, 2, 2, '#163b5c', '#0284c7');
 
   // Projecting Right Retail Wing before Parking Garage (u: 5.75..7.25, v: 1.55..3.55)
   drawIsoSpanBox64(ctx, pt, 5.75, 7.25, 1.55, 3.55, 0.8, wingH, {
-    top: '#cbd5e1',
+    top: '#94a3b8',
+    topHi: '#cbd5e1',
     left: '#e2e8f0',
-    right: '#b0bfcf',
-    outline: '#1e293b',
-    parapetColor: '#6ab04c',
+    leftBot: '#cbd5e1',
+    right: '#94a3b8',
+    rightBot: '#64748b',
+    parapetColor: '#4f8e3c',
   });
-  drawIsoGlassGrid64(ctx, pt, 'left', 5.85, 7.15, 1.55, 3.55, 0.8, wingH - 4, 2, 2, '#58a6dc', '#8fd3fa', '#263f59');
-  // White billboard poster on the right retail wing wall (matching reference!)
-  const posterP = pt(6.5, 3.56, 17);
-  drawIsoWallSign64(ctx, posterP[0], posterP[1], 'left', 24, 12, '#f8fafc', '#64748b', '', '#000', 6);
+  drawIsoGlassGrid64(ctx, pt, 'left', 5.85, 7.15, 1.55, 3.55, 0.8, wingH - 4, 2, 2, '#1d4f7a', '#38bdf8');
 
   // 3. Multi-Level Concrete Parking Garage on the Far Right (u: 6.95..8.82, v: 2.25..4.88)
   const garH = 32;
   drawIsoSpanBox64(ctx, pt, 6.95, 8.82, 2.25, 4.88, 0.8, garH, {
-    top: '#4b5563',
+    top: '#334155',
+    topHi: '#475569',
     left: '#cbd5e1',
+    leftBot: '#94a3b8',
     right: '#94a3b8',
-    outline: '#1e293b',
+    rightBot: '#64748b',
   });
-  // Open dark parking deck levels (2 horizontal open slots on left & right walls with parked cars peeking inside)
-  drawIsoGlassGrid64(ctx, pt, 'left', 7.05, 8.72, 2.25, 4.88, 2, garH - 6, 2, 3, '#1e293b', '#334155', '#94a3b8');
-  drawIsoGlassGrid64(ctx, pt, 'right', 6.95, 8.82, 2.35, 4.78, 2, garH - 6, 3, 3, '#1e293b', '#334155', '#94a3b8');
-  // Rooftop parking stall lines & cars parked on the top deck of the garage!
+  drawIsoGlassGrid64(ctx, pt, 'left', 7.05, 8.72, 2.25, 4.88, 2, garH - 6, 2, 3, '#1e293b', '#334155');
+  drawIsoGlassGrid64(ctx, pt, 'right', 6.95, 8.82, 2.35, 4.78, 2, garH - 6, 3, 3, '#1e293b', '#334155');
   for (let v = 2.65; v <= 4.45; v += 0.45) {
     const g0 = pt(7.15, v, garH + 1);
     const g1 = pt(7.85, v, garH + 1);
-    drawLine64(ctx, g0[0], g0[1], g1[0], g1[1], '#f8fafc', 0.9);
+    drawLine64(ctx, g0[0], g0[1], g1[0], g1[1], 'rgba(241, 245, 249, 0.75)', 0.85);
   }
   const garCar1 = pt(7.55, 3.05, garH + 1);
   const garCar2 = pt(7.55, 3.95, garH + 1);
   drawShoppingParkedCar64(ctx, garCar1[0], garCar1[1], '#f59e0b', 'nw', 0.85);
   drawShoppingParkedCar64(ctx, garCar2[0], garCar2[1], '#22c55e', 'nw', 0.85);
 
-  // 4. Rooftop Features on the Green Eco-Roof: Central Geodesic Glass Dome, 3 Glass Skylights & HVAC Units!
-  // Rectangular Glass Skylights
-  drawIsoQuad64(ctx, pt, 3.05, 3.95, 0.65, 1.35, mainH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
-  drawIsoQuad64(ctx, pt, 5.75, 6.65, 1.85, 2.55, wingH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
-  drawIsoQuad64(ctx, pt, 1.15, 2.05, 2.05, 2.75, wingH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
-  // Mechanical penthouse box behind the dome
+  // 4. Rooftop Features on the Green Eco-Roof: Central Geodesic Glass Dome, 3 Glass Skylights, Helipad & HVAC Units!
+  drawIsoQuad64(ctx, pt, 3.05, 3.95, 0.65, 1.35, mainH + 1.0, '#38bdf8', '#e0f2fe', 1.0);
+  drawIsoQuad64(ctx, pt, 5.75, 6.65, 1.85, 2.55, wingH + 1.0, '#38bdf8', '#e0f2fe', 1.0);
+  drawIsoQuad64(ctx, pt, 1.15, 2.05, 2.05, 2.75, wingH + 1.0, '#38bdf8', '#e0f2fe', 1.0);
   drawIsoSpanBox64(ctx, pt, 4.75, 5.75, 0.65, 1.35, mainH + 0.8, 8.5, {
-    top: '#cbd5e1',
+    top: '#94a3b8',
+    topHi: '#cbd5e1',
     left: '#e2e8f0',
     right: '#94a3b8',
-    outline: '#334155',
   });
-  // Rooftop HVAC pairs
   drawRooftopHvacUnit64(ctx, pt, 2.05, 1.15, mainH + 0.8, 0.42);
   drawRooftopHvacUnit64(ctx, pt, 2.55, 1.15, mainH + 0.8, 0.42);
   drawRooftopHvacUnit64(ctx, pt, 4.85, 2.05, mainH + 0.8, 0.42);
   drawRooftopHvacUnit64(ctx, pt, 5.35, 2.05, mainH + 0.8, 0.42);
 
+  // Executive Helipad on the right wing of the 9×9 Grand Megamall
+  const [hpX, hpY] = pt(6.35, 1.15, mainH + 1.2);
+  drawRooftopHelipad64(ctx, hpX, hpY, 11);
+
   // Iconic Central Hemispherical Glass Dome on the Green Roof (u: 4.15, v: 1.65)
   const domeP = pt(4.15, 1.65, mainH + 1.2);
-  ctx.fillStyle = '#e2e8f0';
+  ctx.fillStyle = '#cbd5e1';
   ctx.beginPath();
   ctx.ellipse(domeP[0], domeP[1], 19, 10, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#334155';
-  ctx.lineWidth = 1.0;
-  ctx.stroke();
 
   const domeGrad = ctx.createRadialGradient(domeP[0] - 5, domeP[1] - 10, 2, domeP[0], domeP[1] - 4, 18);
   domeGrad.addColorStop(0, '#e0f2fe');
-  domeGrad.addColorStop(0.55, '#7dd3fc');
-  domeGrad.addColorStop(1, '#0284c7');
+  domeGrad.addColorStop(0.55, '#38bdf8');
+  domeGrad.addColorStop(1, '#0369a1');
   ctx.fillStyle = domeGrad;
   ctx.beginPath();
   ctx.ellipse(domeP[0], domeP[1] - 1, 17, 8.5, 0, 0, Math.PI, false);
   ctx.arc(domeP[0], domeP[1] - 1, 17, Math.PI, 0, false);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = '#1e3a5f';
-  ctx.lineWidth = 1.0;
+  ctx.strokeStyle = 'rgba(224, 242, 254, 0.7)';
+  ctx.lineWidth = 0.85;
   ctx.stroke();
-  // Geodesic glass ribs on the dome
   for (const rx of [-10, -4, 4, 10]) {
     ctx.beginPath();
     ctx.moveTo(domeP[0] + rx, domeP[1] + 5);
     ctx.quadraticCurveTo(domeP[0] + rx * 0.4, domeP[1] - 17, domeP[0], domeP[1] - 17);
-    ctx.strokeStyle = 'rgba(240, 249, 255, 0.75)';
-    ctx.lineWidth = 0.85;
+    ctx.strokeStyle = 'rgba(240, 249, 255, 0.65)';
+    ctx.lineWidth = 0.8;
     ctx.stroke();
   }
 
-  // 5. Large Blue "SHOPPING CENTER" Sign Board above the Central Atrium Entrance!
+  // 5. Architectural "SHOPPING CENTER" Sign Board above the Central Atrium Entrance
   const centerSignP = pt(4.15, 2.96, mainH + 3.5);
   drawIsoWallSign64(
     ctx,
     centerSignP[0],
     centerSignP[1],
     'left',
-    86,
-    15,
-    '#3b6ea5',
-    '#e2e8f0',
+    82,
+    14,
+    '#1e40af',
+    '#93c5fd',
     'SHOPPING CENTER',
     '#ffffff',
-    8.5
+    8
   );
 
-  // 6. Central Multi-Tier Circular Blue Water Fountain in the Front Courtyard Plaza (u: 4.25, v: 4.35)
+  // 6. Central Multi-Tier Circular Blue Water Fountain in the Front Courtyard Plaza
   const ftnP = pt(4.25, 4.35, 1.0);
-  // Outer stone basin
   ctx.fillStyle = '#cbd5e1';
   ctx.beginPath();
   ctx.ellipse(ftnP[0], ftnP[1], 16, 8.5, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 1.1;
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 0.9;
   ctx.stroke();
-  // Sparkling turquoise pool water
-  ctx.fillStyle = '#38bdf8';
+  ctx.fillStyle = '#0284c7';
   ctx.beginPath();
   ctx.ellipse(ftnP[0], ftnP[1] - 0.8, 13.5, 6.8, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Middle tier bowl & water jet
   ctx.fillStyle = '#e2e8f0';
   ctx.beginPath();
   ctx.ellipse(ftnP[0], ftnP[1] - 5, 7.5, 3.8, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#bae6fd';
+  ctx.fillStyle = '#38bdf8';
   ctx.beginPath();
   ctx.ellipse(ftnP[0], ftnP[1] - 5.5, 6.0, 2.9, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#e0f2fe';
   ctx.beginPath();
-  ctx.arc(ftnP[0], ftnP[1] - 10, 3.0, 0, Math.PI * 2);
+  ctx.arc(ftnP[0], ftnP[1] - 10, 2.8, 0, Math.PI * 2);
   ctx.fill();
 
-  // Palm trees & 3 Flagpoles around the Fountain Courtyard
+  // Palm trees & Flagpoles around the Fountain Courtyard
   for (const [pu, pv] of [
     [3.25, 3.55],
     [5.35, 3.65],
@@ -8219,36 +9090,32 @@ function drawShoppingMallComplexScene64(
     [4.95, 4.75, '#22c55e'],
   ] as const) {
     const fp = pt(fu, fv, 0.8);
-    drawLine64(ctx, fp[0], fp[1], fp[0], fp[1] - 14, '#e2e8f0', 1.2);
+    drawLine64(ctx, fp[0], fp[1], fp[0], fp[1] - 13, '#e2e8f0', 1.1);
     ctx.fillStyle = fcol;
-    ctx.fillRect(fp[0], fp[1] - 14, 5.5, 3.5);
+    ctx.fillRect(fp[0], fp[1] - 13, 5, 3.2);
   }
 
-  // 7. Glass Bus Shelter & Yellow Municipal Bus on the Right Driveway (u: 5.85..6.85, v: 5.55)
-  drawIsoSpanBox64(ctx, pt, 5.35, 5.95, 5.15, 5.48, 0.8, 9.5, {
+  // 7. Glass Bus Shelter & Yellow Municipal Bus on the Right Driveway
+  drawIsoSpanBox64(ctx, pt, 5.35, 5.95, 5.15, 5.48, 0.8, 9.0, {
     top: '#94a3b8',
     left: '#bae6fd',
-    right: '#7dd3fc',
-    outline: '#334155',
+    right: '#38bdf8',
   });
   const busP = pt(6.55, 5.65, 1.0);
   drawParkedMiniVehicle64(ctx, busP[0], busP[1], 'schoolbus', false);
 
-  // 8. Colorful Parked Cars across all Parking Sections & Taxis on the Avenue (matching 9×9 reference!)
+  // 8. Parked Cars across all Parking Sections & Taxis on the Avenue
   const carsLv3: Array<[number, number, string, 'ne' | 'nw']> = [
-    // Upper-left parking rows
     [0.95, 4.85, '#a855f7', 'ne'],
     [1.48, 4.85, '#22c55e', 'ne'],
     [2.02, 4.85, '#3b82f6', 'ne'],
     [0.95, 5.85, '#ef4444', 'ne'],
     [1.48, 5.85, '#f97316', 'ne'],
     [2.02, 5.85, '#38bdf8', 'ne'],
-    // Middle-left parking rows
     [1.25, 7.65, '#3b82f6', 'ne'],
     [1.82, 7.65, '#ef4444', 'ne'],
     [2.38, 7.65, '#22c55e', 'ne'],
     [2.95, 7.65, '#facc15', 'ne'],
-    // Front-bottom parking rows
     [4.15, 7.45, '#22c55e', 'ne'],
     [4.68, 7.45, '#facc15', 'ne'],
     [5.22, 7.45, '#ef4444', 'ne'],
@@ -8256,7 +9123,6 @@ function drawShoppingMallComplexScene64(
     [4.35, 8.25, '#eab308', 'nw'],
     [4.95, 8.25, '#f97316', 'nw'],
     [5.55, 8.25, '#38bdf8', 'nw'],
-    // Cruising cars & yellow taxis along the central avenue
     [2.55, 5.25, '#ef4444', 'nw'],
     [3.35, 5.65, '#facc15', 'nw'],
     [4.55, 6.25, '#3b82f6', 'nw'],
@@ -8268,7 +9134,6 @@ function drawShoppingMallComplexScene64(
     drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 0.92);
   }
 
-  // Green perimeter trees along the parking islands
   for (const [tu, tv] of [
     [0.42, 4.55],
     [0.42, 6.25],
@@ -8285,10 +9150,7 @@ function drawShoppingMallComplexScene64(
 
 /**
  * 64-Bit Architectural Shopping Mall Complex Sprite (3 Modern Evolutionary Designs: 5×5, 7×7, 9×9)
- * strictly matching the user's reference artwork (`/public/assets/aistudio/image_399eb79f.jpg`):
- * - Level 1 (5×5 · "MALL"): 2-story blue curtain-wall glass mall, 3 rooftop AC units, blue "MALL" sign, L-shaped parking lot with colorful cars & pine trees.
- * - Level 2 (7×7 · "SHOPPING"): Tall dark-slate left tower, stepped 2-story glass mall, rainbow "SHOPPING" sign, accessible parking bays, palm-tree plaza & right loading dock with white delivery truck.
- * - Level 3 (9×9 · "SHOPPING CENTER"): U-shaped grand megamall with green eco-roof, central glass geodesic dome & skylights, "SHOPPING CENTER" sign, central circular fountain plaza, multi-story parking garage, bus stop & large multi-island parking lot.
+ * rendered with Pixópolis's authentic 64-bit pixel-art shading, lit windows, and seamless sidewalk curbs.
  */
 function getShoppingMallSprite(
   level: number,
@@ -8305,7 +9167,7 @@ function getShoppingMallSprite(
   // Compact Scaled Diorama Sprite (used in Obras 64-bit preview card & 1×1 fallback)
   if (lotW <= 1 || lotH <= 1) {
     const targetDim = lv === 1 ? 5 : lv === 2 ? 7 : 9;
-    return getOrCreateSprite(`shopping64_single_ref_lv${lv}_v${v}`, 152, 132, 76, 98, (ctx, cx, cy) => {
+    return getOrCreateSprite(`shopping64_single_v3_lv${lv}_v${v}`, 152, 132, 76, 98, (ctx, cx, cy) => {
       const fullHero = getShoppingMallSprite(lv, v, targetDim, targetDim, targetDim - 1, targetDim - 1, 0);
       const scale = lv === 1 ? 0.42 : lv === 2 ? 0.31 : 0.245;
       const dw = fullHero.canvas.width * scale;
@@ -8316,27 +9178,18 @@ function getShoppingMallSprite(
     });
   }
 
-  // Multi-Tile Shopping Mall Compound (5×5 Lv.1, 7×7 Lv.2, 9×9 Lv.3):
-  // Non-front tiles render a clean paved/asphalt base slab; the front-most rotated corner tile
-  // (`isFrontCorner`) renders the seamless multi-tile architectural complex hero sprite.
   const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
   if (!rotLot.isFrontCorner) {
     return getOrCreateSprite(
-      `shopping64_ref_base_lv${lv}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
-      84,
-      64,
-      42,
-      36,
+      `shopping64_v3_base_lv${lv}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
+      98,
+      128,
+      49,
+      94,
       (ctx, cx, cy) => {
-        const isFrontHalf = rotLot.rDy >= Math.floor(rotLot.rotH * 0.55);
-        fillDiamond64(
-          ctx,
-          cx,
-          cy,
-          TILE_HW + 0.6,
-          TILE_HH + 0.4,
-          isFrontHalf ? '#4b5563' : '#cbd5e1'
-        );
+        fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#8c97a8');
+        fillDiamond64(ctx, cx, cy, 29.2, 14.6, '#cbd5e1');
+        drawSidewalkPaving64(ctx, cx, cy, rotLot.rDx + rotLot.rDy);
       }
     );
   }
@@ -8347,7 +9200,7 @@ function getShoppingMallSprite(
   const anchorY = spanH - 28;
 
   return getOrCreateSprite(
-    `shopping64_ref_hero_lv${lv}_v${v}_w${rotLot.rotW}h${rotLot.rotH}`,
+    `shopping64_v3_hero_lv${lv}_v${v}_w${rotLot.rotW}h${rotLot.rotH}`,
     spanW,
     spanH,
     anchorX,
@@ -8647,10 +9500,13 @@ function drawCar64(
   variantIdx: number,
   glowStrength: number = 0,
   kindOverride?: VehicleKind,
-  timeSeconds: number = 0
+  timeSeconds: number = 0,
+  role?: string,
+  customCargoColor?: string
 ): void {
   const s = Math.max(0.62, zoom);
   const kind = kindOverride ?? getVehicleKind(variantIdx);
+  const isFreightConvoy = role === 'freight_convoy';
   const isPolice = kind === 'police';
   const isFire = kind === 'fire';
   const isBus = kind === 'bus';
@@ -8954,12 +9810,13 @@ function drawCar64(
       'rgba(255,255,255,0.6)'
     );
   } else if (isTruck) {
-    // Tall enclosed freight cargo box behind the forward cab
-    const boxBack = -halfL * 0.98;
+    // Tall enclosed freight cargo box behind the forward cab (or articulated container convoy for freight_convoy)
+    const activeCargoColor = customCargoColor || cargoColor;
+    const boxBack = isFreightConvoy ? -halfL * 1.18 : -halfL * 0.98;
     const boxFront = halfL * 0.32;
     const boxW = halfW * 0.96;
     const nearBoxW = posSideY >= 0 ? boxW : -boxW;
-    const boxH = cabinH * 1.12;
+    const boxH = isFreightConvoy ? cabinH * 1.24 : cabinH * 1.12;
 
     poly(
       [
@@ -8968,7 +9825,7 @@ function drawCar64(
         pt(boxFront, nearBoxW, boxH),
         pt(boxBack, nearBoxW, boxH),
       ],
-      cargoColor,
+      activeCargoColor,
       'rgba(15, 23, 42, 0.38)'
     );
     poly(
@@ -8988,7 +9845,7 @@ function drawCar64(
         pt(boxEnd, boxW, boxH),
         pt(boxEnd, -boxW, boxH),
       ],
-      cargoColor,
+      activeCargoColor,
       'rgba(15, 23, 42, 0.35)'
     );
     poly(
@@ -8998,9 +9855,21 @@ function drawCar64(
         pt(boxFront, boxW, boxH),
         pt(boxBack, boxW, boxH),
       ],
-      cargoColor,
+      activeCargoColor,
       'rgba(255,255,255,0.6)'
     );
+    if (isFreightConvoy) {
+      // Intermodal container hazard stripe on roof
+      poly(
+        [
+          pt(boxBack * 0.45, -boxW * 0.85, boxH + 0.15 * s),
+          pt(boxFront * 0.85, -boxW * 0.85, boxH + 0.15 * s),
+          pt(boxFront * 0.85, boxW * 0.85, boxH + 0.15 * s),
+          pt(boxBack * 0.45, boxW * 0.85, boxH + 0.15 * s),
+        ],
+        '#fde047'
+      );
+    }
 
     const cabBack = halfL * 0.38;
     const cabFront = halfL * 0.96;
@@ -11042,7 +11911,9 @@ export function renderCityCanvas(
             idx,
             lighting.glowStrength,
             car.kind,
-            opts.timeSeconds
+            opts.timeSeconds,
+            car.role,
+            car.cargoColor
           );
         }
       }
@@ -11139,6 +12010,49 @@ export function renderCityCanvas(
             );
           }
         }
+      }
+
+      // Stadium Match Day: Floodlight Beams, Camera Flashes & Scoreboard Banner
+      if (
+        (state.stadiumMatchRemainingMonths ?? 0) > 0 &&
+        (tile.type === 'stadium' || tile.establishmentId === 'soccer_stadium') &&
+        (tile.lotRole === 'anchor' || (tile.lotWidth ?? 1) <= 1)
+      ) {
+        const pulse = 0.65 + 0.35 * Math.sin(opts.timeSeconds * 5.2);
+        ctx.save();
+        const beamGrad = ctx.createRadialGradient(
+          sx,
+          sy - 28 * zoom,
+          6 * zoom,
+          sx,
+          sy - 28 * zoom,
+          75 * zoom
+        );
+        beamGrad.addColorStop(0, `rgba(254, 240, 138, ${0.42 * pulse})`);
+        beamGrad.addColorStop(0.55, `rgba(56, 189, 248, ${0.22 * pulse})`);
+        beamGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
+        ctx.fillStyle = beamGrad;
+        ctx.beginPath();
+        ctx.arc(sx, sy - 28 * zoom, 75 * zoom, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (zoom >= 0.65) {
+          const bw = 66 * zoom;
+          const bh = 13 * zoom;
+          const bx = sx - bw / 2;
+          const by = sy - 74 * zoom;
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+          ctx.fillRect(bx, by, bw, bh);
+          ctx.strokeStyle = '#fde047';
+          ctx.lineWidth = Math.max(1, zoom);
+          ctx.strokeRect(bx, by, bw, bh);
+          ctx.fillStyle = '#fde047';
+          ctx.font = `bold ${Math.max(7, Math.round(7.5 * zoom))}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.fillText('⚽ DIA DE JOGO', sx, by + bh * 0.76);
+          ctx.textAlign = 'start';
+        }
+        ctx.restore();
       }
 
       if (tile.type === 'port') {
@@ -11514,20 +12428,106 @@ export function renderCityCanvas(
  */
 export function renderLandmarkArtworkCanvas(
   ctx: CanvasRenderingContext2D,
-  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports' | 'stadium',
+  kind:
+    | 'port'
+    | 'airport'
+    | 'bridge'
+    | 'bus'
+    | 'metro'
+    | 'shopping'
+    | 'sports'
+    | 'stadium'
+    | 'clean_energy'
+    | 'hospital'
+    | 'university'
+    | 'amusement'
+    | 'rail',
   level: number,
   unlocked: boolean,
   timeSec: number = 0
 ): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const maxLv = kind === 'bridge' ? 4 : kind === 'sports' ? 2 : 3;
+  const maxLv =
+    kind === 'bridge'
+      ? 4
+      : kind === 'sports' ||
+          kind === 'clean_energy' ||
+          kind === 'hospital' ||
+          kind === 'university' ||
+          kind === 'amusement' ||
+          kind === 'rail'
+        ? 2
+        : 3;
   const lv = Math.max(1, Math.min(maxLv, level || 1));
   const blink = Math.floor(timeSec * 3) % 2 === 0;
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, w, h);
+
+  if (
+    kind === 'clean_energy' ||
+    kind === 'hospital' ||
+    kind === 'university' ||
+    kind === 'amusement' ||
+    kind === 'rail'
+  ) {
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+    bgGrad.addColorStop(0, '#0f172a');
+    bgGrad.addColorStop(1, '#1e293b');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    const animF = Math.floor(timeSec * 3) % 2;
+    const heroSprite =
+      kind === 'clean_energy'
+        ? getCleanEnergySprite(lv, 0, animF, lv >= 2 ? 3 : 2, lv >= 2 ? 3 : 2, lv >= 2 ? 2 : 1, lv >= 2 ? 2 : 1, 0)
+        : kind === 'rail'
+          ? getRailTerminalSprite(lv, 0, animF, 3, lv >= 2 ? 3 : 2, 2, lv >= 2 ? 2 : 1, 0)
+          : kind === 'hospital'
+            ? getEstablishmentSprite('general_hospital', 0, animF, 3, 3, 2, 2, 0)
+            : kind === 'university'
+              ? getEstablishmentSprite('tech_university', 0, animF, lv >= 2 ? 4 : 3, lv >= 2 ? 4 : 3, lv >= 2 ? 3 : 2, lv >= 2 ? 3 : 2, 0)
+              : getEstablishmentSprite('amusement_park', 0, animF, lv >= 2 ? 4 : 3, lv >= 2 ? 4 : 3, lv >= 2 ? 3 : 2, lv >= 2 ? 3 : 2, 0);
+
+    const fitScale = Math.min((w - 20) / heroSprite.canvas.width, (h - 10) / heroSprite.canvas.height) * 0.98;
+    const dw = Math.round(heroSprite.canvas.width * fitScale);
+    const dh = Math.round(heroSprite.canvas.height * fitScale);
+    const dx = Math.round((w - dw) * 0.52);
+    const dy = Math.round((h - dh) * 0.45);
+    ctx.drawImage(heroSprite.canvas, dx, dy, dw, dh);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.fillRect(6, h - 22, 134, 16);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(6.5, h - 21.5, 133, 15);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 7.5px monospace';
+    const label =
+      kind === 'clean_energy'
+        ? lv >= 2
+          ? '3×3 PARQUE EÓLICO & SOLAR'
+          : '2×2 USINA SOLAR'
+        : kind === 'hospital'
+          ? lv >= 2
+            ? '3×3 CENTRO MÉDICO REG.'
+            : '3×3 HOSPITAL CENTRAL'
+          : kind === 'university'
+            ? lv >= 2
+              ? '4×4 PARQUE TECNOLÓGICO'
+              : '3×3 CAMPUS UNIVERSITÁRIO'
+            : kind === 'amusement'
+              ? lv >= 2
+                ? '4×4 MUNDO TEMÁTICO'
+                : '3×3 RODA-GIGANTE'
+              : lv >= 2
+                ? '3×3 MONOTRILHO & HUB'
+                : '3×2 FERROVIA DE CARGA';
+    ctx.fillText(label, 10, h - 11);
+    return;
+  }
 
   if (kind === 'sports') {
     const lawnGrad = ctx.createLinearGradient(0, 0, 0, h);

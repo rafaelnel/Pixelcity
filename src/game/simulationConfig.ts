@@ -9,6 +9,7 @@ import type {
   EmergencyActionId,
   EstablishmentId,
   ExpandDirection,
+  MandateMissionId,
   TaxRates,
   TileType,
   TollTariffLevel,
@@ -154,6 +155,36 @@ export const STADIUM_POPULATION_INTERVAL = 100000;
 export const SPORTS_CENTER_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
   1: { w: 2, h: 2 },
   2: { w: 4, h: 4 },
+};
+
+/** Usina de Energia Limpa: Tier 1 = Usina Solar 2×2, Tier 2 = Parque Eólico & Solar 3×3 */
+export const CLEAN_ENERGY_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 2, h: 2 },
+  2: { w: 3, h: 3 },
+};
+
+/** Hospital Central & Centro Médico Regional: 3×3 compound with rooftop medical helipad */
+export const HOSPITAL_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 3, h: 3 },
+  2: { w: 3, h: 3 },
+};
+
+/** Campus Universitário (3×3) & Parque Tecnológico (4×4) */
+export const UNIVERSITY_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 3, h: 3 },
+  2: { w: 4, h: 4 },
+};
+
+/** Parque de Diversões com Roda-Gigante Iluminada (3×3) & Mundo Temático (4×4) */
+export const AMUSEMENT_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 3, h: 3 },
+  2: { w: 4, h: 4 },
+};
+
+/** Ferrovia de Carga (3×2) & Monotrilho Elevado Intermodal (3×3) */
+export const RAIL_TERMINAL_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 3, h: 2 },
+  2: { w: 3, h: 3 },
 };
 
 export const TOLL_TARIFF_ORDER: TollTariffLevel[] = ['low', 'medium', 'high'];
@@ -580,6 +611,34 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
     ],
   },
   {
+    id: 'clean_energy_project',
+    accentColor: '#4ade80',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Solar 2×2 · 3.200 hab.',
+        title: 'Usina de Energia Limpa Solar 2×2',
+        summary: 'Constrói a Usina Solar Fotovoltaica 2×2 com painéis espelhados e banco de baterias, reduzindo emissões e custos municipais.',
+        effectHint: 'Constrói Usina Solar 2×2 · -12% poluição média e -8% custos fixos da Prefeitura (2 meses)',
+        baseCost: 9800,
+        revScalePct: 0.26,
+        durationMonths: 2,
+        minPopulation: 3200,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Eólico & Solar 3×3 · 11k hab.',
+        title: 'Parque Eólico & Solar Integrado 3×3',
+        summary: 'Expande a geração limpa com turbinas eólicas animadas em conjunto com matriz solar 3×3 de alta eficiência.',
+        effectHint: 'Constrói Parque Eólico & Solar 3×3 · -20% poluição e -14% custos fixos municipais (3 meses)',
+        baseCost: 22500,
+        revScalePct: 0.34,
+        durationMonths: 3,
+        minPopulation: 11000,
+      },
+    ],
+  },
+  {
     id: 'bus_transit_project',
     accentColor: '#38bdf8',
     tiers: [
@@ -615,6 +674,34 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         revScalePct: 0.40,
         durationMonths: 6,
         minPopulation: 16000,
+      },
+    ],
+  },
+  {
+    id: 'hospital_project',
+    accentColor: '#38bdf8',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Hospital 3×3 · 4.800 hab.',
+        title: 'Hospital Central 3×3 (Com Heliponto)',
+        summary: 'Constrói o Hospital Central 3×3 com pronto-socorro, torre clínica espelhada e heliponto médico ("H") no topo.',
+        effectHint: 'Constrói Hospital Central 3×3 · +5% felicidade, heliponto ativo e valorização nos bairros (3 meses)',
+        baseCost: 16500,
+        revScalePct: 0.31,
+        durationMonths: 3,
+        minPopulation: 4800,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Centro Médico 3×3 · 15k hab.',
+        title: 'Centro Médico Regional & Pesquisa 3×3',
+        summary: 'Inaugura o segundo complexo hospitalar 3×3 de alta complexidade com heliponto aeromédico e instituto biomédico.',
+        effectHint: 'Constrói Centro Médico Regional 3×3 · +8% felicidade, +saúde e proteção sanitária (4 meses)',
+        baseCost: 36000,
+        revScalePct: 0.38,
+        durationMonths: 4,
+        minPopulation: 15000,
       },
     ],
   },
@@ -669,6 +756,34 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
     ],
   },
   {
+    id: 'tech_university_project',
+    accentColor: '#60a5fa',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Campus 3×3 · 6.500 hab.',
+        title: 'Campus Universitário 3×3',
+        summary: 'Constrói o Campus Universitário 3×3 com alas acadêmicas espelhadas, domo científico e praça central arborizada.',
+        effectHint: 'Constrói Campus Universitário 3×3 · +8% eficiência fiscal comercial/industrial e +educação (3 meses)',
+        baseCost: 21000,
+        revScalePct: 0.33,
+        durationMonths: 3,
+        minPopulation: 6500,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Parque Tec. 4×4 · 18k hab.',
+        title: 'Parque Tecnológico & Inovação 4×4',
+        summary: 'Inaugura o Parque Tecnológico 4×4 com laboratórios de P&D, observatório geodésico e heliponto executivo.',
+        effectHint: 'Constrói Parque Tecnológico 4×4 · +15% receita de alta tecnologia e heliponto executivo (4 meses)',
+        baseCost: 48000,
+        revScalePct: 0.42,
+        durationMonths: 4,
+        minPopulation: 18000,
+      },
+    ],
+  },
+  {
     id: 'shopping_evolution',
     accentColor: '#f472b6',
     tiers: [
@@ -710,6 +825,62 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
         revScalePct: 0.52,
         durationMonths: 5,
         minPopulation: 26000,
+      },
+    ],
+  },
+  {
+    id: 'amusement_park_project',
+    accentColor: '#f472b6',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Roda-Gigante 3×3 · 8.500 hab.',
+        title: 'Parque de Diversões & Roda-Gigante Iluminada 3×3',
+        summary: 'Inaugura o Parque de Diversões 3×3 com Roda-Gigante iluminada em neon girando em tempo real, carrossel e montanha-russa.',
+        effectHint: 'Constrói Parque de Diversões 3×3 · +6% felicidade, forte salto em turismo e lazer (3 meses)',
+        baseCost: 28500,
+        revScalePct: 0.36,
+        durationMonths: 3,
+        minPopulation: 8500,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Mundo Temático 4×4 · 22k hab.',
+        title: 'Mundo Temático & Roda-Gigante Gigante 4×4',
+        summary: 'Expande o entretenimento com o Mundo Temático 4×4, Roda-Gigante monumental e atrações internacionais.',
+        effectHint: 'Constrói Mundo Temático 4×4 · +9% felicidade e explosão de visitantes e turismo (4 meses)',
+        baseCost: 64000,
+        revScalePct: 0.46,
+        durationMonths: 4,
+        minPopulation: 22000,
+      },
+    ],
+  },
+  {
+    id: 'rail_freight_project',
+    accentColor: '#f97316',
+    tiers: [
+      {
+        tier: 1,
+        tierLabel: 'Ferrovia 3×2 · 9.500 hab.',
+        title: 'Ferrovia de Carga & Pátio Intermodal 3×2',
+        summary: 'Constrói o Pátio Ferroviário Intermodal 3×2 com locomotiva de carga e ativa Comboios de Carga entre a Indústria e o Porto.',
+        effectHint: 'Constrói Ferrovia de Carga 3×2 · +35% receita comercial/portuária e comboios de carga no mapa (3 meses)',
+        baseCost: 31000,
+        revScalePct: 0.38,
+        durationMonths: 3,
+        minPopulation: 9500,
+      },
+      {
+        tier: 2,
+        tierLabel: 'Monotrilho 3×3 · 19k hab.',
+        title: 'Monotrilho Elevado & Hub Logístico 3×3',
+        summary: 'Amplia para 3×3 integrando ferrovia de carga e viaduto de Monotrilho Elevado de alta capacidade.',
+        effectHint: 'Evolui para Monotrilho & Hub 3×3 · +65% receita logística e bônus de mobilidade urbana (4 meses)',
+        baseCost: 59000,
+        revScalePct: 0.46,
+        durationMonths: 4,
+        minPopulation: 19000,
       },
     ],
   },
@@ -944,6 +1115,8 @@ export const POPULATION_BY_BUILDING = {
   airport: 45,
   stadium: 60,
   shopping: 50,
+  clean_energy: 20,
+  rail_terminal: 38,
 };
 
 /** Monthly taxable base per building tile (at 10% tax rate — reduced to prevent runaway millions) */
@@ -966,10 +1139,12 @@ export const POLLUTION_EMISSION = {
   airport: 10,
   port: 8,
   shopping: 4,
+  railTerminal: 5,
   parkReduction: -24,
   forestReduction: -10,
   busStationReduction: -8,
   metroStationReduction: -18,
+  cleanEnergyReduction: -26,
 };
 
 /** Organic growth & breakthrough tuning parameters (calibrated for slower, long-term urban maturation) */
@@ -1803,4 +1978,82 @@ export const ESTABLISHMENT_MAP: Record<EstablishmentId, EstablishmentSpec> =
     EstablishmentId,
     EstablishmentSpec
   >;
+
+export interface MandateMissionSpec {
+  id: MandateMissionId;
+  title: string;
+  categoryLabel: string;
+  description: string;
+  rewardCash: number;
+  accentColor: string;
+}
+
+export const MANDATE_MISSIONS_CATALOG: MandateMissionSpec[] = [
+  {
+    id: 'mission_local_market',
+    title: 'Abastecimento & Esporte de Bairro',
+    categoryLabel: '1ª Meta · Comércio & Esporte',
+    description: 'Garanta ao menos 1 Mercado 2×2 ativo e inaugure o 1º Centro de Esporte (2×2).',
+    rewardCash: 6500,
+    accentColor: '#fb923c',
+  },
+  {
+    id: 'mission_clean_energy',
+    title: 'Transição para Energia Limpa',
+    categoryLabel: '2ª Meta · Sustentabilidade',
+    description: 'Construa a Usina Solar 2×2 (ou Parque Eólico 3×3) e mantenha a poluição média em até 22%.',
+    rewardCash: 9500,
+    accentColor: '#4ade80',
+  },
+  {
+    id: 'mission_hospital_care',
+    title: 'Escudo de Saúde Regional 3×3',
+    categoryLabel: '3ª Meta · Alta Complexidade',
+    description: 'Inaugure o Hospital Central 3×3 com heliponto médico e cobertura de Saúde/Bem-Estar ≥ 95%.',
+    rewardCash: 12500,
+    accentColor: '#38bdf8',
+  },
+  {
+    id: 'mission_tech_campus',
+    title: 'Polo Universitário & Tecnológico',
+    categoryLabel: '4ª Meta · Inovação & P&D',
+    description: 'Construa o Campus Universitário 3×3 (ou Parque Tecnológico 4×4) com Educação ≥ 95%.',
+    rewardCash: 15500,
+    accentColor: '#60a5fa',
+  },
+  {
+    id: 'mission_amusement_wheel',
+    title: 'Capital do Turismo & Roda-Gigante',
+    categoryLabel: '5ª Meta · Lazer & Turismo',
+    description: 'Inaugure o Parque de Diversões com Roda-Gigante Iluminada e alcance 78% de felicidade.',
+    rewardCash: 18500,
+    accentColor: '#f472b6',
+  },
+  {
+    id: 'mission_freight_corridor',
+    title: 'Corredor Logístico Porto-Ferrovia',
+    categoryLabel: '6ª Meta · Comboios de Carga',
+    description: 'Opere simultaneamente o Porto Fluvial e a Ferrovia de Carga 3×2 integrando a indústria.',
+    rewardCash: 22000,
+    accentColor: '#f97316',
+  },
+  {
+    id: 'mission_skyline_helipads',
+    title: 'Rota Aérea de Helipontos',
+    categoryLabel: '7ª Meta · Mobilidade Aérea VIP',
+    description: 'Tenha ao menos 3 helipontos ativos na cidade (Hospital 3×3, Parque Tec. 4×4, Shopping 9×9 ou Arranha-céus).',
+    rewardCash: 26000,
+    accentColor: '#38bdf8',
+  },
+  {
+    id: 'mission_stadium_match_night',
+    title: 'Noite de Jogo & Fogos no Estádio',
+    categoryLabel: '8ª Meta · Grande Espetáculo',
+    description: 'Construa o Grande Estádio Monumental e realize um Dia de Jogo com fogos e refletores.',
+    rewardCash: 35000,
+    accentColor: '#ffe066',
+  },
+];
+
+
 
