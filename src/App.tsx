@@ -19,7 +19,7 @@ import {
 import { BudgetModal } from './components/BudgetModal';
 import { EmergenciesModal } from './components/EmergenciesModal';
 import { FinancesModal } from './components/FinancesModal';
-import { NavMenu } from './components/NavMenu';
+import { NavMenu, type NavBadgeSpec } from './components/NavMenu';
 import { NewsTicker } from './components/NewsTicker';
 import { PauseModal } from './components/PauseModal';
 import { ReportModal } from './components/ReportModal';
@@ -542,6 +542,11 @@ export default function App() {
   const handleToggleModalTab = useCallback((tab: ModalTab) => {
     setEmergencyFeedback(null);
     setSavesModalOpen(false);
+    setReturnMenuOpen(false);
+    if (screenStateRef.current === 'paused') {
+      document.body.dataset.state = 'playing';
+      setScreenState('playing');
+    }
     setActiveModal((prev) => (prev === tab ? null : tab));
     soundEngine.playSelect();
   }, []);
@@ -816,6 +821,12 @@ export default function App() {
 
   const handleNavigateNeed = useCallback((tab: ModalTab) => {
     setEmergencyFeedback(null);
+    setSavesModalOpen(false);
+    setReturnMenuOpen(false);
+    if (screenStateRef.current === 'paused') {
+      document.body.dataset.state = 'playing';
+      setScreenState('playing');
+    }
     setActiveModal(tab);
     soundEngine.playSelect();
   }, []);
@@ -936,6 +947,33 @@ export default function App() {
         return;
       }
 
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === 'b' || e.key === 'B' || e.code === 'F1') {
+          e.preventDefault();
+          keysHeldRef.current.clear();
+          handleToggleModalTab('budget');
+          return;
+        }
+        if (e.key === 'f' || e.key === 'F' || e.code === 'F2') {
+          e.preventDefault();
+          keysHeldRef.current.clear();
+          handleToggleModalTab('finances');
+          return;
+        }
+        if (e.key === 'o' || e.key === 'O' || e.code === 'F3') {
+          e.preventDefault();
+          keysHeldRef.current.clear();
+          handleToggleModalTab('emergencies');
+          return;
+        }
+        if (e.key === 'r' || e.key === 'R' || e.code === 'F4') {
+          e.preventDefault();
+          keysHeldRef.current.clear();
+          handleToggleModalTab('report');
+          return;
+        }
+      }
+
       if (screenStateRef.current !== 'playing') return;
 
       // Only pan map with WASD when no modal is covering the map
@@ -1014,6 +1052,7 @@ export default function App() {
     handleRotateCamera,
     handleSetSpeed,
     handleStartGame,
+    handleToggleModalTab,
     handleToggleMute,
     handleZoomStep,
   ]);
@@ -1483,6 +1522,58 @@ export default function App() {
 
   const zoomPercent = Math.round(zoomUi * 100);
   const criticalNeedsCount = hud.needs.filter((n) => n.severity === 'critical').length;
+
+  const financesBadge: NavBadgeSpec | null =
+    hud.financials.netBalance < 0
+      ? {
+          text: '!',
+          ariaLabel: 'Déficit mensal projetado',
+          tone: 'critical',
+        }
+      : hud.activeEconomicEvent
+        ? {
+            text: '1',
+            ariaLabel: hud.activeEconomicEvent.title,
+            tone:
+              hud.activeEconomicEvent.id === 'economic_boom'
+                ? 'ready'
+                : 'warning',
+          }
+        : null;
+
+  const pendingWorksCount = hud.pendingWorks?.length ?? 0;
+  const readyMilestoneWorksCount = hud.emergencyOffers.filter(
+    (o) =>
+      o.id !== 'incident_response' &&
+      o.unlocked &&
+      !o.inProgress &&
+      o.tier === 1 &&
+      hud.money >= o.cost
+  ).length;
+
+  const worksBadge: NavBadgeSpec | null = hud.activeUrbanIncident
+    ? {
+        text: '!',
+        ariaLabel: 'Imprevisto urbano ativo',
+        tone: 'critical',
+      }
+    : pendingWorksCount > 0
+      ? {
+          text: String(pendingWorksCount),
+          ariaLabel: `${pendingWorksCount} ${pendingWorksCount === 1 ? 'obra em andamento' : 'obras em andamento'}`,
+          tone: 'active',
+        }
+      : hud.recentMilestoneBanner || readyMilestoneWorksCount > 0
+        ? {
+            text:
+              readyMilestoneWorksCount > 0
+                ? String(readyMilestoneWorksCount)
+                : '★',
+            ariaLabel: 'Nova obra ou marco disponível para construção',
+            tone: 'ready',
+          }
+        : null;
+
   const initialOverlay = getAtmosphericGradientOverlay(
     timeOfDay,
     worldTimeSecRef.current,
@@ -1780,9 +1871,10 @@ export default function App() {
               );
               if (
                 !stTile ||
-                stTile.type === 'grass' ||
-                stTile.type === 'forest' ||
-                stTile.type === 'water'
+                (!stTile.construction &&
+                  (stTile.type === 'grass' ||
+                    stTile.type === 'forest' ||
+                    stTile.type === 'water'))
               ) {
                 return null;
               }
@@ -1828,7 +1920,9 @@ export default function App() {
                 stTile.evolveFlash,
                 stTile.type
               );
-              const constructionBadge = getConstructionStageLabel(activeConstructionStage);
+              const constructionBadge = stTile.construction
+                ? `Obra em andamento (${Math.max(1, stTile.construction.totalMonths - stTile.construction.remainingMonths)}/${stTile.construction.totalMonths} meses)`
+                : getConstructionStageLabel(activeConstructionStage);
 
               return (
                 <div className="flex flex-col gap-2">
@@ -1858,7 +1952,7 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      {!onTollTile && !onBorderPortal ? (
+                      {!onTollTile && !onBorderPortal && !stTile.construction ? (
                         <button
                           type="button"
                           data-testid="confirm-demolish-selected"
@@ -1940,19 +2034,20 @@ export default function App() {
                         selectedTileCoords.ty
                       );
                       const r12Pct = Math.round(mat.region12FillRatio * 100);
+                      const minR12Pct = Math.round(URBAN_MATURITY_CONFIG.region12MinFillRatio * 100);
                       const lv = stTile.level || 1;
                       let evoHint = '';
                       if (lv === 1) {
                         evoHint = mat.region12AllLevel1
-                          ? 'Região 12×12 completa (100%) · Pronto p/ evoluir p/ Nv. 2'
-                          : `Região 12×12 no Nv. 1: ${r12Pct}% (faltam ${mat.region12EmptyLots} lotes p/ evoluir)`;
+                          ? `Região 12×12 consolidada (${r12Pct}% · mín. ${minR12Pct}%) · Pronto p/ evoluir p/ Nv. 2`
+                          : `Região 12×12 no Nv. 1: ${r12Pct}% (mín. ${minR12Pct}% p/ evoluir · ${mat.region12EmptyLots} lotes vazios)`;
                       } else if (lv === 2) {
                         evoHint =
                           hud.totalPopulation < URBAN_MATURITY_CONFIG.largeBuildingMinPopulation
                             ? `Prédios Grandes (Nv. 3) liberam aos ${URBAN_MATURITY_CONFIG.largeBuildingMinPopulation.toLocaleString('pt-BR')} hab.`
                             : mat.region12AllLevel1
-                              ? 'Região 12×12 consolidada · Elegível p/ Prédio Grande (Nv. 3)'
-                              : `Região 12×12: ${r12Pct}% (preencha ${mat.region12EmptyLots} lotes)`;
+                              ? `Região 12×12 consolidada (${r12Pct}%) · Elegível p/ Prédio Grande (Nv. 3)`
+                              : `Região 12×12: ${r12Pct}% (alcance ${minR12Pct}% ocupação)`;
                       } else if (lv === 3 && (stTile.type === 'residential' || stTile.type === 'commercial')) {
                         evoHint =
                           hud.totalPopulation < URBAN_MATURITY_CONFIG.skyscraperMinPopulation
@@ -2191,6 +2286,8 @@ export default function App() {
         <NavMenu
           activeModal={activeModal}
           criticalNeedsCount={criticalNeedsCount}
+          financesBadge={financesBadge}
+          worksBadge={worksBadge}
           onToggleTab={handleToggleModalTab}
         />
       ) : null}

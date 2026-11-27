@@ -136,6 +136,8 @@ export const FIXED_COSTS_CONFIG = {
   perRoad: 5,
   perBridge: 34,
   perBuilding: 7,
+  /** Maintenance discount factor applied to extra footprint tiles (lotRole === 'part') beyond the anchor tile */
+  largeFootprintMaintenanceFactor: 0.25,
   perLandmark: 160,
   perTollPlaza: 200,
   perBusStation: 42,
@@ -185,13 +187,14 @@ export const TOLL_TARIFF_CONFIGS: Record<TollTariffLevel, TollTariffSpec> = {
 
 /**
  * Hybrid Urban Maturation & Milestone Rules:
- * - Lv. 1 -> Lv. 2: Requires a 12×12 surrounding neighborhood region to be fully built (>= Lv. 1),
- *   then buildings evolve gradually one-by-one.
+ * - Lv. 1 -> Lv. 2: Requires a 12×12 surrounding neighborhood region to reach >= 85% occupancy (>= Lv. 1),
+ *   then buildings evolve gradually (scaled by population/map size).
  * - Lv. 2 -> Lv. 3 (Prédios Grandes): Unlocks organically at 10,000 inhabitants inside consolidated 12×12 neighborhoods.
  * - Lv. 3 -> Lv. 4 (Arranha-Céus 2×2 / Mega Condomínios): Unlocks at 30,000 inhabitants alongside a 2×2 Wide Avenue.
  */
 export const URBAN_MATURITY_CONFIG = {
   regionSize: 12,
+  region12MinFillRatio: 0.85,
   largeBuildingMinPopulation: 10000,
   skyscraperMinPopulation: 30000,
 };
@@ -331,58 +334,140 @@ export const BUDGET_AREA_ORDER: BudgetAreaKey[] = [
 export interface BudgetAreaMeta {
   key: BudgetAreaKey;
   label: string;
+  roleTag: string;
   shortDesc: string;
+  under100Summary: string;
+  at100Summary: string;
+  over100Summary: string;
   breakthroughHint: string;
   color: string;
   defaultMonthly: number;
+}
+
+/**
+ * Diminishing-returns segment performance curve across 0%..200% of calculated need:
+ * - <100%: progressive shortfall (e.g. 75% -> 0.72, 50% -> 0.42)
+ * - 100%: 1.00 equilibrium
+ * - 150%..200%: real bounded bonus (+16% at 150%, capped at +28% at 200%) + accelerated Salto Evolutivo
+ */
+export function getSegmentEffectCurve(coveragePct: number): {
+  coveragePct: number;
+  effectiveFactor: number;
+  overBonusPct: number;
+  band: 'deficit' | 'balanced' | 'over150' | 'over200';
+} {
+  const clamped = Math.max(0, Math.min(200, coveragePct));
+  if (clamped < 100) {
+    const ratio = clamped / 100;
+    const effectiveFactor = Number(Math.pow(ratio, 1.15).toFixed(4));
+    return {
+      coveragePct: clamped,
+      effectiveFactor,
+      overBonusPct: Math.round((effectiveFactor - 1) * 100),
+      band: 'deficit',
+    };
+  }
+  if (clamped === 100) {
+    return {
+      coveragePct: 100,
+      effectiveFactor: 1.0,
+      overBonusPct: 0,
+      band: 'balanced',
+    };
+  }
+  const excess = (clamped - 100) / 100; // 0..1
+  const bonus = Math.pow(excess, 0.82) * 0.28; // +15.8% at 150%, +28% cap at 200%
+  const effectiveFactor = Number((1.0 + bonus).toFixed(4));
+  return {
+    coveragePct: clamped,
+    effectiveFactor,
+    overBonusPct: Math.round(bonus * 100),
+    band: clamped >= 175 ? 'over200' : 'over150',
+  };
 }
 
 export const BUDGET_AREA_META: Record<BudgetAreaKey, BudgetAreaMeta> = {
   infrastructure: {
     key: 'infrastructure',
     label: 'Infraestrutura',
-    shortDesc: 'Planeja ruas, avenidas, estradas, trevos e pontes, sustentando prédios Nv. 3, Porto e Aeroporto',
-    breakthroughHint: 'Próximo Salto: novas avenidas, estradas, trevos, pontes e torres Nv. 3 (150%/200% acelera)',
+    roleTag: 'Expansão & Densidade',
+    shortDesc:
+      'Expande malha viária, pontes e verticalização (Nv.3/4). Sem Saúde & Meio Ambiente, mais vias e densidade elevam poluição e tráfego local.',
+    under100Summary: 'Freia abertura de ruas/pontes e trava verticalização Nv.3/4.',
+    at100Summary: 'Equilíbrio padrão da malha viária e evolução urbana.',
+    over100Summary: 'Até +28% ritmo de obras viárias/verticalização (c/ teto) + Salto rápido.',
+    breakthroughHint:
+      'Próximo Salto: novas avenidas, estradas, trevos, pontes e modernização vertical (150%/200% acelera)',
     color: '#56c2ff',
     defaultMonthly: 360,
   },
   education: {
     key: 'education',
     label: 'Educação',
-    shortDesc: 'Atrai alta renda, acelera evolução e moderniza indústrias',
-    breakthroughHint: 'Próximo Salto: Polo Universitário, inovação e torres modernas (150%/200% acelera)',
+    roleTag: 'Tecnologia & Renda',
+    shortDesc:
+      'Impulsiona evolução para perfis limpos/modernos e amplia a base tributária, mas torna cidadãos mais exigentes com impostos e qualidade de serviços.',
+    under100Summary: 'Reduz modernização limpa e reduz o retorno tributário.',
+    at100Summary: 'Evolução e arrecadação tecnológica equilibradas.',
+    over100Summary: 'Até +18% base tributária/limpeza (teto econômico), porém exige impostos menores.',
+    breakthroughHint:
+      'Próximo Salto: Polo Universitário, inovação limpa e torres modernas (150%/200% acelera)',
     color: '#818cf8',
     defaultMonthly: 300,
   },
   security: {
     key: 'security',
     label: 'Segurança',
-    shortDesc: 'Previne criminalidade/abandono e recupera imóveis vazios',
-    breakthroughHint: 'Próximo Salto: Cidade Modelo Segura e recuperação total (150%/200% acelera)',
+    roleTag: 'Estabilidade & Ordem',
+    shortDesc:
+      'Previne abandono, degradação e incidentes e recupera imóveis vazios. Sem Cultura & Lazer ou Educação, seu ganho de felicidade é contido.',
+    under100Summary: 'Aumenta risco de abandono, degradação e lenta recuperação.',
+    at100Summary: 'Ordem urbana estável e proteção padrão contra decadência.',
+    over100Summary: 'Escudo anti-abandono reforçado e recuperação acelerada (felicidade limitada sem vitalidade).',
+    breakthroughHint:
+      'Próximo Salto: Cidade Modelo Segura e recuperação total de imóveis (150%/200% acelera)',
     color: '#c28bff',
     defaultMonthly: 290,
   },
   wellbeing: {
     key: 'wellbeing',
-    label: 'Bem-estar',
-    shortDesc: 'Saúde, parques orgânicos, ar limpo e base da felicidade',
-    breakthroughHint: 'Próximo Salto: Revolução Ecológica com parques e ar puro (150%/200% acelera)',
+    label: 'Saúde & Meio Ambiente',
+    roleTag: 'Ar Limpo & Saúde',
+    shortDesc:
+      'Combate diretamente a poluição, sustenta saúde e felicidade e favorece áreas verdes e recuperação ambiental.',
+    under100Summary: 'Poluição acumula rápido, queda de felicidade e menos áreas verdes.',
+    at100Summary: 'Controle ambiental e saúde urbana em equilíbrio.',
+    over100Summary: 'Até +28% absorção de poluição, mais parques orgânicos e bônus de saúde (+6 pts máx.).',
+    breakthroughHint:
+      'Próximo Salto: Revolução Ecológica com parques, arborização e ar puro (150%/200% acelera)',
     color: '#66d98c',
     defaultMonthly: 280,
   },
   entertainment: {
     key: 'entertainment',
-    label: 'Lazer',
-    shortDesc: 'Esporte, cultura e entretenimento — aquece comércio, parques e o astral da cidade',
-    breakthroughHint: 'Próximo Salto: Salto Cultural & Lazer — cria praças e impulsiona o comércio (150%/200% acelera)',
+    label: 'Cultura & Lazer',
+    roleTag: 'Vitalidade & Retenção',
+    shortDesc:
+      'Impulsiona atração e crescimento populacional, vitalidade comercial/noturna e retenção de moradores nos bairros.',
+    under100Summary: 'Desacelera chegada de moradores e esfria o comércio noturno.',
+    at100Summary: 'Atratividade urbana e ritmo comercial padrão.',
+    over100Summary: 'Até +28% atração residencial/comercial, bônus de migração mensal e retenção.',
+    breakthroughHint:
+      'Próximo Salto: Salto de Cultura & Lazer — cria praças e aquece o comércio (150%/200% acelera)',
     color: '#ff8ec7',
     defaultMonthly: 260,
   },
   tourism: {
     key: 'tourism',
-    label: 'Turismo',
-    shortDesc: 'Gera receita mensal extra com parques, porto, estádio e aeroporto',
-    breakthroughHint: 'Próximo Salto: Boom Turístico Global, parques e caixa extra (150%/200% acelera)',
+    label: 'Turismo & Comércio',
+    roleTag: 'Receita Externa',
+    shortDesc:
+      'Gera receita externa e atividade comercial. Se Segurança estiver baixa, sofre penalidade e o fluxo intenso adiciona tráfego e custo.',
+    under100Summary: 'Retorno turístico reduzido e menor dinamismo comercial.',
+    at100Summary: 'Fluxo turístico e receita comercial em equilíbrio.',
+    over100Summary: 'Até +28% retorno turístico/comercial (penalizado se Segurança < 85%) + leve pressão viária.',
+    breakthroughHint:
+      'Próximo Salto: Boom de Turismo & Comércio, visitantes e receita extra (150%/200% acelera)',
     color: '#f5b73b',
     defaultMonthly: 180,
   },
@@ -692,7 +777,7 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       },
       {
         tier: 2,
-        tierLabel: 'Lazer · 25k hab.',
+        tierLabel: 'Cultura & Lazer · 25k',
         title: 'Grande Parque de Diversões',
         summary: 'Complexo de entretenimento 3×3 de grande porte atraindo visitantes regionais pela rodovia externa.',
         effectHint: 'Constrói Parque de Diversões 3×3 · Grande salto em turismo e felicidade',
@@ -926,6 +1011,9 @@ export const MONTHLY_TAX_BASE_AT_10PCT = {
   industrial: [0, 495, 630, 920],
 };
 
+/** Monthly commercial tax base (at 10% commercial tax) added per Shopping Mall level (Lv. 1–3) */
+export const SHOPPING_COMMERCIAL_REVENUE_PER_LEVEL = 1150;
+
 /** Direct pollution source strength emitted by each tile type */
 export const POLLUTION_EMISSION = {
   rural: -4,
@@ -970,6 +1058,23 @@ export const GROWTH_CONFIG = {
   /** Coverage % threshold above normal that charges an Evolutionary Breakthrough */
   overInvestThresholdPct: 140,
 };
+
+/**
+ * Dynamic evolution cap per tick scaled by city population & map area
+ * so mid/large metropolises don't bottleneck on 1 building per tick:
+ * - <= 5,000 hab.: 1 upgrade/tick
+ * - <= 20,000 hab.: 2 upgrades/tick
+ * - > 20,000 hab.: 4 upgrades/tick (5 on large expanded maps >= 52×52)
+ */
+export function getScaledMaxUpgradesPerTick(
+  population: number,
+  gridWidth: number = GRID_SIZE,
+  gridHeight: number = GRID_SIZE
+): number {
+  const baseByPop = population > 20000 ? 4 : population > 5000 ? 2 : GROWTH_CONFIG.maxUpgradesPerTick;
+  const mapBonus = gridWidth * gridHeight >= 52 * 52 && population >= 20000 ? 1 : 0;
+  return baseByPop + mapBonus;
+}
 
 export const CITY_TRAITS: CityTrait[] = [
   {
@@ -1220,13 +1325,22 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     actionId: 'port_evolution',
   },
   {
-    id: 'civic_stadium_toll_20k',
+    id: 'civic_stadium_20k',
     populationTarget: 20000,
-    kind: 'toll',
-    title: 'Estádio Monumental & Pedágio Liberados',
-    subtitle: 'Aos 20.000 habitantes, libera o Grande Estádio e a Praça de Pedágio para construção em Obras!',
-    rewardCash: 10000,
+    kind: 'stadium',
+    title: 'Grande Estádio Monumental Liberado',
+    subtitle: 'Aos 20.000 habitantes, libera o Grande Estádio 4×3 para construção sob seu comando em Obras!',
+    rewardCash: 6000,
     actionId: 'landmark_project',
+  },
+  {
+    id: 'civic_toll_20k',
+    populationTarget: TOLL_MIN_POPULATION,
+    kind: 'toll',
+    title: 'Praça de Pedágio na Rodovia Liberada',
+    subtitle: 'Aos 20.000 habitantes, libera a Praça de Pedágio na rodovia externa para construção em Obras!',
+    rewardCash: 4000,
+    actionId: 'toll_plaza_project',
   },
   {
     id: 'civic_bridge_lv4',
@@ -1333,11 +1447,11 @@ export interface EstablishmentSpec {
  * minimum distance radius (`minDistanceRadius`), special terrain rules, and coherent city metrics.
  */
 export const ESTABLISHMENT_CATALOG: EstablishmentSpec[] = [
-  // ---- Serviços Locais e Lazer Frequente (Raio curto) ----
+  // ---- Serviços Locais e Cultura/Lazer Frequente (Raio curto) ----
   {
     id: 'fountain_plaza',
     label: 'Praça com Chafariz',
-    categoryLabel: 'Serviços Locais & Lazer',
+    categoryLabel: 'Serviços Locais & Cultura',
     hostTileType: 'park',
     hostLevel: 1,
     footprintW: 1,
@@ -1479,7 +1593,7 @@ export const ESTABLISHMENT_CATALOG: EstablishmentSpec[] = [
   {
     id: 'retro_cinema',
     label: 'Cinema Retrô',
-    categoryLabel: 'Comércio & Lazer',
+    categoryLabel: 'Comércio & Cultura',
     hostTileType: 'commercial',
     hostLevel: 2,
     footprintW: 1,
@@ -1705,7 +1819,7 @@ export const ESTABLISHMENT_CATALOG: EstablishmentSpec[] = [
   {
     id: 'amusement_park',
     label: 'Parque de Diversões',
-    categoryLabel: 'Grande Marco de Lazer',
+    categoryLabel: 'Grande Marco de Cultura & Lazer',
     hostTileType: 'park',
     hostLevel: 3,
     footprintW: 3,

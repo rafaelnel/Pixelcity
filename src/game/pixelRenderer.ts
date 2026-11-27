@@ -27,6 +27,7 @@ import {
   drawFacadeMicroDetails64,
   drawOrganicEvolutionGlow64,
   drawPitchedRoof64,
+  drawPublicWorkConstructionSite64,
   drawRooftopProps64,
   drawSpeciesTree64,
   drawStreetProp64,
@@ -45,6 +46,7 @@ import {
   type TreeSpecies,
   type VehicleKind,
 } from './pixelArtHelpers';
+import { SECONDS_PER_MONTH_1X } from './simulationConfig';
 import type {
   BoatEntity,
   BoatKind,
@@ -8843,6 +8845,17 @@ export function renderCityCanvas(
   //    Pass 2B-Cars: Vehicles driving ON TOP of Roads & Bridge Decks
   //    Pass 2C: 3D Buildings & Landmarks naturally occluding streets/vehicles behind them
   const bridgeTilesAtDepth: Array<{ tile: Tile; rx: number; ry: number; sx: number; sy: number }> = [];
+  const monthSubProgress = Math.max(
+    0,
+    Math.min(1, (state.monthElapsedSec ?? 0) / SECONDS_PER_MONTH_1X)
+  );
+  const getTileWorkProgress01 = (tile: Tile): number => {
+    const c = tile.construction;
+    if (!c) return 0;
+    const total = Math.max(1, c.totalMonths || 1);
+    const completed = Math.max(0, total - (c.remainingMonths || 0));
+    return Math.max(0.06, Math.min(1, (completed + monthSubProgress) / total));
+  };
   const portBerthsByDepth = new Map<
     number,
     Array<{ sx: number; sy: number; level: number; variant: number; rotW: number; rotH: number; berthDir: 'S' | 'E' }>
@@ -9197,6 +9210,20 @@ export function renderCityCanvas(
         sprite.canvas.height * sScale
       );
 
+      if (tile.construction) {
+        drawPublicWorkConstructionSite64(
+          ctx,
+          sx,
+          sy,
+          halfW,
+          halfH,
+          zoom,
+          tile,
+          getTileWorkProgress01(tile),
+          opts.timeSeconds
+        );
+      }
+
       if (collectGlow) {
         glowEntries.push({
           sx,
@@ -9288,7 +9315,7 @@ export function renderCityCanvas(
         tile.type === 'road' ||
         tile.type === 'bridge';
 
-      if (isGroundOrRoad) continue;
+      if (isGroundOrRoad && !tile.construction) continue;
 
       const dx = rx - midX;
       const dy = ry - midY;
@@ -9297,33 +9324,34 @@ export function renderCityCanvas(
 
       if (sy < -cullTopMargin || sy > canvasH + cullBotMargin) continue;
 
-      const constructionStage = getTileConstructionStage(tile.evolveFlash, tile.type);
-
-      if (constructionStage === 1 || constructionStage === 2) {
-        drawConstructionStage64(
-          ctx,
-          sx,
-          sy,
-          halfW,
-          halfH,
-          zoom,
-          tile.type,
-          tile.level || 1,
-          tile.x,
-          tile.y,
-          constructionStage,
-          opts.timeSeconds
-        );
+      if (tile.construction) {
+        if (!isGroundOrRoad) {
+          const sprite = getTileSprite(state, tile, rx, ry, rot, 0, activeSeason);
+          ctx.drawImage(
+            sprite.canvas,
+            sx - sprite.anchorX * sScale,
+            sy - sprite.anchorY * sScale,
+            sprite.canvas.width * sScale,
+            sprite.canvas.height * sScale
+          );
+        }
+        if (!isGroundOrRoad || tile.type !== 'bridge') {
+          drawPublicWorkConstructionSite64(
+            ctx,
+            sx,
+            sy,
+            halfW,
+            halfH,
+            zoom,
+            tile,
+            getTileWorkProgress01(tile),
+            opts.timeSeconds
+          );
+        }
       } else {
-        const sprite = getTileSprite(state, tile, rx, ry, rot, 0, activeSeason);
-        ctx.drawImage(
-          sprite.canvas,
-          sx - sprite.anchorX * sScale,
-          sy - sprite.anchorY * sScale,
-          sprite.canvas.width * sScale,
-          sprite.canvas.height * sScale
-        );
-        if (constructionStage === 3) {
+        const constructionStage = getTileConstructionStage(tile.evolveFlash, tile.type);
+
+        if (constructionStage === 1 || constructionStage === 2) {
           drawConstructionStage64(
             ctx,
             sx,
@@ -9335,9 +9363,34 @@ export function renderCityCanvas(
             tile.level || 1,
             tile.x,
             tile.y,
-            3,
+            constructionStage,
             opts.timeSeconds
           );
+        } else {
+          const sprite = getTileSprite(state, tile, rx, ry, rot, 0, activeSeason);
+          ctx.drawImage(
+            sprite.canvas,
+            sx - sprite.anchorX * sScale,
+            sy - sprite.anchorY * sScale,
+            sprite.canvas.width * sScale,
+            sprite.canvas.height * sScale
+          );
+          if (constructionStage === 3) {
+            drawConstructionStage64(
+              ctx,
+              sx,
+              sy,
+              halfW,
+              halfH,
+              zoom,
+              tile.type,
+              tile.level || 1,
+              tile.x,
+              tile.y,
+              3,
+              opts.timeSeconds
+            );
+          }
         }
       }
 

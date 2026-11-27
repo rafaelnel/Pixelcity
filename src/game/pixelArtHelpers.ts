@@ -4,7 +4,7 @@
  * for Pixópolis (64-bit HD Isometric Renderer).
  */
 
-import type { SeasonId, WeatherKind } from './types';
+import type { SeasonId, Tile, WeatherKind } from './types';
 
 export type TimeOfDayMode = 'auto' | 'day' | 'dusk' | 'night';
 
@@ -2403,4 +2403,338 @@ function isGroundOrRoadType(tileType: string): boolean {
     tileType === 'bridge'
   );
 }
+
+/**
+ * Render a 64-bit isometric construction site / scaffolding / crane overlay on tiles
+ * reserved by an in-progress multi-month `PendingConstructionWork`.
+ */
+export function drawPublicWorkConstructionSite64(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  halfW: number,
+  halfH: number,
+  zoom: number,
+  tile: Tile,
+  progress01: number,
+  timeSeconds: number
+): void {
+  const c = tile.construction;
+  if (!c) return;
+
+  const prog = Math.max(0.05, Math.min(1, progress01));
+  const bw = halfW * 0.86;
+  const bh = halfH * 0.86;
+  const seed = hashCoord(tile.x, tile.y, 911);
+  const pulse = 0.5 + 0.5 * Math.sin(timeSeconds * 5.2 + tile.x + tile.y);
+  const isCenterTile =
+    c.lotDx === Math.floor((c.lotWidth || 1) / 2) &&
+    c.lotDy === Math.floor((c.lotHeight || 1) / 2);
+
+  ctx.save();
+
+  // Road or Bridge new-build site (gravel trench + orange/white barriers + cones)
+  if (!c.isUpgrade && (c.targetType === 'road' || c.targetType === 'bridge')) {
+    ctx.fillStyle = c.targetType === 'bridge' ? 'rgba(100, 116, 139, 0.85)' : '#78716c';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - bh * 0.82);
+    ctx.lineTo(sx + bw * 0.82, sy);
+    ctx.lineTo(sx, sy + bh * 0.82);
+    ctx.lineTo(sx - bw * 0.82, sy);
+    ctx.closePath();
+    ctx.fill();
+
+    // Compacted road base / bridge pilings proportional to progress
+    if (prog >= 0.35) {
+      ctx.fillStyle = '#475569';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - bh * 0.54);
+      ctx.lineTo(sx + bw * 0.54, sy);
+      ctx.lineTo(sx, sy + bh * 0.54);
+      ctx.lineTo(sx - bw * 0.54, sy);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Orange-white safety barricade + pulsing amber work light
+    ctx.fillStyle = '#f97316';
+    ctx.fillRect(sx - 5.5 * zoom, sy - 3 * zoom, 11 * zoom, 2.4 * zoom);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(sx - 2 * zoom, sy - 3 * zoom, 4 * zoom, 2.4 * zoom);
+    ctx.fillStyle = pulse > 0.5 ? '#fde047' : '#d97706';
+    ctx.fillRect(sx - 1 * zoom, sy - 5 * zoom, 2 * zoom, 2 * zoom);
+
+    ctx.restore();
+    return;
+  }
+
+  // In-place upgrade / modernization overlay (bridge upgrades, port Lv2+, airport Lv2+, shopping expansion, revitalization)
+  if (c.isUpgrade) {
+    const structH = Math.min(24 * zoom, Math.max(9 * zoom, ((tile.level || 1) * 5 + 6) * zoom));
+    const sw = bw * 0.78;
+    const sh = bh * 0.78;
+    const baseY = sy - 2 * zoom;
+
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(sx - sw, baseY - structH);
+    ctx.lineTo(sx, baseY + sh - structH);
+    ctx.lineTo(sx + sw, baseY - structH);
+    ctx.lineTo(sx + sw, baseY);
+    ctx.lineTo(sx, baseY + sh);
+    ctx.lineTo(sx - sw, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.88)';
+    ctx.lineWidth = Math.max(0.8, 1.1 * zoom);
+    for (let r = 0; r <= 2; r++) {
+      const ry = baseY - (structH * r) / 2;
+      ctx.beginPath();
+      ctx.moveTo(sx - sw, ry);
+      ctx.lineTo(sx, ry + sh);
+      ctx.lineTo(sx + sw, ry);
+      ctx.stroke();
+    }
+
+    // Vertical scaffolding posts & safety beacon
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.84)';
+    ctx.beginPath();
+    ctx.moveTo(sx - sw, baseY);
+    ctx.lineTo(sx - sw, baseY - structH);
+    ctx.moveTo(sx, baseY + sh);
+    ctx.lineTo(sx, baseY + sh - structH);
+    ctx.moveTo(sx + sw, baseY);
+    ctx.lineTo(sx + sw, baseY - structH);
+    ctx.stroke();
+
+    if (isCenterTile) {
+      ctx.fillStyle = pulse > 0.5 ? '#fde047' : '#f97316';
+      ctx.fillRect(sx - 1.2 * zoom, baseY - structH - 2.4 * zoom, 2.4 * zoom, 2.4 * zoom);
+      if (zoom >= 0.6) {
+        drawSiteProgressPill64(ctx, sx, baseY - structH - 7 * zoom, zoom, prog);
+      }
+    }
+
+    ctx.restore();
+    return;
+  }
+
+  // Brand-new lot / complex construction site (Airport 4x10, Shopping 6x6+, Port 2x2/2x4, Stadium 4x3, Bus/Metro, Parks)
+  // 1. Earthwork & compacted gravel slab
+  ctx.fillStyle = prog < 0.35 ? '#78716c' : '#64748b';
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - halfH * 0.94);
+  ctx.lineTo(sx + halfW * 0.94, sy);
+  ctx.lineTo(sx, sy + halfH * 0.94);
+  ctx.lineTo(sx - halfW * 0.94, sy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Inner poured foundation pad
+  ctx.fillStyle = prog < 0.35 ? '#57534e' : '#94a3b8';
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - bh * 0.78);
+  ctx.lineTo(sx + bw * 0.78, sy);
+  ctx.lineTo(sx, sy + bh * 0.78);
+  ctx.lineTo(sx - bw * 0.78, sy);
+  ctx.closePath();
+  ctx.fill();
+
+  // 2. Perimeter construction fence / safety barriers ONLY along outer lot boundaries
+  ctx.lineWidth = Math.max(1.0, 1.4 * zoom);
+  const fenceColor = pulse > 0.5 ? '#f97316' : '#ea580c';
+  if (c.lotDy === 0) {
+    ctx.strokeStyle = fenceColor;
+    ctx.beginPath();
+    ctx.moveTo(sx - halfW * 0.9, sy);
+    ctx.lineTo(sx, sy - halfH * 0.9);
+    ctx.stroke();
+  }
+  if (c.lotDx === 0) {
+    ctx.strokeStyle = fenceColor;
+    ctx.beginPath();
+    ctx.moveTo(sx - halfW * 0.9, sy);
+    ctx.lineTo(sx, sy + halfH * 0.9);
+    ctx.stroke();
+  }
+  if (c.lotDx === (c.lotWidth || 1) - 1) {
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - halfH * 0.9);
+    ctx.lineTo(sx + halfW * 0.9, sy);
+    ctx.stroke();
+  }
+  if (c.lotDy === (c.lotHeight || 1) - 1) {
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy + halfH * 0.9);
+    ctx.lineTo(sx + halfW * 0.9, sy);
+    ctx.stroke();
+  }
+
+  // 3. Stage-based rising construction details
+  if (c.targetType === 'park') {
+    // Park construction: topsoil mounds, saplings in protective stakes, stone pathway prep
+    ctx.fillStyle = '#65a30d';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 1 * zoom, bw * 0.42, bh * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#92400e';
+    ctx.fillRect(sx - 3 * zoom, sy - 4 * zoom, 1.4 * zoom, 5 * zoom);
+    ctx.fillRect(sx + 2.5 * zoom, sy - 3 * zoom, 1.4 * zoom, 4.5 * zoom);
+    if (prog >= 0.5) {
+      ctx.fillStyle = '#4ade80';
+      ctx.fillRect(sx - 4.2 * zoom, sy - 6 * zoom, 3.8 * zoom, 2.8 * zoom);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (prog < 0.35) {
+    // Stage 1: Rebar trenches + stacked lumber/steel beams + pallets
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = Math.max(0.7, 0.9 * zoom);
+    ctx.beginPath();
+    ctx.moveTo(sx - bw * 0.38, sy - bh * 0.14);
+    ctx.lineTo(sx + bw * 0.25, sy + bh * 0.26);
+    ctx.moveTo(sx + bw * 0.35, sy - bh * 0.14);
+    ctx.lineTo(sx - bw * 0.25, sy + bh * 0.26);
+    ctx.stroke();
+
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(sx - 4.5 * zoom, sy - 2 * zoom, 5.5 * zoom, 2.2 * zoom);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(sx + 1 * zoom, sy - 1 * zoom, 4 * zoom, 2 * zoom);
+  } else {
+    // Stage 2 & 3: Steel & concrete superstructure growing taller with progress
+    const fwScale = prog >= 0.72 ? 1.0 : 0.62;
+    const isMega = (c.lotWidth || 1) >= 3 || (c.lotHeight || 1) >= 3;
+    const frameH = ((isMega ? 15 : 12) * fwScale + (seed % 3)) * zoom;
+    const fw = bw * 0.58;
+    const fh = bh * 0.58;
+
+    // Poured concrete plinth
+    ctx.fillStyle = '#64748b';
+    ctx.beginPath();
+    ctx.moveTo(sx - fw, sy - 2 * zoom);
+    ctx.lineTo(sx, sy + fh - 2 * zoom);
+    ctx.lineTo(sx + fw, sy - 2 * zoom);
+    ctx.lineTo(sx, sy - fh - 2 * zoom);
+    ctx.closePath();
+    ctx.fill();
+
+    // Vertical structural steel girders
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = Math.max(0.9, 1.3 * zoom);
+    const posts: Array<[number, number]> = [
+      [sx - fw * 0.8, sy],
+      [sx, sy + fh * 0.8],
+      [sx + fw * 0.8, sy],
+      [sx, sy - fh * 0.8],
+    ];
+    for (const [px, py] of posts) {
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px, py - frameH);
+      ctx.stroke();
+    }
+
+    // Horizontal steel beam tiers + safety netting
+    const tiers = prog >= 0.72 ? 2 : 1;
+    for (let t = 1; t <= tiers; t++) {
+      const ty = (frameH * t) / tiers;
+      ctx.strokeStyle = t === tiers ? '#f59e0b' : '#94a3b8';
+      ctx.beginPath();
+      ctx.moveTo(sx - fw * 0.8, sy - ty);
+      ctx.lineTo(sx, sy + fh * 0.8 - ty);
+      ctx.lineTo(sx + fw * 0.8, sy - ty);
+      ctx.lineTo(sx, sy - fh * 0.8 - ty);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    if (prog >= 0.72) {
+      // Facade installation mesh & welding spark
+      ctx.fillStyle = 'rgba(45, 212, 191, 0.24)';
+      ctx.beginPath();
+      ctx.moveTo(sx - fw * 0.8, sy - frameH * 0.35);
+      ctx.lineTo(sx, sy + fh * 0.8 - frameH * 0.35);
+      ctx.lineTo(sx, sy + fh * 0.8 - frameH);
+      ctx.lineTo(sx - fw * 0.8, sy - frameH);
+      ctx.closePath();
+      ctx.fill();
+
+      const sparkX = sx + Math.sin(timeSeconds * 6 + seed) * fw * 0.4;
+      const sparkY = sy - frameH * 0.78;
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(sparkX - 1 * zoom, sparkY - 1 * zoom, 2.1 * zoom, 2.1 * zoom);
+    }
+  }
+
+  // 4. Animated Yellow Tower Crane on the center tile of the work site
+  const craneTile = isCenterTile || ((seed % 7 === 0) && prog >= 0.35);
+  if (craneTile) {
+    const mastH = (isCenterTile ? 26 : 19) * zoom;
+    const jibLen = (isCenterTile ? 14 : 10) * zoom;
+    const angle = Math.sin(timeSeconds * 0.65 + (seed % 5)) * 0.55;
+    const jibX = sx + Math.cos(angle) * jibLen;
+    const jibY = sy - mastH - Math.sin(angle) * jibLen * 0.35;
+    const counterX = sx - Math.cos(angle) * (jibLen * 0.36);
+    const counterY = sy - mastH + Math.sin(angle) * (jibLen * 0.14);
+
+    // Mast tower
+    ctx.fillStyle = '#eab308';
+    ctx.fillRect(sx - 1.5 * zoom, sy - mastH, 3 * zoom, mastH);
+    ctx.fillStyle = '#a16207';
+    ctx.fillRect(sx - 0.5 * zoom, sy - mastH, 1 * zoom, mastH);
+
+    // Operator cab & jib
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(sx - 2.3 * zoom, sy - mastH - 2 * zoom, 4.6 * zoom, 3 * zoom);
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = Math.max(1.2, 1.8 * zoom);
+    ctx.beginPath();
+    ctx.moveTo(counterX, counterY);
+    ctx.lineTo(jibX, jibY);
+    ctx.stroke();
+
+    // Counterweight
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(counterX - 2 * zoom, counterY - 1.5 * zoom, 4 * zoom, 3 * zoom);
+
+    // Cable & hook
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = Math.max(0.6, 0.8 * zoom);
+    ctx.beginPath();
+    ctx.moveTo(jibX, jibY);
+    ctx.lineTo(jibX, jibY + 6.5 * zoom);
+    ctx.stroke();
+    ctx.fillStyle = '#f97316';
+    ctx.fillRect(jibX - 1.4 * zoom, jibY + 6.2 * zoom, 2.8 * zoom, 2 * zoom);
+
+    if (isCenterTile && zoom >= 0.6) {
+      drawSiteProgressPill64(ctx, sx, sy - mastH - 8.5 * zoom, zoom, prog);
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawSiteProgressPill64(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  topY: number,
+  zoom: number,
+  progress01: number
+): void {
+  const barW = Math.max(14, 18 * zoom);
+  const barH = Math.max(3, 3.8 * zoom);
+  const left = cx - barW * 0.5;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+  ctx.fillRect(left - 1, topY - 1, barW + 2, barH + 2);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(left, topY, Math.max(2, barW * progress01), barH);
+}
+
 

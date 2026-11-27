@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   COMMERCIAL_PALETTES,
   CONSTRUCTION_TOTAL_DURATION,
+  drawPublicWorkConstructionSite64,
   getAtmosphericGradientOverlay,
   getConstructionStageLabel,
   getLightingState,
@@ -15,6 +16,7 @@ import {
   RESIDENTIAL_PALETTES,
   shouldHideVehiclesAtZoom,
 } from './pixelArtHelpers';
+import type { Tile } from './types';
 
 test('hashCoord is deterministic per coordinate and well-distributed across neighbors', () => {
   assert.equal(hashCoord(12, 7, 3), hashCoord(12, 7, 3));
@@ -173,5 +175,80 @@ test('getAtmosphericGradientOverlay smoothly darkens the city across day, dusk (
   }
   assert.ok(autoPhases.has('day') && autoPhases.has('dusk') && autoPhases.has('night'));
 });
+
+test('drawPublicWorkConstructionSite64 renders single-tile and multi-tile public work sites cleanly across progress phases', () => {
+  const noop = () => {};
+  const mockCtx = {
+    save: noop,
+    restore: noop,
+    beginPath: noop,
+    closePath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    arc: noop,
+    ellipse: noop,
+    rect: noop,
+    roundRect: noop,
+    fill: noop,
+    stroke: noop,
+    fillRect: noop,
+    strokeRect: noop,
+    fillText: noop,
+    measureText: () => ({ width: 20 }),
+    setLineDash: noop,
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    font: '',
+    textAlign: 'center',
+    textBaseline: 'middle',
+    globalAlpha: 1,
+  } as unknown as CanvasRenderingContext2D;
+
+  const baseTile: Tile = {
+    x: 12,
+    y: 14,
+    type: 'grass',
+    level: 1,
+    age: 0,
+    variant: 0,
+    evolveFlash: 0,
+    pollution: 0,
+    landValue: 50,
+    construction: {
+      workId: 'w1',
+      actionId: 'shopping_evolution',
+      title: 'Shopping Pequeno',
+      targetType: 'shopping',
+      targetLevel: 1,
+      isUpgrade: false,
+      lotWidth: 6,
+      lotHeight: 6,
+      lotDx: 0,
+      lotDy: 0,
+      totalMonths: 3,
+      remainingMonths: 2,
+    },
+  };
+
+  for (const progress of [0.1, 0.5, 0.9]) {
+    drawPublicWorkConstructionSite64(mockCtx, 400, 300, 32, 16, 1.1, baseTile, progress, 12.5);
+  }
+
+  const singleTile: Tile = {
+    ...baseTile,
+    type: 'abandoned',
+    construction: {
+      ...baseTile.construction!,
+      actionId: 'revitalization',
+      targetType: 'residential',
+      isUpgrade: true,
+      lotWidth: 1,
+      lotHeight: 1,
+    },
+  };
+  drawPublicWorkConstructionSite64(mockCtx, 420, 310, 32, 16, 0.9, singleTile, 0.65, 4.2);
+});
+
 
 

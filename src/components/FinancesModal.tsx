@@ -77,111 +77,105 @@ export function FinancesModal({
   return (
     <PixelModal
       title="FINANÇAS · IMPOSTOS E EXTRATO MENSAL"
-      subtitle={`Caixa atual: $${hud.money.toLocaleString('pt-BR')} · Modo ${diffCfg.label} · Fechamento automático ao fim de cada mês`}
+      subtitle={`Modo ${diffCfg.label} · Fechamento automático ao fim de cada mês`}
       accentColor="#f5b73b"
       maxWidthClass="max-w-[820px]"
       onClose={onClose}
       testId="finances-modal"
+      headerSummary={
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[14.5px] sm:text-[15.5px] tabular-nums">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            <span>
+              Caixa atual:{' '}
+              <strong className="text-[#ffe066]">
+                ${hud.money.toLocaleString('pt-BR')}
+              </strong>
+            </span>
+            <span className="text-[#354666]">|</span>
+            <span>
+              Saldo projetado:{' '}
+              <strong
+                className={netPos ? 'text-[#66d98c]' : 'text-[#ff6b6b]'}
+              >
+                {netPos ? '+' : '-'}$
+                {Math.abs(fin.netBalance).toLocaleString('pt-BR')}/mês
+              </strong>
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[#cfd9e8]">
+            <span>
+              Serviços:{' '}
+              <strong
+                style={{
+                  color:
+                    hud.globalServiceCoverage >= 80
+                      ? '#66d98c'
+                      : hud.globalServiceCoverage >= 55
+                        ? '#f5b73b'
+                        : '#ff6b6b',
+                }}
+              >
+                {hud.globalServiceCoverage}%
+              </strong>
+            </span>
+            <span>
+              Alíquota justa:{' '}
+              <strong className="text-[#ffe066]">
+                até ~{fin.fairTaxRate.toFixed(1)}%
+              </strong>
+            </span>
+          </div>
+        </div>
+      }
     >
-      {/* Service Tolerance & Active Difficulty Summary Banner */}
-      <div className="pixel-inset p-3 mb-4 flex flex-col gap-2 text-[17px]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span
-              data-testid="finances-difficulty-badge"
-              className="font-pixel text-[7.5px] px-1.5 py-0.5 bg-[#0a101b] border"
-              style={{
-                borderColor: diffCfg.accentColor,
-                color: diffCfg.accentColor,
-              }}
-            >
-              MODO {diffCfg.shortLabel}
-            </span>
-            <span className="font-pixel text-[8px] text-[#8fa4bf]">
-              COBERTURA DE SERVIÇOS:
-            </span>
-            <strong
-              className="tabular-nums"
-              style={{
-                color:
-                  hud.globalServiceCoverage >= 80
-                    ? '#66d98c'
-                    : hud.globalServiceCoverage >= 55
-                      ? '#f5b73b'
-                      : '#ff6b6b',
-              }}
-            >
-              {hud.globalServiceCoverage}%
-            </strong>
-          </div>
-          <div className="text-[#cfd9e8] tabular-nums">
-            Alíquota justa tolerada:{' '}
-            <strong className="text-[#ffe066]">
-              até ~{fin.fairTaxRate.toFixed(1)}%
-            </strong>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-[14px] text-[#9eb0c9] border-t border-[#22304a] pt-1.5 tabular-nums">
-          <span>{diffCfg.tagline}</span>
-          <span>
-            Receita{' '}
-            <strong style={{ color: diffCfg.accentColor }}>
-              {revPct === 0 ? 'Padrão' : `${revPct > 0 ? '+' : ''}${revPct}%`}
-            </strong>{' '}
-            · Fixos{' '}
-            <strong style={{ color: diffCfg.accentColor }}>
-              {fixedPct === 0 ? 'Padrão' : `${fixedPct > 0 ? '+' : ''}${fixedPct}%`}
-            </strong>
+      {/* Compact Difficulty & Economic Event Strip */}
+      <div className="pixel-inset px-3 py-2 mb-3 flex flex-wrap items-center justify-between gap-2 text-[14px] text-[#9eb0c9] tabular-nums">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            data-testid="finances-difficulty-badge"
+            className="font-pixel text-[7px] px-1.5 py-0.5 bg-[#0a101b] border"
+            style={{
+              borderColor: diffCfg.accentColor,
+              color: diffCfg.accentColor,
+            }}
+          >
+            MODO {diffCfg.shortLabel}
           </span>
+          <span>{diffCfg.tagline}</span>
         </div>
+        <span>
+          Receita{' '}
+          <strong style={{ color: diffCfg.accentColor }}>
+            {revPct === 0 ? 'Padrão' : `${revPct > 0 ? '+' : ''}${revPct}%`}
+          </strong>{' '}
+          · Fixos{' '}
+          <strong style={{ color: diffCfg.accentColor }}>
+            {fixedPct === 0 ? 'Padrão' : `${fixedPct > 0 ? '+' : ''}${fixedPct}%`}
+          </strong>
+        </span>
       </div>
 
-      {/* Active Economic Cycle / Urban Incident Fiscal Banner */}
-      {hud.activeEconomicEvent || hud.activeUrbanIncident ? (
+      {/* Active Economic Cycle Banner */}
+      {hud.activeEconomicEvent ? (
         <div
           data-testid="finances-active-events"
-          className="mb-3.5 flex flex-col gap-2"
+          className="mb-3 px-3 py-2 bg-[#141a2b] border-2 flex flex-wrap items-center justify-between gap-2 text-[15px]"
+          style={{ borderColor: hud.activeEconomicEvent.accentColor }}
         >
-          {hud.activeEconomicEvent ? (
-            <div
-              className="px-3 py-2 bg-[#141a2b] border-2 flex flex-wrap items-center justify-between gap-2 text-[15px]"
-              style={{ borderColor: hud.activeEconomicEvent.accentColor }}
+          <div>
+            <span
+              className="font-pixel text-[7.5px] mr-2"
+              style={{ color: hud.activeEconomicEvent.accentColor }}
             >
-              <div>
-                <span
-                  className="font-pixel text-[7.5px] mr-2"
-                  style={{ color: hud.activeEconomicEvent.accentColor }}
-                >
-                  {hud.activeEconomicEvent.title.toUpperCase()}
-                </span>
-                <span className="text-[#dce6f2]">{hud.activeEconomicEvent.effectHint}</span>
-              </div>
-              <span className="font-pixel text-[7px] text-[#ffe066] tabular-nums">
-                {hud.activeEconomicEvent.remainingMonths}{' '}
-                {hud.activeEconomicEvent.remainingMonths === 1 ? 'MÊS' : 'MESES'}
-              </span>
-            </div>
-          ) : null}
-          {hud.activeUrbanIncident ? (
-            <div
-              className="px-3 py-2 bg-[#231521] border-2 flex flex-wrap items-center justify-between gap-2 text-[15px]"
-              style={{ borderColor: hud.activeUrbanIncident.accentColor }}
-            >
-              <div>
-                <span
-                  className="font-pixel text-[7.5px] mr-2"
-                  style={{ color: hud.activeUrbanIncident.accentColor }}
-                >
-                  {hud.activeUrbanIncident.title.toUpperCase()}
-                </span>
-                <span className="text-[#ffd6dc]">{hud.activeUrbanIncident.effectHint}</span>
-              </div>
-              <span className="font-pixel text-[7px] text-[#ffe066] tabular-nums">
-                {hud.activeUrbanIncident.remainingMonths}{' '}
-                {hud.activeUrbanIncident.remainingMonths === 1 ? 'MÊS' : 'MESES'}
-              </span>
-            </div>
-          ) : null}
+              {hud.activeEconomicEvent.title.toUpperCase()}
+            </span>
+            <span className="text-[#dce6f2]">{hud.activeEconomicEvent.effectHint}</span>
+          </div>
+          <span className="font-pixel text-[7px] text-[#ffe066] tabular-nums">
+            {hud.activeEconomicEvent.remainingMonths}{' '}
+            {hud.activeEconomicEvent.remainingMonths === 1 ? 'MÊS' : 'MESES'}
+          </span>
         </div>
       ) : null}
 
@@ -297,7 +291,7 @@ export function FinancesModal({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Receita de Turismo</span>
+                  <span>Receita de Turismo &amp; Comércio</span>
                   <span className="text-[#f5b73b]">
                     +${fin.revenue.tourismIncome.toLocaleString('pt-BR')}
                   </span>

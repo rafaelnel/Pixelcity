@@ -50,6 +50,15 @@ export type EstablishmentId =
 
 export type ExpandDirection = 'norte' | 'leste' | 'sul' | 'oeste';
 
+/**
+ * 6 Budget Segments (keys kept for save compatibility):
+ * - infrastructure: Infraestrutura (Expansão & Densidade)
+ * - education: Educação (Tecnologia & Renda)
+ * - security: Segurança (Estabilidade & Ordem)
+ * - wellbeing: Saúde & Meio Ambiente (antigo "Bem-estar")
+ * - entertainment: Cultura & Lazer (antigo "Lazer")
+ * - tourism: Turismo & Comércio (antigo "Turismo")
+ */
 export type BudgetAreaKey =
   | 'infrastructure'
   | 'education'
@@ -202,6 +211,43 @@ export interface Tile {
   /** Relative offset (0..lotWidth-1, 0..lotHeight-1) from the compound's top-left anchor tile */
   lotDx?: number;
   lotDy?: number;
+  /** Active multi-month public work construction/upgrade reservation on this tile */
+  construction?: TileConstructionMeta;
+}
+
+export interface TileConstructionMeta {
+  workId: string;
+  actionId: EmergencyActionId;
+  title: string;
+  targetType: TileType;
+  targetLevel: number;
+  targetEstablishmentId?: EstablishmentId;
+  isUpgrade?: boolean;
+  lotWidth: number;
+  lotHeight: number;
+  lotDx: number;
+  lotDy: number;
+  totalMonths: number;
+  remainingMonths: number;
+}
+
+export interface PendingConstructionWork {
+  id: string;
+  actionId: EmergencyActionId;
+  tier: number;
+  title: string;
+  totalMonths: number;
+  remainingMonths: number;
+  anchorX?: number;
+  anchorY?: number;
+  lotWidth?: number;
+  lotHeight?: number;
+  targetType?: TileType;
+  targetLevel?: number;
+  targetEstablishmentId?: EstablishmentId;
+  targetCoords?: Array<{ x: number; y: number }>;
+  isUpgrade?: boolean;
+  variant?: number;
 }
 
 export type CityBudgets = Record<BudgetAreaKey, number>;
@@ -221,7 +267,7 @@ export interface CityStats {
   population: number;
   avgPollution: number;
   happiness: number; // 0..100
-  serviceCoverageAvg: number; // 0..100 average of Education, Wellbeing, Security, Leisure
+  serviceCoverageAvg: number; // 0..100 média de Educação, Saúde & Meio Ambiente, Segurança e Cultura & Lazer
   budgetTotal: number;
   tourismRevenue: number;
   tradeRevenue: number;
@@ -325,6 +371,9 @@ export interface EmergencyOfferView {
   accentColor: string;
   unlocked: boolean;
   lockReason?: string;
+  inProgress?: boolean;
+  remainingMonths?: number;
+  totalMonths?: number;
 }
 
 export interface LandExpansionStatus {
@@ -609,6 +658,8 @@ export interface CityState {
   news: NewsItem[];
   nextNewsId: number;
   activeBoosts: CityBoost[];
+  /** Multi-month emergency/civic public works currently under construction */
+  pendingWorks: PendingConstructionWork[];
   history: MonthlyHistoryPoint[];
   rngState: number;
   pendingSounds: SoundCue[];
@@ -661,6 +712,7 @@ export interface HudSnapshot {
   recentMilestoneBanner: MilestoneBanner | null;
   news: NewsItem[];
   activeBoosts: CityBoost[];
+  pendingWorks: PendingConstructionWork[];
   history: MonthlyHistoryPoint[];
   needs: CityNeedItem[];
   tick: number;

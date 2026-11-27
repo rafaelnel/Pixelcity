@@ -30,12 +30,15 @@ import {
   ROAD_PLAN_CONFIG,
   SECONDS_PER_GROWTH_TICK_1X,
   SECONDS_PER_MONTH_1X,
+  SHOPPING_COMMERCIAL_REVENUE_PER_LEVEL,
   SHOPPING_FOOTPRINT_BY_LEVEL,
   START_MONTH,
   START_YEAR,
   TOLL_MIN_POPULATION,
   TOLL_TARIFF_CONFIGS,
   URBAN_MATURITY_CONFIG,
+  getScaledMaxUpgradesPerTick,
+  getSegmentEffectCurve,
   type EstablishmentSpec,
 } from './simulationConfig';
 import type {
@@ -67,11 +70,13 @@ import type {
   NeighborhoodDistrictType,
   NewsItem,
   ParticleEntity,
+  PendingConstructionWork,
   PlaneEntity,
   SeasonId,
   SeasonMode,
   TaxRates,
   Tile,
+  TileConstructionMeta,
   TileType,
   TollPlazaState,
   TollTariffLevel,
@@ -175,6 +180,13 @@ export function getSkyscraperRoofHeightHd(tile: Tile): number {
 
 /** Human-readable Brazilian Portuguese zone classification including residential value tiers & 20 reference establishments */
 export function getZoneDisplayLabel(tile: Tile): string {
+  if (tile.construction) {
+    const rem = Math.max(1, tile.construction.remainingMonths || 1);
+    const remTag = `${rem} ${rem === 1 ? 'mês restante' : 'meses restantes'}`;
+    return tile.construction.isUpgrade
+      ? `Em Ampliação/Reforma: ${tile.construction.title} (${remTag})`
+      : `Canteiro de Obras: ${tile.construction.title} (${remTag})`;
+  }
   if (tile.establishmentId && ESTABLISHMENT_MAP[tile.establishmentId]) {
     const spec = ESTABLISHMENT_MAP[tile.establishmentId];
     const vIdx = (tile.variant % 3) + 1;
@@ -536,6 +548,7 @@ function assignCompoundLot(
       t.lotHeight = h;
       t.lotDx = dx;
       t.lotDy = dy;
+      t.construction = undefined;
       affected.push(t);
     }
   }
@@ -589,6 +602,7 @@ function resetTileToGrass(t: Tile, flash: number = 0.9): void {
   t.lotHeight = 1;
   t.lotDx = 0;
   t.lotDy = 0;
+  t.construction = undefined;
 }
 
 /**
@@ -604,6 +618,13 @@ export function demolishCityTile(
   const tile = getTile(state, tx, ty);
   if (!tile) {
     return { ok: false, reason: 'Lote fora dos limites do mapa.', tilesCleared: 0 };
+  }
+  if (tile.construction) {
+    return {
+      ok: false,
+      reason: 'Este lote está reservado para uma obra pública em andamento.',
+      tilesCleared: 0,
+    };
   }
   if (tile.type === 'water') {
     return { ok: false, reason: 'Não é possível demolir o leito natural do rio.', tilesCleared: 0 };
@@ -1253,14 +1274,22 @@ export function ensureExternalHighwayConnected(
   return state.externalHighway;
 }
 
-/** Compute fair tax tolerance (%) from average city service coverage (0..100+) and difficulty */
+/**
+ * Compute fair tax tolerance (%) from average city service coverage (0..115),
+ * difficulty, and Education expectation shift (more educated citizens demand fairer taxes).
+ */
 export function computeFairTaxRate(
   serviceCoverageAvg: number,
-  difficulty: DifficultyLevel = DEFAULT_DIFFICULTY
+  difficulty: DifficultyLevel = DEFAULT_DIFFICULTY,
+  educationCoveragePct: number = 80
 ): number {
-  const clamped = Math.max(0, Math.min(105, serviceCoverageAvg));
+  const clamped = Math.max(0, Math.min(115, serviceCoverageAvg));
   const diffBonus = DIFFICULTY_CONFIGS[sanitizeDifficulty(difficulty)].fairTaxBonus;
-  return Math.round((6.8 + (clamped / 100) * 4.4 + diffBonus) * 10) / 10;
+  const eduDemandShift =
+    educationCoveragePct > 80
+      ? ((Math.min(200, educationCoveragePct) - 80) / 120) * 1.1
+      : 0;
+  return Math.round((6.8 + (clamped / 100) * 4.4 + diffBonus - eduDemandShift) * 10) / 10;
 }
 
 /** Return highest active boost tier (0 if inactive) for an emergency action */
@@ -1278,11 +1307,15 @@ function hasCityBoost(state: CityState, actionId: EmergencyActionId): boolean {
   return getBoostTier(state, actionId) > 0;
 }
 
-/** Get capped coverage ratio (0..1.35) for gameplay mechanics */
+/**
+ * Effective bounded segment curve across 0..200% of need:
+ * <100% penalizes progressively; 100% = 1.00; 150% = ~1.16; 200% = 1.28 cap.
+ */
 function getCovRatio(state: CityState, key: BudgetAreaKey): number {
   const st = state.stats.coverage[key];
   if (!st || st.needed <= 0) return 1;
-  return Math.max(0, Math.min(1.35, st.invested / st.needed));
+  const pct = Math.max(0, Math.min(200, (st.invested / st.needed) * 100));
+  return getSegmentEffectCurve(pct).effectiveFactor;
 }
 
 export function sanitizeCityName(raw?: string | null): string {
@@ -1566,6 +1599,7 @@ export function createNewCity(
     ],
     nextNewsId: 2,
     activeBoosts: [],
+    pendingWorks: [],
     history: [],
     rngState: (seed ^ 0x9e3779b9) >>> 0,
     pendingSounds: [],
@@ -1896,8 +1930,8 @@ export function getNeighborhoodMaturity(
   }
 
   // 12×12 Neighborhood Maturity Check:
-  // Houses & urban lots can only begin evolving from Lv. 1 -> Lv. 2 once a 12×12 region around them
-  // has ALL buildable lots occupied at >= Level 1 (zero empty grass/forest/abandoned buildable lots).
+  // Houses & urban lots can evolve from Lv. 1 -> Lv. 2 once >= 85% of buildable lots
+  // in the surrounding 12×12 region are occupied at >= Level 1 (prevents 1 isolated lot from stalling a whole district).
   const regionSize = URBAN_MATURITY_CONFIG.regionSize;
   const halfMin = -Math.floor(regionSize / 2);
   const halfMax = halfMin + regionSize - 1;
@@ -1926,7 +1960,9 @@ export function getNeighborhoodMaturity(
 
   const region12FillRatio =
     region12TotalLots > 0 ? region12BuiltLots / region12TotalLots : 0;
-  const region12AllLevel1 = region12TotalLots >= 12 && region12EmptyLots === 0;
+  const region12AllLevel1 =
+    region12TotalLots >= 12 &&
+    region12FillRatio >= URBAN_MATURITY_CONFIG.region12MinFillRatio;
 
   const fillRatio = totalLots > 0 ? builtLots / totalLots : 1;
   const avgLevel = leveledCount > 0 ? levelSum / leveledCount : 1;
@@ -2169,7 +2205,7 @@ export function tryWidenAvenueNear(state: CityState, targetX: number, targetY: n
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
       const t = getTile(state, targetX + dx, targetY + dy);
-      if (!t || t.type !== 'road') continue;
+      if (!t || t.type !== 'road' || t.construction) continue;
       if (t.level >= 4 || isExternalBorderRoadTile(state, t.x, t.y) || isTollPlazaTile(state, t.x, t.y)) continue;
       if (isWideAvenue2x2Tile(state, t.x, t.y)) continue;
       const plan = classifyPlannedRoadCell(state, t.x, t.y);
@@ -2933,7 +2969,7 @@ function tryBuildBridgeFrom(
   // Support spanning river reaches up to 8 water squares wide (step < 10: up to 8 water + 1 landing tile)
   for (let step = 0; step < 10; step++) {
     const t = getTile(state, cx, cy);
-    if (!t) return false;
+    if (!t || t.construction) return false;
     if (t.type === 'water') {
       if (span.length >= 8) return false;
       span.push(t);
@@ -3069,6 +3105,7 @@ export function placePortOnRiverfront(
             const qt = getTile(state, x + dx, y + dy);
             if (
               !qt ||
+              qt.construction ||
               qt.type === 'water' ||
               qt.type === 'bridge' ||
               isLandmarkType(qt.type) ||
@@ -3251,6 +3288,7 @@ export function tryPlaceEstablishmentFootprint(
             break;
           }
           if (
+            qt.construction ||
             qt.type === 'water' ||
             qt.type === 'bridge' ||
             isLandmarkType(qt.type)
@@ -3460,6 +3498,7 @@ export function placeOrExpandAirportComplex(
             const qt = state.tiles[(y + dy) * state.gridWidth + (x + dx)];
             if (
               !qt ||
+              qt.construction ||
               qt.type === 'water' ||
               qt.type === 'bridge' ||
               qt.type === 'port' ||
@@ -3711,6 +3750,7 @@ export function placeOrExpandShoppingComplex(
             const qt = state.tiles[(y + dy) * state.gridWidth + (x + dx)];
             if (
               !qt ||
+              qt.construction ||
               qt.type === 'water' ||
               qt.type === 'bridge' ||
               qt.type === 'port' ||
@@ -3933,7 +3973,7 @@ export function placeTransitStationOnBestSlot(
         continue;
       }
       if (classifyPlannedRoadCell(state, t.x, t.y).isPlanned) continue;
-      if (t.establishmentId || isLandmarkType(t.type) || isTransitStationType(t.type)) continue;
+      if (t.construction || t.establishmentId || isLandmarkType(t.type) || isTransitStationType(t.type)) continue;
       if ((t.lotWidth ?? 1) > 1 || (t.lotHeight ?? 1) > 1) continue;
 
       const isReplaceable =
@@ -4039,6 +4079,7 @@ export function placeLandmarkOnBestSlot(
               const qt = getTile(state, x + dx, y + dy);
               if (
                 !qt ||
+                qt.construction ||
                 qt.type === 'water' ||
                 qt.type === 'bridge' ||
                 isLandmarkType(qt.type) ||
@@ -4377,6 +4418,7 @@ export function recomputeFieldsAndStats(
   let midRises = 0;
   let lv3 = 0;
   let multiTileBuildings = 0;
+  let extraFootprintBuildingTiles = 0;
   let establishments = 0;
   let estHappyBonus = 0;
   let estTourismBonus = 0;
@@ -4417,11 +4459,13 @@ export function recomputeFieldsAndStats(
       bridges++;
     } else if (t.type === 'rural') {
       rural++;
+      if (t.lotRole === 'part') extraFootprintBuildingTiles++;
       const rLv = Math.max(1, Math.min(3, t.level || 1));
       pop += POPULATION_BY_BUILDING.rural[rLv] ?? 12;
       indBaseTax += MONTHLY_TAX_BASE_AT_10PCT.rural[rLv] ?? 300;
     } else if (t.type === 'residential') {
       res++;
+      if (t.lotRole === 'part') extraFootprintBuildingTiles++;
       const resLv = Math.max(1, Math.min(4, t.level || 1));
       pop += POPULATION_BY_BUILDING.residential[resLv] ?? 24;
       resBaseTax += MONTHLY_TAX_BASE_AT_10PCT.residential[resLv] ?? 275;
@@ -4432,17 +4476,20 @@ export function recomputeFieldsAndStats(
       }
     } else if (t.type === 'commercial') {
       com++;
+      if (t.lotRole === 'part') extraFootprintBuildingTiles++;
       const comLv = Math.max(1, Math.min(4, t.level || 1));
       pop += POPULATION_BY_BUILDING.commercial[comLv] ?? 8;
       comBaseTax += MONTHLY_TAX_BASE_AT_10PCT.commercial[comLv] ?? 410;
       if (comLv >= 3) lv3++;
     } else if (t.type === 'industrial') {
       ind++;
+      if (t.lotRole === 'part') extraFootprintBuildingTiles++;
       const indLv = Math.max(1, Math.min(3, t.level || 1));
       pop += POPULATION_BY_BUILDING.industrial[indLv] ?? 14;
       indBaseTax += MONTHLY_TAX_BASE_AT_10PCT.industrial[indLv] ?? 560;
     } else if (t.type === 'park') {
       park++;
+      if (t.lotRole === 'part') extraFootprintBuildingTiles++;
     } else if (t.type === 'abandoned') {
       abn++;
     } else if (t.type === 'port') {
@@ -4479,12 +4526,16 @@ export function recomputeFieldsAndStats(
         shoppingLevelSum += lv;
         if (lv > shoppingMaxLv) shoppingMaxLv = lv;
         pop += POPULATION_BY_BUILDING.shopping * lv;
-        comBaseTax += 1150 * lv;
+        comBaseTax += SHOPPING_COMMERCIAL_REVENUE_PER_LEVEL * lv;
       }
     }
   }
 
-  const totalBuildings = rural + res + com + ind + park;
+  const rawBuildingTiles = rural + res + com + ind + park;
+  const primaryBuildingUnits = Math.max(0, rawBuildingTiles - extraFootprintBuildingTiles);
+  const totalBuildings =
+    primaryBuildingUnits +
+    extraFootprintBuildingTiles * FIXED_COSTS_CONFIG.largeFootprintMaintenanceFactor;
   const totalLandmarks = ports + airports + stadiums + shoppings;
   const prevPol = state.stats.avgPollution;
   const difficulty = sanitizeDifficulty(state.difficulty);
@@ -4552,220 +4603,302 @@ export function recomputeFieldsAndStats(
 
   const polBuffer = new Float32Array(w * h);
   const valBuffer = new Float32Array(w * h);
-  valBuffer.fill(28);
 
-  const eduRatioPre = Math.min(1.25, cov.education.invested / cov.education.needed);
-  const wellRatioPre = Math.min(1.25, cov.wellbeing.invested / cov.wellbeing.needed);
+  const infraCurve = getSegmentEffectCurve(cov.infrastructure.coveragePct).effectiveFactor;
+  const eduCurvePre = getSegmentEffectCurve(cov.education.coveragePct).effectiveFactor;
+  const tourCurvePre = getSegmentEffectCurve(cov.tourism.coveragePct).effectiveFactor;
   const cleanupTier = getBoostTier(state, 'environmental_cleanup');
   const cleanupMult =
     cleanupTier === 0
       ? 1.0
       : Math.max(0.18, 0.55 - (cleanupTier - 1) * 0.12);
-  const cleanFactor = Math.max(
-    0.25,
-    (1 - (eduRatioPre * 0.18 + wellRatioPre * 0.24) * serviceImpact) * cleanupMult
-  );
+  const tourismTrafficPol = Math.max(0, tourCurvePre - 0.85) * 1.65;
 
-  for (let i = 0; i < state.tiles.length; i++) {
-    const t = state.tiles[i];
+  let lowHealthFactor = 0;
+  const fillSpatialBuffers = (wellCovPct: number): void => {
+    polBuffer.fill(0);
+    valBuffer.fill(28);
+    const wellCurveCur = getSegmentEffectCurve(wellCovPct).effectiveFactor;
+    // Saúde & Meio Ambiente (wellbeing) + Educação (clean tech) combat pollution directly;
+    // Low Saúde & Meio Ambiente (< 85%) causes Infraestrutura (roads/density) to generate sharper traffic & local pollution.
+    const cleanFactor = Math.max(
+      0.20,
+      (1 - (eduCurvePre * 0.15 + wellCurveCur * 0.27) * serviceImpact) * cleanupMult
+    );
+    lowHealthFactor = Math.max(0, 85 - wellCovPct) / 85;
+    const infraLowHealthPolMult =
+      1 + lowHealthFactor * (0.42 + Math.max(0.4, infraCurve) * 0.48);
 
-    if (t.type === 'industrial') {
-      const emit = POLLUTION_EMISSION.industrial * tm.pollutionMultiplier * cleanFactor;
-      for (let dy = -3; dy <= 3; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 3.2) continue;
-          const falloff = 1 - d / 3.5;
-          polBuffer[ny * w + nx] += emit * falloff;
-          valBuffer[ny * w + nx] -= 11 * falloff;
-        }
-      }
-    } else if (t.type === 'road' || t.type === 'bridge') {
-      if (t.type === 'road' && t.level >= 4) {
-        // Planned Trevo / Rotatória: smooth traffic flow reduces congestion & elevates urban prestige
-        polBuffer[i] += POLLUTION_EMISSION.road * 0.55 * tm.pollutionMultiplier * cleanupMult;
-        valBuffer[i] += 11;
-        for (const nb of getOrthoNeighbors(state, t.x, t.y)) {
-          valBuffer[nb.y * w + nb.x] += 4;
-        }
-      } else if (t.type === 'road' && t.level === 3) {
-        // Estrada Expressa: high-speed corridor, modest highway emission & logistics value
-        polBuffer[i] += POLLUTION_EMISSION.road * 1.45 * tm.pollutionMultiplier * cleanupMult;
-        valBuffer[i] += 5;
-      } else if (t.type === 'road' && t.level === 2) {
-        // Avenida Arborizada / Avenida Larga 2×2: high commercial & residential prestige along the boulevard
-        const isWide2x2 = t.variant === 2;
-        polBuffer[i] += POLLUTION_EMISSION.road * (isWide2x2 ? 0.78 : 0.9) * tm.pollutionMultiplier * cleanupMult;
-        valBuffer[i] += isWide2x2 ? 12 : 8;
-        for (const nb of getOrthoNeighbors(state, t.x, t.y)) {
-          valBuffer[nb.y * w + nb.x] += isWide2x2 ? 5 : 3;
-        }
-      } else {
-        polBuffer[i] += POLLUTION_EMISSION.road * tm.pollutionMultiplier * cleanupMult;
-        valBuffer[i] += 4;
-      }
-    } else if (t.type === 'bus_station') {
-      const lvMult = 0.85 + (t.level || 1) * 0.25;
-      for (let dy = -3; dy <= 3; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 3.2) continue;
-          const falloff = 1 - d / 3.5;
-          polBuffer[ny * w + nx] += POLLUTION_EMISSION.busStationReduction * lvMult * falloff;
-          valBuffer[ny * w + nx] += 14 * lvMult * falloff;
-        }
-      }
-    } else if (t.type === 'metro_station') {
-      const lvMult = 0.9 + (t.level || 1) * 0.25;
-      for (let dy = -4; dy <= 4; dy++) {
-        for (let dx = -4; dx <= 4; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 4.2) continue;
-          const falloff = 1 - d / 4.5;
-          polBuffer[ny * w + nx] += POLLUTION_EMISSION.metroStationReduction * lvMult * falloff;
-          valBuffer[ny * w + nx] += 26 * lvMult * falloff;
-        }
-      }
-    } else if (t.type === 'commercial' && t.level === 3) {
-      polBuffer[i] += POLLUTION_EMISSION.commercialLv3 * tm.pollutionMultiplier * cleanupMult;
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] += 10;
-        }
-      }
-    } else if (t.type === 'park') {
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 2.4) continue;
-          const falloff = 1 - d / 2.6;
-          polBuffer[ny * w + nx] += POLLUTION_EMISSION.parkReduction * falloff;
-          valBuffer[ny * w + nx] += 18 * falloff;
-        }
-      }
-    } else if (t.type === 'stadium') {
-      for (let dy = -3; dy <= 3; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          const d = Math.hypot(dx, dy);
-          if (d > 3.2) continue;
-          valBuffer[ny * w + nx] += 20 * (1 - d / 3.5);
-        }
-      }
-    } else if (t.type === 'port') {
-      polBuffer[i] += POLLUTION_EMISSION.port * tm.pollutionMultiplier * cleanupMult;
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] += 12;
-        }
-      }
-    } else if (t.type === 'airport') {
-      if (t.lotRole !== 'part') {
-        polBuffer[i] += POLLUTION_EMISSION.airport * tm.pollutionMultiplier * cleanupMult;
-      } else {
-        polBuffer[i] += 2 * tm.pollutionMultiplier * cleanupMult;
-      }
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] += t.lotRole !== 'part' ? 14 : 1.5;
-        }
-      }
-    } else if (t.type === 'shopping') {
-      if (t.lotRole !== 'part') {
-        polBuffer[i] += POLLUTION_EMISSION.shopping * tm.pollutionMultiplier * cleanupMult;
-      }
-      const lvBoost = 1 + (t.level || 1) * 0.25;
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] += (t.lotRole !== 'part' ? 16 : 2.2) * lvBoost;
-        }
-      }
-    } else if (t.type === 'forest') {
-      polBuffer[i] += POLLUTION_EMISSION.forestReduction;
-      valBuffer[i] += 6;
-    } else if (t.type === 'water') {
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] += 4.5;
-        }
-      }
-    } else if (t.type === 'abandoned') {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = t.x + dx;
-          const ny = t.y + dy;
-          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-          valBuffer[ny * w + nx] -= 10;
-        }
-      }
-    } else if (t.type === 'rural') {
-      polBuffer[i] += POLLUTION_EMISSION.rural;
-      valBuffer[i] += 7;
-    } else if (t.type === 'residential' || t.type === 'commercial') {
-      valBuffer[i] += t.level * 12;
-    }
+    for (let i = 0; i < state.tiles.length; i++) {
+      const t = state.tiles[i];
 
-    // Apply specialized establishment spatial land-value aura & pollution reduction
-    if (t.establishmentId && t.lotRole !== 'part') {
-      const spec = ESTABLISHMENT_MAP[t.establishmentId];
-      if (spec) {
-        const r = Math.max(1, spec.landValueRadius);
-        for (let dy = -r; dy <= r; dy++) {
-          for (let dx = -r; dx <= r; dx++) {
+      if (t.type === 'industrial') {
+        const emit = POLLUTION_EMISSION.industrial * tm.pollutionMultiplier * cleanFactor;
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
             const nx = t.x + dx;
             const ny = t.y + dy;
             if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
             const d = Math.hypot(dx, dy);
-            if (d > r + 0.35) continue;
-            const falloff = 1 - d / (r + 0.75);
-            valBuffer[ny * w + nx] += spec.landValueBonus * falloff;
-            if (spec.pollutionDelta !== 0) {
-              polBuffer[ny * w + nx] += spec.pollutionDelta * falloff;
+            if (d > 3.2) continue;
+            const falloff = 1 - d / 3.5;
+            polBuffer[ny * w + nx] += emit * falloff;
+            valBuffer[ny * w + nx] -= 11 * falloff;
+          }
+        }
+      } else if (t.type === 'road' || t.type === 'bridge') {
+        const roadEnvMult = tm.pollutionMultiplier * cleanupMult * infraLowHealthPolMult;
+        if (t.type === 'road' && t.level >= 4) {
+          // Planned Trevo / Rotatória: smooth traffic flow reduces congestion & elevates urban prestige
+          polBuffer[i] +=
+            (POLLUTION_EMISSION.road * 0.55 * roadEnvMult) + tourismTrafficPol * 0.6;
+          valBuffer[i] += 11;
+          for (const nb of getOrthoNeighbors(state, t.x, t.y)) {
+            valBuffer[nb.y * w + nb.x] += 4;
+          }
+        } else if (t.type === 'road' && t.level === 3) {
+          // Estrada Expressa: high-speed corridor, modest highway emission & logistics value
+          polBuffer[i] +=
+            (POLLUTION_EMISSION.road * 1.45 * roadEnvMult) + tourismTrafficPol;
+          valBuffer[i] += 5;
+        } else if (t.type === 'road' && t.level === 2) {
+          // Avenida Arborizada / Avenida Larga 2×2: high commercial & residential prestige along the boulevard
+          const isWide2x2 = t.variant === 2;
+          polBuffer[i] +=
+            POLLUTION_EMISSION.road * (isWide2x2 ? 0.78 : 0.9) * roadEnvMult +
+            tourismTrafficPol * 0.75;
+          valBuffer[i] += isWide2x2 ? 12 : 8;
+          for (const nb of getOrthoNeighbors(state, t.x, t.y)) {
+            valBuffer[nb.y * w + nb.x] += isWide2x2 ? 5 : 3;
+          }
+        } else {
+          polBuffer[i] += POLLUTION_EMISSION.road * roadEnvMult + tourismTrafficPol * 0.4;
+          valBuffer[i] += 4;
+        }
+      } else if (t.type === 'bus_station') {
+        const lvMult = 0.85 + (t.level || 1) * 0.25;
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const d = Math.hypot(dx, dy);
+            if (d > 3.2) continue;
+            const falloff = 1 - d / 3.5;
+            polBuffer[ny * w + nx] += POLLUTION_EMISSION.busStationReduction * lvMult * falloff;
+            valBuffer[ny * w + nx] += 14 * lvMult * falloff;
+          }
+        }
+      } else if (t.type === 'metro_station') {
+        const lvMult = 0.9 + (t.level || 1) * 0.25;
+        for (let dy = -4; dy <= 4; dy++) {
+          for (let dx = -4; dx <= 4; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const d = Math.hypot(dx, dy);
+            if (d > 4.2) continue;
+            const falloff = 1 - d / 4.5;
+            polBuffer[ny * w + nx] += POLLUTION_EMISSION.metroStationReduction * lvMult * falloff;
+            valBuffer[ny * w + nx] += 26 * lvMult * falloff;
+          }
+        }
+      } else if (t.type === 'commercial' && t.level >= 3) {
+        // Emissão de comércio avançado (Nv. 3 e Nv. 4)
+        polBuffer[i] +=
+          POLLUTION_EMISSION.commercialLv3 *
+            tm.pollutionMultiplier *
+            cleanupMult *
+            (1 + lowHealthFactor * 0.55) +
+          tourismTrafficPol * 1.25;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] += 10;
+          }
+        }
+      } else if (t.type === 'park') {
+        const greenBonus = 1 + Math.max(0, wellCurveCur - 1.0) * 0.45;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const d = Math.hypot(dx, dy);
+            if (d > 2.4) continue;
+            const falloff = 1 - d / 2.6;
+            polBuffer[ny * w + nx] += POLLUTION_EMISSION.parkReduction * greenBonus * falloff;
+            valBuffer[ny * w + nx] += 18 * falloff;
+          }
+        }
+      } else if (t.type === 'stadium') {
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const d = Math.hypot(dx, dy);
+            if (d > 3.2) continue;
+            valBuffer[ny * w + nx] += 20 * (1 - d / 3.5);
+          }
+        }
+      } else if (t.type === 'port') {
+        polBuffer[i] += POLLUTION_EMISSION.port * tm.pollutionMultiplier * cleanupMult;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] += 12;
+          }
+        }
+      } else if (t.type === 'airport') {
+        if (t.lotRole !== 'part') {
+          polBuffer[i] += POLLUTION_EMISSION.airport * tm.pollutionMultiplier * cleanupMult;
+        } else {
+          polBuffer[i] += 2 * tm.pollutionMultiplier * cleanupMult;
+        }
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] += t.lotRole !== 'part' ? 14 : 1.5;
+          }
+        }
+      } else if (t.type === 'shopping') {
+        if (t.lotRole !== 'part') {
+          polBuffer[i] +=
+            POLLUTION_EMISSION.shopping * tm.pollutionMultiplier * cleanupMult +
+            tourismTrafficPol;
+        }
+        const lvBoost = 1 + (t.level || 1) * 0.25;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] += (t.lotRole !== 'part' ? 16 : 2.2) * lvBoost;
+          }
+        }
+      } else if (t.type === 'forest') {
+        polBuffer[i] += POLLUTION_EMISSION.forestReduction;
+        valBuffer[i] += 6;
+      } else if (t.type === 'water') {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] += 4.5;
+          }
+        }
+      } else if (t.type === 'abandoned') {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = t.x + dx;
+            const ny = t.y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            valBuffer[ny * w + nx] -= 10;
+          }
+        }
+      } else if (t.type === 'rural') {
+        polBuffer[i] += POLLUTION_EMISSION.rural;
+        valBuffer[i] += 7;
+      } else if (t.type === 'residential' || t.type === 'commercial') {
+        valBuffer[i] += t.level * 12;
+        if (t.type === 'residential' && t.level >= 3 && lowHealthFactor > 0) {
+          polBuffer[i] += lowHealthFactor * Math.max(0.5, infraCurve) * 4.5;
+        }
+      }
+
+      // Apply specialized establishment spatial land-value aura & pollution reduction
+      if (t.establishmentId && t.lotRole !== 'part') {
+        const spec = ESTABLISHMENT_MAP[t.establishmentId];
+        if (spec) {
+          const r = Math.max(1, spec.landValueRadius);
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              const nx = t.x + dx;
+              const ny = t.y + dy;
+              if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+              const d = Math.hypot(dx, dy);
+              if (d > r + 0.35) continue;
+              const falloff = 1 - d / (r + 0.75);
+              valBuffer[ny * w + nx] += spec.landValueBonus * falloff;
+              if (spec.pollutionDelta !== 0) {
+                polBuffer[ny * w + nx] += spec.pollutionDelta * falloff;
+              }
             }
           }
         }
       }
     }
+  };
+
+  const prelimWellCovPct = cov.wellbeing.coveragePct;
+  fillSpatialBuffers(prelimWellCovPct);
+
+  // Pass 1 pollution estimate so Saúde & Meio Ambiente (wellbeing) needed/coverage updates BEFORE
+  // computing active pollution scrubbing, serviceValBonus, and tile landValue in the same cycle.
+  const wellCurvePre = getSegmentEffectCurve(prelimWellCovPct).effectiveFactor;
+  const wellActiveScrubPre = Math.max(0, wellCurvePre - 1.0) * 14;
+  let polSumPass1 = 0;
+  let devTilesPass1 = 0;
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (
+      (isBuildingType(t.type) && (!isLandmarkType(t.type) || t.lotRole !== 'part')) ||
+      isRoadLike(t.type)
+    ) {
+      const scrubbedPre =
+        polBuffer[i] > 0 && t.type !== 'industrial'
+          ? Math.max(0, polBuffer[i] - wellActiveScrubPre)
+          : polBuffer[i];
+      polSumPass1 += Math.max(0, Math.min(100, Math.round(scrubbedPre)));
+      devTilesPass1++;
+    }
+  }
+  const avgPolPass1 = devTilesPass1 > 0 ? Math.round(polSumPass1 / devTilesPass1) : 0;
+
+  const midNeeded = computeNeeded(avgPolPass1);
+  const wellTargetPct = Math.max(0, state.budgetTargetsPct.wellbeing ?? 100);
+  if (preserveExactArea !== 'ALL' && preserveExactArea !== 'wellbeing') {
+    state.budgets.wellbeing = Math.round((midNeeded.wellbeing * wellTargetPct) / 100);
+  }
+  cov.wellbeing = {
+    invested: state.budgets.wellbeing,
+    needed: midNeeded.wellbeing,
+    coveragePct: Math.min(
+      200,
+      Math.round((state.budgets.wellbeing / midNeeded.wellbeing) * 100)
+    ),
+    targetPct: Math.min(200, Math.round(wellTargetPct)),
+    breakthroughPct: Math.min(100, Math.round(state.breakthroughCharge.wellbeing ?? 0)),
+  };
+
+  // If wellbeing coveragePct shifted between prevPol and avgPolPass1, refresh spatial buffers with updated wellbeing
+  if (cov.wellbeing.coveragePct !== prelimWellCovPct) {
+    fillSpatialBuffers(cov.wellbeing.coveragePct);
   }
 
-  const infraR = Math.min(1.25, cov.infrastructure.invested / cov.infrastructure.needed);
-  const eduR = Math.min(1.25, cov.education.invested / cov.education.needed);
-  const wellR = Math.min(1.25, cov.wellbeing.invested / cov.wellbeing.needed);
-  const secR = Math.min(1.25, cov.security.invested / cov.security.needed);
-  const entR = Math.min(1.25, cov.entertainment.invested / cov.entertainment.needed);
+  const infraR = infraCurve;
+  const eduR = eduCurvePre;
+  const wellR = getSegmentEffectCurve(cov.wellbeing.coveragePct).effectiveFactor;
+  const secR = getSegmentEffectCurve(cov.security.coveragePct).effectiveFactor;
+  const entR = getSegmentEffectCurve(cov.entertainment.coveragePct).effectiveFactor;
+
+  const vitalityFloorPre = Math.min(entR, eduR);
+  const secValR = vitalityFloorPre < 0.7 ? Math.min(secR, 0.58 + vitalityFloorPre * 0.42) : secR;
 
   const serviceValBonus =
-    (infraR * 9 + eduR * 12 + wellR * 11 + secR * 8 + entR * 7) * serviceImpact +
+    (infraR * 9 + eduR * 11 + wellR * 11 + secValR * 8 + entR * 8) * serviceImpact +
     Math.min(12, (estHealthScore + estSecurityScore + estEducationScore) * 0.22);
+
+  // Over-investment (>100%) in Saúde & Meio Ambiente actively scrubs residual urban pollution
+  const wellActiveScrub = Math.max(0, wellR - 1.0) * 14;
 
   let polSum = 0;
   let devTiles = 0;
@@ -4775,7 +4908,11 @@ export function recomputeFieldsAndStats(
 
   for (let i = 0; i < state.tiles.length; i++) {
     const t = state.tiles[i];
-    t.pollution = Math.max(0, Math.min(100, Math.round(polBuffer[i])));
+    const scrubbedPol =
+      polBuffer[i] > 0 && t.type !== 'industrial'
+        ? Math.max(0, polBuffer[i] - wellActiveScrub)
+        : polBuffer[i];
+    t.pollution = Math.max(0, Math.min(100, Math.round(scrubbedPol)));
     t.landValue = Math.max(
       0,
       Math.min(100, Math.round(valBuffer[i] + serviceValBonus - t.pollution * 0.45))
@@ -4796,33 +4933,42 @@ export function recomputeFieldsAndStats(
 
   const avgPol = devTiles > 0 ? Math.round(polSum / devTiles) : 0;
 
-  const finalNeeded = computeNeeded(avgPol);
-  const wellTargetPct = Math.max(0, state.budgetTargetsPct.wellbeing ?? 100);
-  if (preserveExactArea !== 'ALL' && preserveExactArea !== 'wellbeing') {
-    state.budgets.wellbeing = Math.round((finalNeeded.wellbeing * wellTargetPct) / 100);
+  if (avgPol !== avgPolPass1) {
+    const finalNeeded = computeNeeded(avgPol);
+    if (preserveExactArea !== 'ALL' && preserveExactArea !== 'wellbeing') {
+      state.budgets.wellbeing = Math.round((finalNeeded.wellbeing * wellTargetPct) / 100);
+    }
+    cov.wellbeing = {
+      invested: state.budgets.wellbeing,
+      needed: finalNeeded.wellbeing,
+      coveragePct: Math.min(
+        200,
+        Math.round((state.budgets.wellbeing / finalNeeded.wellbeing) * 100)
+      ),
+      targetPct: Math.min(200, Math.round(wellTargetPct)),
+      breakthroughPct: Math.min(100, Math.round(state.breakthroughCharge.wellbeing ?? 0)),
+    };
   }
-  cov.wellbeing = {
-    invested: state.budgets.wellbeing,
-    needed: finalNeeded.wellbeing,
-    coveragePct: Math.min(
-      200,
-      Math.round((state.budgets.wellbeing / finalNeeded.wellbeing) * 100)
-    ),
-    targetPct: Math.min(200, Math.round(wellTargetPct)),
-    breakthroughPct: Math.min(100, Math.round(state.breakthroughCharge.wellbeing ?? 0)),
-  };
 
-  const cap110 = (pct: number) => Math.min(110, pct);
+  const wellRatio = getSegmentEffectCurve(cov.wellbeing.coveragePct).effectiveFactor;
+  const secRatio = getSegmentEffectCurve(cov.security.coveragePct).effectiveFactor;
+  const entRatio = getSegmentEffectCurve(cov.entertainment.coveragePct).effectiveFactor;
+  const eduRatio = getSegmentEffectCurve(cov.education.coveragePct).effectiveFactor;
+  const tourRatio = getSegmentEffectCurve(cov.tourism.coveragePct).effectiveFactor;
+
+  // Segurança happiness/attractiveness is contained when Cultura & Lazer or Educação are low (< 70%)
+  const vitalityFloor = Math.min(entRatio, eduRatio);
+  const secHappyRatio =
+    vitalityFloor < 0.7
+      ? Math.min(secRatio, 0.56 + vitalityFloor * 0.42)
+      : secRatio;
+
   const rawServiceAvg = Math.round(
-    (cap110(cov.education.coveragePct) +
-      cap110(cov.wellbeing.coveragePct) +
-      cap110(cov.security.coveragePct) +
-      cap110(cov.entertainment.coveragePct)) /
-      4
+    ((eduRatio + wellRatio + secHappyRatio + entRatio) / 4) * 100
   );
   const serviceAvg = Math.max(0, rawServiceAvg - eventMods.servicePenaltyPct);
   const clampedServiceAvg = Math.min(100, serviceAvg);
-  const fairTax = computeFairTaxRate(serviceAvg, difficulty);
+  const fairTax = computeFairTaxRate(serviceAvg, difficulty, cov.education.coveragePct);
 
   // Toll Plaza (Pedágio Rodoviário) external visitor flow & revenue calculation
   if (!state.tollPlaza) {
@@ -4843,13 +4989,12 @@ export function recomputeFieldsAndStats(
   const resTaxExcess = state.taxes.residential - fairTax;
   const comTaxExcess = state.taxes.commercial - (fairTax + 0.5);
 
-  const wellRatio = Math.min(1.25, cov.wellbeing.coveragePct / 100);
-  const secRatio = Math.min(1.25, cov.security.coveragePct / 100);
-  const entRatio = Math.min(1.25, cov.entertainment.coveragePct / 100);
-  const eduRatio = Math.min(1.25, cov.education.coveragePct / 100);
-
   const serviceScore =
-    (wellRatio * 20 + secRatio * 14 + entRatio * 12 + eduRatio * 10) * serviceImpact;
+    (wellRatio * 20 + secHappyRatio * 14 + entRatio * 12 + eduRatio * 10) * serviceImpact;
+  // Educated citizens notice service-quality shortfalls more sharply
+  const eduQualityExpectationPenalty =
+    Math.max(0, eduRatio - 0.92) * Math.max(0, 84 - serviceAvg) * 0.20;
+  const wellOverBonus = wellRatio > 1.0 ? Math.min(6, (wellRatio - 1.0) * 20) : 0;
   const parkBonus = Math.min(14, park * 2.0);
   const transitHappyBonus = Math.min(10, busStations * 1.5 + metroStations * 2.8);
   const shoppingHappyBonus = Math.min(9, shoppingLevelSum * 2.8);
@@ -4876,6 +5021,7 @@ export function recomputeFieldsAndStats(
   const rawHappiness =
     36 +
     serviceScore +
+    wellOverBonus +
     parkBonus +
     landmarkHappyBonus +
     establishmentServiceBonus +
@@ -4887,6 +5033,7 @@ export function recomputeFieldsAndStats(
     eventMods.happinessDelta +
     tollHappyDelta +
     taxHappyEffect -
+    eduQualityExpectationPenalty -
     polPenalty -
     abandonPenalty -
     cashPenalty;
@@ -4906,8 +5053,9 @@ export function recomputeFieldsAndStats(
         )
       : 0;
 
+  // Educação (Tecnologia & Renda) expands tax base & clean commercial yields (bounded at 150%/200%)
   const eduIncomeBoost =
-    0.88 + eduRatio * 0.28 * serviceImpact + Math.min(0.12, estEducationScore * 0.008);
+    0.86 + eduRatio * 0.29 * serviceImpact + Math.min(0.12, estEducationScore * 0.008);
   const happyScale = 0.72 + (happiness / 100) * 0.42;
   const revDiffMult = diffCfg.taxRevenueMultiplier * eventMods.revenueMult;
 
@@ -4919,11 +5067,26 @@ export function recomputeFieldsAndStats(
       tm.taxMultiplier *
       revDiffMult
   );
+  // Segurança penalty on Turismo & Comércio when Security < 85%
+  const secTourismPenalty =
+    cov.security.coveragePct < 85
+      ? Math.max(0.54, 0.54 + (cov.security.coveragePct / 85) * 0.46)
+      : 1.0;
+
   const transitComBonus = Math.min(0.16, busStations * 0.015 + metroStations * 0.03);
+  const tourComBoost =
+    tourRatio > 1.0 ? (tourRatio - 1.0) * 0.30 * secTourismPenalty : 0;
+  const eduComModernBonus = eduRatio > 1.0 ? (eduRatio - 1.0) * 0.18 : 0;
   const totalComTax = Math.round(
     comBaseTax *
       (state.taxes.commercial / 10) *
-      (0.9 + entRatio * 0.22 * serviceImpact + stadiums * 0.06 + airports * 0.08 + transitComBonus) *
+      (0.88 +
+        entRatio * 0.24 * serviceImpact +
+        tourComBoost +
+        eduComModernBonus +
+        stadiums * 0.06 +
+        airports * 0.08 +
+        transitComBonus) *
       happyScale *
       tm.taxMultiplier *
       revDiffMult
@@ -4931,15 +5094,12 @@ export function recomputeFieldsAndStats(
   const totalIndTax = Math.round(
     indBaseTax *
       (state.taxes.industrial / 10) *
-      (0.88 +
-        Math.min(1.25, cov.infrastructure.coveragePct / 100) * 0.2 * serviceImpact +
-        ports * 0.08) *
+      (0.88 + infraCurve * 0.2 * serviceImpact + ports * 0.08) *
       tm.taxMultiplier *
       revDiffMult
   );
 
-  // Monthly Tourism Revenue: parks + commerce + leisure + stadiums + ports + airports + cultural/tourist establishments!
-  const tourRatio = Math.min(1.3, cov.tourism.coveragePct / 100);
+  // Monthly Tourism & Commerce External Revenue: penalized when Segurança is low (< 85%)
   const beautyFactor = Math.max(0.25, 1 - avgPol / 75);
   const cityAppeal =
     45 +
@@ -4960,7 +5120,8 @@ export function recomputeFieldsAndStats(
     state.budgets.tourism > 0 || festivalMult > 1 || totalLandmarks > 0 || estTourismBonus > 0
       ? Math.round(
           cityAppeal *
-            Math.max(0.45, tourRatio) *
+            Math.max(0.42, tourRatio) *
+            secTourismPenalty *
             beautyFactor *
             festivalMult *
             tollTourismMult *
@@ -5055,12 +5216,18 @@ export function recomputeFieldsAndStats(
   const revenueTotal =
     totalResTax + totalComTax + totalIndTax + totalTourism + totalTrade + totalTollIncome;
   const fixedMult = diffCfg.fixedCostMultiplier * eventMods.expenseMult;
+  // High Tourism & Commerce or high Infrastructure under low Saúde & Meio Ambiente adds moderate road upkeep
+  const trafficUpkeepMult =
+    1 +
+    Math.max(0, tourRatio - 0.9) * 0.14 +
+    lowHealthFactor * Math.max(0, infraCurve - 0.85) * 0.12;
   const fixedRoadsAndBridges = Math.round(
     (roads * FIXED_COSTS_CONFIG.perRoad +
       bridges * FIXED_COSTS_CONFIG.perBridge +
       busStations * FIXED_COSTS_CONFIG.perBusStation +
       metroStations * FIXED_COSTS_CONFIG.perMetroStation +
       shoppings * FIXED_COSTS_CONFIG.perShopping) *
+      trafficUpkeepMult *
       fixedMult
   );
   const debtInterest =
@@ -5235,7 +5402,7 @@ function findSkyscraper2x2SlotForTile(
     for (let dy = 0; dy < 2 && validBlock; dy++) {
       for (let dx = 0; dx < 2; dx++) {
         const bt = getTile(state, ax + dx, ay + dy);
-        if (!bt || bt.establishmentId || classifyPlannedRoadCell(state, bt.x, bt.y).isPlanned) {
+        if (!bt || bt.construction || bt.establishmentId || classifyPlannedRoadCell(state, bt.x, bt.y).isPlanned) {
           validBlock = false;
           break;
         }
@@ -5620,13 +5787,15 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
     const cost = roundTo10((spec.baseCost + rev * spec.revScalePct) * costMult, 100);
     const minPop = spec.minPopulation ?? 0;
     const alreadyBuiltToll = line.id === 'toll_plaza_project' && Boolean(state.tollPlaza?.built);
-    const unlocked = !alreadyBuiltToll && state.totalPopulation >= minPop;
+    const activeWork = (state.pendingWorks ?? []).find((w) => w.actionId === line.id);
+    const inProgress = Boolean(activeWork);
+    const unlocked = !alreadyBuiltToll && !inProgress && state.totalPopulation >= minPop;
 
     offers.push({
       id: line.id,
-      tier: curTier,
-      tierLabel: alreadyBuiltToll ? 'Construído' : spec.tierLabel,
-      title: spec.title,
+      tier: activeWork ? activeWork.tier : curTier,
+      tierLabel: alreadyBuiltToll ? 'Construído' : inProgress ? 'Em Obra' : spec.tierLabel,
+      title: activeWork ? activeWork.title : spec.title,
       summary: spec.summary,
       effectHint: spec.effectHint,
       nextEvolutionHint: alreadyBuiltToll
@@ -5637,14 +5806,19 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
             ? 'Obra única na rodovia de entrada · Tarifa ajustável (Baixa / Média / Alta)'
             : 'Nível máximo atingido (obra repetível de alto impacto)',
       cost,
-      durationMonths: spec.durationMonths,
+      durationMonths: activeWork ? activeWork.totalMonths : spec.durationMonths,
       accentColor: line.accentColor,
       unlocked,
+      inProgress,
+      remainingMonths: activeWork?.remainingMonths,
+      totalMonths: activeWork?.totalMonths,
       lockReason: alreadyBuiltToll
         ? 'Pedágio já construído (ajuste a tarifa em Finanças)'
-        : unlocked
-          ? undefined
-          : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
+        : activeWork
+          ? `Obra em andamento (${activeWork.remainingMonths} ${activeWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'})`
+          : unlocked
+            ? undefined
+            : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
     });
   }
 
@@ -5897,8 +6071,20 @@ export function expandCityLand(
   ensureExternalHighwayConnected(state, state.externalHighway?.edge);
   reconcileRoadHierarchy(state);
 
-  // Shift live entity coordinates smoothly if expanding North or West
+  // Shift live entity coordinates and pending work coordinates smoothly if expanding North or West
   if (shiftX !== 0 || shiftY !== 0) {
+    if (state.pendingWorks) {
+      for (const w of state.pendingWorks) {
+        if (typeof w.anchorX === 'number') w.anchorX += shiftX;
+        if (typeof w.anchorY === 'number') w.anchorY += shiftY;
+        if (w.targetCoords) {
+          for (const c of w.targetCoords) {
+            c.x += shiftX;
+            c.y += shiftY;
+          }
+        }
+      }
+    }
     if (cars) {
       for (const c of cars) {
         c.x += shiftX;
@@ -5950,6 +6136,7 @@ function upgradeTopBuildings(
       (t) =>
         (t.type === 'residential' || t.type === 'commercial') &&
         t.lotRole !== 'part' &&
+        !t.construction &&
         !t.establishmentId &&
         t.level < (t.type === 'residential' ? resCap : 3) &&
         (!preferType || t.type === preferType)
@@ -6089,6 +6276,7 @@ function plantImmediateParks(state: CityState, count: number): number {
   for (const t of state.tiles) {
     if (
       (t.type === 'grass' || t.type === 'forest') &&
+      !t.construction &&
       getOrthoNeighbors(state, t.x, t.y).some((nt) => nt.type === 'road')
     ) {
       openSlots.push(t);
@@ -6192,6 +6380,1478 @@ function placeSpecificEstablishmentOnBestSlot(
   return false;
 }
 
+/**
+ * Find the best rectangular slot for a construction project without mutating tiles yet.
+ * Works for Airport (`4×10` / `8×16`), Shopping (`6×6` / `8×8` / `9×9`), Stadium (`4×3`),
+ * Port (`2×2` / `2×4`), and multi-tile Establishments (`sports_court`, `amusement_park`).
+ */
+function clearObstructionAndReserveTile(
+  state: CityState,
+  t: Tile,
+  keepExistingTypes: TileType[],
+  meta: TileConstructionMeta
+): boolean {
+  let clearedRoad = false;
+  const keepExisting = keepExistingTypes.includes(t.type);
+  if (!keepExisting && t.type !== 'grass' && t.type !== 'forest' && t.type !== 'water') {
+    if (t.type === 'road') {
+      clearedRoad = true;
+    }
+    if ((t.lotWidth ?? 1) > 1 || (t.lotHeight ?? 1) > 1) {
+      for (const ct of getCompoundTiles(state, t)) {
+        resetTileToGrass(ct, 0.3);
+      }
+    } else {
+      resetTileToGrass(t, 0.3);
+    }
+  }
+  t.construction = meta;
+  t.evolveFlash = 0.9;
+  return clearedRoad;
+}
+
+function reserveCompoundConstructionRect(
+  state: CityState,
+  ax: number,
+  ay: number,
+  fw: number,
+  fh: number,
+  work: PendingConstructionWork,
+  targetType: TileType,
+  targetLevel: number,
+  keepExistingTypes: TileType[],
+  targetEstablishmentId?: EstablishmentId
+): void {
+  const coords: Array<{ x: number; y: number }> = [];
+  let clearedRoad = false;
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      const t = getTile(state, ax + dx, ay + dy);
+      if (!t) continue;
+      coords.push({ x: t.x, y: t.y });
+      const isUpgrade = keepExistingTypes.includes(t.type);
+      const didClearRoad = clearObstructionAndReserveTile(state, t, keepExistingTypes, {
+        workId: work.id,
+        actionId: work.actionId,
+        title: work.title,
+        targetType,
+        targetLevel,
+        targetEstablishmentId,
+        isUpgrade,
+        lotWidth: fw,
+        lotHeight: fh,
+        lotDx: dx,
+        lotDy: dy,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      });
+      if (didClearRoad) clearedRoad = true;
+    }
+  }
+  work.anchorX = ax;
+  work.anchorY = ay;
+  work.lotWidth = fw;
+  work.lotHeight = fh;
+  work.targetType = targetType;
+  work.targetLevel = targetLevel;
+  work.targetEstablishmentId = targetEstablishmentId;
+  work.targetCoords = coords;
+  if (clearedRoad) {
+    reconcileRoadHierarchy(state);
+  }
+}
+
+function findBestEstablishmentRect(
+  state: CityState,
+  establishmentId: EstablishmentId,
+  forceOverwriteLowLevel: boolean = true
+): { x: number; y: number; fw: number; fh: number } | null {
+  const spec = ESTABLISHMENT_MAP[establishmentId];
+  if (!spec) return null;
+  const mainRoadSet = getMainConnectedRoadSet(state);
+  const candidates: Array<{ x: number; y: number; score: number }> = [];
+
+  for (let y = 1; y <= state.gridHeight - spec.footprintH - 1; y++) {
+    for (let x = 1; x <= state.gridWidth - spec.footprintW - 1; x++) {
+      if (!canPlaceEstablishmentAt(state, establishmentId, x, y)) continue;
+      let ok = true;
+      let touchesRoad = false;
+      let overwritePenalty = 0;
+
+      for (let dy = 0; dy < spec.footprintH && ok; dy++) {
+        for (let dx = 0; dx < spec.footprintW; dx++) {
+          const t = getTile(state, x + dx, y + dy);
+          if (
+            !t ||
+            t.construction ||
+            t.type === 'water' ||
+            t.type === 'bridge' ||
+            isLandmarkType(t.type) ||
+            isTransitStationType(t.type)
+          ) {
+            ok = false;
+            break;
+          }
+          if (
+            isExternalBorderRoadTile(state, t.x, t.y) ||
+            isTollPlazaTile(state, t.x, t.y) ||
+            classifyPlannedRoadCell(state, t.x, t.y).isPlanned
+          ) {
+            ok = false;
+            break;
+          }
+          if (t.type === 'grass' || t.type === 'forest') {
+            // ideal
+          } else if (
+            forceOverwriteLowLevel &&
+            !t.establishmentId &&
+            (t.type === 'rural' ||
+              t.type === 'abandoned' ||
+              t.type === 'park' ||
+              ((t.type === 'residential' || t.type === 'commercial') && t.level <= 1))
+          ) {
+            overwritePenalty += 3;
+          } else {
+            ok = false;
+            break;
+          }
+          if (
+            getOrthoNeighbors(state, t.x, t.y).some(
+              (n) => isRoadLike(n.type) && mainRoadSet.has(n.y * state.gridWidth + n.x)
+            )
+          ) {
+            touchesRoad = true;
+          }
+        }
+      }
+      if (!ok || !touchesRoad) continue;
+      const distCenter = Math.hypot(x - state.gridWidth / 2, y - state.gridHeight / 2);
+      candidates.push({ x, y, score: 40 - distCenter - overwritePenalty });
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return { x: candidates[0].x, y: candidates[0].y, fw: spec.footprintW, fh: spec.footprintH };
+}
+
+function findBestStadiumRect(
+  state: CityState,
+  force: boolean = true
+): { x: number; y: number; fw: number; fh: number } | null {
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+  const stadiumSpec = ESTABLISHMENT_MAP.soccer_stadium;
+  const orientations: Array<[number, number]> = [
+    [stadiumSpec.footprintW, stadiumSpec.footprintH],
+    [stadiumSpec.footprintH, stadiumSpec.footprintW],
+  ];
+
+  for (const allowAvenueCross of force ? [false, true] : [false]) {
+    for (const [fw, fh] of orientations) {
+      const candidates: Array<{ x: number; y: number; score: number }> = [];
+      for (let y = 1; y <= state.gridHeight - fh - 1; y++) {
+        for (let x = 1; x <= state.gridWidth - fw - 1; x++) {
+          if (!canPlaceEstablishmentAt(state, 'soccer_stadium', x, y)) continue;
+          let valid = true;
+          let demolishedBuildings = 0;
+          let demolishedRoads = 0;
+          let touchesRoad = false;
+
+          for (let dy = 0; dy < fh && valid; dy++) {
+            for (let dx = 0; dx < fw; dx++) {
+              const qt = getTile(state, x + dx, y + dy);
+              if (
+                !qt ||
+                qt.construction ||
+                qt.type === 'water' ||
+                qt.type === 'bridge' ||
+                isLandmarkType(qt.type) ||
+                qt.establishmentId
+              ) {
+                valid = false;
+                break;
+              }
+              const plan = classifyPlannedRoadCell(state, qt.x, qt.y);
+              if (!allowAvenueCross && (plan.onAvenueAxis || plan.onHighwayAxis)) {
+                valid = false;
+                break;
+              }
+              if (qt.type === 'road') {
+                demolishedRoads++;
+              } else if (qt.type !== 'grass' && qt.type !== 'forest') {
+                if (!force && qt.level >= 2) {
+                  valid = false;
+                  break;
+                }
+                demolishedBuildings++;
+              }
+              for (const nb of getOrthoNeighbors(state, qt.x, qt.y)) {
+                const outside = nb.x < x || nb.x >= x + fw || nb.y < y || nb.y >= y + fh;
+                if (outside && isRoadLike(nb.type)) touchesRoad = true;
+              }
+            }
+          }
+          if (!valid || (!touchesRoad && !force)) continue;
+          const distFromCore = Math.hypot(x + fw * 0.5 - cx, y + fh * 0.5 - cy);
+          const score =
+            (touchesRoad ? 16 : 0) -
+            Math.abs(distFromCore - 6.5) * 2.2 -
+            demolishedBuildings * 8 -
+            demolishedRoads * 14;
+          candidates.push({ x, y, score });
+        }
+      }
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        return { x: candidates[0].x, y: candidates[0].y, fw, fh };
+      }
+    }
+  }
+  return null;
+}
+
+function findBestAirportReservationRect(
+  state: CityState,
+  targetLevel: number
+): { x: number; y: number; fw: number; fh: number; existingAnchor: Tile | null } | null {
+  const clampedLevel = Math.max(1, Math.min(3, targetLevel)) as 1 | 2 | 3;
+  const { w, h } = AIRPORT_FOOTPRINT_BY_LEVEL[clampedLevel];
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+  const existingAirportTiles = state.tiles.filter((t) => t.type === 'airport');
+  const existingAnchor =
+    existingAirportTiles.find((t) => t.lotRole === 'anchor') ?? existingAirportTiles[0] ?? null;
+
+  if (
+    existingAnchor &&
+    (existingAnchor.lotWidth ?? 1) >= w &&
+    (existingAnchor.lotHeight ?? 1) >= h &&
+    existingAirportTiles.length >= w * h
+  ) {
+    return {
+      x: existingAnchor.x,
+      y: existingAnchor.y,
+      fw: existingAnchor.lotWidth ?? w,
+      fh: existingAnchor.lotHeight ?? h,
+      existingAnchor,
+    };
+  }
+
+  const mainRoadSet = getMainConnectedRoadSet(state);
+  const searchRects = () => {
+    const out: Array<{ x: number; y: number; score: number }> = [];
+    const maxX = state.gridWidth - w - 1;
+    const maxY = state.gridHeight - h - 1;
+    for (let y = 1; y <= maxY; y++) {
+      for (let x = 1; x <= maxX; x++) {
+        let valid = true;
+        let overlapAirport = 0;
+        let demolishedBuildings = 0;
+        let demolishedHighLv = 0;
+        let demolishedRoads = 0;
+
+        for (let dy = 0; dy < h && valid; dy++) {
+          for (let dx = 0; dx < w; dx++) {
+            const qt = state.tiles[(y + dy) * state.gridWidth + (x + dx)];
+            if (
+              !qt ||
+              qt.construction ||
+              qt.type === 'water' ||
+              qt.type === 'bridge' ||
+              qt.type === 'port' ||
+              qt.type === 'stadium'
+            ) {
+              valid = false;
+              break;
+            }
+            if (qt.type === 'airport') overlapAirport++;
+            else if (qt.type === 'road') demolishedRoads++;
+            else if (isBuildingType(qt.type)) {
+              demolishedBuildings++;
+              if (qt.level >= 2 || qt.establishmentId) demolishedHighLv++;
+            }
+          }
+        }
+        if (!valid) continue;
+
+        let touchesMainRoad = false;
+        let touchesAnyRoad = false;
+        for (let dx = 0; dx < w && !touchesMainRoad; dx++) {
+          for (const nb of [getTile(state, x + dx, y - 1), getTile(state, x + dx, y + h)]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+            }
+          }
+        }
+        for (let dy = 0; dy < h && !touchesMainRoad; dy++) {
+          for (const nb of [getTile(state, x - 1, y + dy), getTile(state, x + w, y + dy)]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+            }
+          }
+        }
+        const dist = existingAnchor
+          ? Math.hypot(x - existingAnchor.x, y - existingAnchor.y)
+          : Math.hypot(x + w * 0.5 - cx, y + h * 0.5 - cy);
+        const score = existingAnchor
+          ? overlapAirport * 30 -
+            dist * 20 -
+            demolishedBuildings * 8 -
+            demolishedHighLv * 14 -
+            demolishedRoads * 22 +
+            (touchesMainRoad ? 28 : touchesAnyRoad ? 12 : 0)
+          : dist * 3.5 -
+            demolishedBuildings * 12 -
+            demolishedHighLv * 25 -
+            demolishedRoads * 32 +
+            (touchesMainRoad ? 26 : touchesAnyRoad ? 10 : 0);
+        out.push({ x, y, score });
+      }
+    }
+    return out;
+  };
+
+  let candidates = searchRects();
+  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
+    let northWater = 0;
+    let southWater = 0;
+    let westWater = 0;
+    let eastWater = 0;
+    for (const t of state.tiles) {
+      if (t.type !== 'water') continue;
+      if (t.y < state.gridHeight / 2) northWater++;
+      else southWater++;
+      if (t.x < state.gridWidth / 2) westWater++;
+      else eastWater++;
+    }
+    const vertDirs: ExpandDirection[] =
+      northWater <= southWater ? ['norte', 'sul'] : ['sul', 'norte'];
+    const horizDirs: ExpandDirection[] =
+      westWater <= eastWater ? ['oeste', 'leste'] : ['leste', 'oeste'];
+    const prefDirs: ExpandDirection[] =
+      h >= w ? [...vertDirs, ...horizDirs] : [...horizDirs, ...vertDirs];
+    const offers = getLandExpansions(state);
+    const chosenOffer = prefDirs
+      .map((d) => offers.find((o) => o.direction === d))
+      .find((o) => o && o.canExpand);
+    if (!chosenOffer) break;
+    state.money += chosenOffer.cost;
+    expandCityLand(state, chosenOffer.direction);
+    candidates = searchRects();
+  }
+  if (candidates.length === 0) {
+    return existingAnchor
+      ? {
+          x: existingAnchor.x,
+          y: existingAnchor.y,
+          fw: existingAnchor.lotWidth ?? 4,
+          fh: existingAnchor.lotHeight ?? 10,
+          existingAnchor,
+        }
+      : null;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return { x: candidates[0].x, y: candidates[0].y, fw: w, fh: h, existingAnchor };
+}
+
+function findBestShoppingReservationRect(
+  state: CityState,
+  targetLevel: number
+): { x: number; y: number; fw: number; fh: number; existingAnchor: Tile | null } | null {
+  const clampedLevel = Math.max(1, Math.min(3, targetLevel)) as 1 | 2 | 3;
+  const { w, h } = SHOPPING_FOOTPRINT_BY_LEVEL[clampedLevel];
+  const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
+  const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
+  const existingShoppingTiles = state.tiles.filter((t) => t.type === 'shopping');
+  const existingAnchor =
+    existingShoppingTiles.find((t) => t.lotRole === 'anchor') ?? existingShoppingTiles[0] ?? null;
+
+  if (
+    existingAnchor &&
+    (existingAnchor.lotWidth ?? 1) >= w &&
+    (existingAnchor.lotHeight ?? 1) >= h &&
+    existingShoppingTiles.length >= w * h
+  ) {
+    return {
+      x: existingAnchor.x,
+      y: existingAnchor.y,
+      fw: existingAnchor.lotWidth ?? w,
+      fh: existingAnchor.lotHeight ?? h,
+      existingAnchor,
+    };
+  }
+
+  const mainRoadSet = getMainConnectedRoadSet(state);
+  const searchRects = () => {
+    const out: Array<{ x: number; y: number; score: number }> = [];
+    const maxX = state.gridWidth - w - 1;
+    const maxY = state.gridHeight - h - 1;
+    for (let y = 1; y <= maxY; y++) {
+      for (let x = 1; x <= maxX; x++) {
+        let valid = true;
+        let overlapShopping = 0;
+        let demolishedBuildings = 0;
+        let demolishedHighLv = 0;
+        let demolishedRoads = 0;
+
+        for (let dy = 0; dy < h && valid; dy++) {
+          for (let dx = 0; dx < w; dx++) {
+            const qt = state.tiles[(y + dy) * state.gridWidth + (x + dx)];
+            if (
+              !qt ||
+              qt.construction ||
+              qt.type === 'water' ||
+              qt.type === 'bridge' ||
+              qt.type === 'port' ||
+              qt.type === 'airport' ||
+              qt.type === 'stadium' ||
+              isExternalBorderRoadTile(state, qt.x, qt.y) ||
+              isTollPlazaTile(state, qt.x, qt.y)
+            ) {
+              valid = false;
+              break;
+            }
+            if (qt.type === 'shopping') overlapShopping++;
+            else if (qt.type === 'road') demolishedRoads++;
+            else if (isBuildingType(qt.type)) {
+              demolishedBuildings++;
+              if (qt.level >= 3 || qt.establishmentId) demolishedHighLv++;
+            }
+          }
+        }
+        if (!valid) continue;
+
+        let touchesMainRoad = false;
+        let touchesWideAvenue = false;
+        let touchesAnyRoad = false;
+        for (let dx = 0; dx < w; dx++) {
+          for (const nb of [getTile(state, x + dx, y - 1), getTile(state, x + dx, y + h)]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+              if (nb.type === 'road' && nb.level === 2 && nb.variant === 2) touchesWideAvenue = true;
+            }
+          }
+        }
+        for (let dy = 0; dy < h; dy++) {
+          for (const nb of [getTile(state, x - 1, y + dy), getTile(state, x + w, y + dy)]) {
+            if (nb && isRoadLike(nb.type)) {
+              touchesAnyRoad = true;
+              if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+              if (nb.type === 'road' && nb.level === 2 && nb.variant === 2) touchesWideAvenue = true;
+            }
+          }
+        }
+
+        let score = 0;
+        if (existingAnchor) {
+          const distFromOld = Math.hypot(x - existingAnchor.x, y - existingAnchor.y);
+          score =
+            overlapShopping * 36 -
+            distFromOld * 24 -
+            demolishedBuildings * 7 -
+            demolishedHighLv * 16 -
+            demolishedRoads * 18 +
+            (touchesWideAvenue ? 18 : 0) +
+            (touchesMainRoad ? 28 : touchesAnyRoad ? 12 : 0);
+        } else {
+          const distFromCore = Math.hypot(x + w * 0.5 - cx, y + h * 0.5 - cy);
+          const district = getNeighborhoodDistrict(state, Math.round(x + w * 0.5), Math.round(y + h * 0.5));
+          const districtBonus = district === 'commercial' ? 22 : district === 'residential' ? 10 : -8;
+          score =
+            40 -
+            Math.abs(distFromCore - 6) * 2.2 +
+            districtBonus +
+            (touchesWideAvenue ? 20 : 0) +
+            (touchesMainRoad ? 28 : touchesAnyRoad ? 12 : 0) -
+            demolishedBuildings * 9 -
+            demolishedHighLv * 22 -
+            demolishedRoads * 24;
+        }
+        out.push({ x, y, score });
+      }
+    }
+    return out;
+  };
+
+  let candidates = searchRects();
+  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
+    const offers = getLandExpansions(state);
+    const chosenOffer = offers.find((o) => o.canExpand);
+    if (!chosenOffer) break;
+    state.money += chosenOffer.cost;
+    expandCityLand(state, chosenOffer.direction);
+    candidates = searchRects();
+  }
+  if (candidates.length === 0) {
+    return existingAnchor
+      ? {
+          x: existingAnchor.x,
+          y: existingAnchor.y,
+          fw: existingAnchor.lotWidth ?? 6,
+          fh: existingAnchor.lotHeight ?? 6,
+          existingAnchor,
+        }
+      : null;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return { x: candidates[0].x, y: candidates[0].y, fw: w, fh: h, existingAnchor };
+}
+
+function findBestPortReservationRect(
+  state: CityState,
+  targetLevel: number
+): { x: number; y: number; fw: number; fh: number } | null {
+  const clampedLevel = Math.max(1, Math.min(3, targetLevel));
+  const openEdgeWater = getBridgeFreeRiverEdgeWaterSet(state);
+  const existingPorts = state.tiles.filter((t) => t.type === 'port');
+  const oldAnchor = existingPorts.find((t) => t.lotRole !== 'part') ?? existingPorts[0] ?? null;
+
+  const shapes: Array<[number, number]> =
+    clampedLevel >= 3
+      ? [
+          [2, 4],
+          [4, 2],
+          [2, 3],
+          [3, 2],
+          [2, 2],
+        ]
+      : [
+          [2, 2],
+          [1, 2],
+          [2, 1],
+          [1, 1],
+        ];
+
+  for (const [fw, fh] of shapes) {
+    const candidates: Array<{ x: number; y: number; score: number; bridgeFree: boolean }> = [];
+    for (let y = 1; y <= state.gridHeight - fh - 1; y++) {
+      for (let x = 1; x <= state.gridWidth - fw - 1; x++) {
+        let valid = true;
+        let touchesWater = 0;
+        let touchesBridgeFree = 0;
+        let overlapPort = 0;
+        let demolishedCost = 0;
+
+        for (let dy = 0; dy < fh && valid; dy++) {
+          for (let dx = 0; dx < fw; dx++) {
+            const qt = getTile(state, x + dx, y + dy);
+            if (
+              !qt ||
+              qt.construction ||
+              qt.type === 'water' ||
+              qt.type === 'bridge' ||
+              (isLandmarkType(qt.type) && qt.type !== 'port') ||
+              qt.establishmentId
+            ) {
+              valid = false;
+              break;
+            }
+            const plan = classifyPlannedRoadCell(state, qt.x, qt.y);
+            if (plan.onAvenueAxis || plan.onHighwayAxis) {
+              valid = false;
+              break;
+            }
+            if (qt.type === 'port') {
+              overlapPort++;
+            } else if (qt.type === 'road') {
+              demolishedCost += 12;
+            } else if (qt.type !== 'grass' && qt.type !== 'forest') {
+              if (qt.level >= 3) {
+                valid = false;
+                break;
+              }
+              demolishedCost += qt.level * 8;
+            }
+            for (const nt of getOrthoNeighbors(state, qt.x, qt.y)) {
+              const outside = nt.x < x || nt.x >= x + fw || nt.y < y || nt.y >= y + fh;
+              if (!outside) continue;
+              if (nt.type === 'water') {
+                touchesWater++;
+                if (openEdgeWater.has(nt.y * state.gridWidth + nt.x)) touchesBridgeFree++;
+              }
+            }
+          }
+        }
+        if (!valid || touchesWater === 0) continue;
+        const distOld = oldAnchor ? Math.hypot(x - oldAnchor.x, y - oldAnchor.y) : 0;
+        const score =
+          overlapPort * 28 +
+          touchesWater * 18 +
+          (touchesBridgeFree > 0 ? 220 : 0) -
+          distOld * 20 -
+          demolishedCost;
+        candidates.push({ x, y, score, bridgeFree: touchesBridgeFree > 0 });
+      }
+    }
+    if (candidates.length === 0) continue;
+    const freePool = candidates.filter((c) => c.bridgeFree);
+    const pool = freePool.length > 0 ? freePool : candidates;
+    pool.sort((a, b) => b.score - a.score);
+    return { x: pool[0].x, y: pool[0].y, fw, fh };
+  }
+  return null;
+}
+
+function findTransitStationSlots(
+  state: CityState,
+  kind: 'bus_station' | 'metro_station',
+  count: number = 2
+): Tile[] {
+  const minSpacing = kind === 'metro_station' ? 7 : 6;
+  const mainRoads = getMainConnectedRoadSet(state);
+  const existingStations = state.tiles.filter((t) => t.type === kind);
+  const chosen: Tile[] = [];
+
+  for (let n = 0; n < count; n++) {
+    const existingDistricts = new Set(
+      [...existingStations, ...chosen].map((st) => getNeighborhoodDistrict(state, st.x, st.y))
+    );
+    let best: { tile: Tile; score: number } | null = null;
+    for (let i = 0; i < state.tiles.length; i++) {
+      const t = state.tiles[i];
+      if (t.x <= 1 || t.y <= 1 || t.x >= state.gridWidth - 2 || t.y >= state.gridHeight - 2) {
+        continue;
+      }
+      if (chosen.includes(t)) continue;
+      if (classifyPlannedRoadCell(state, t.x, t.y).isPlanned) continue;
+      if (t.construction || t.establishmentId || isLandmarkType(t.type) || isTransitStationType(t.type)) {
+        continue;
+      }
+      if ((t.lotWidth ?? 1) > 1 || (t.lotHeight ?? 1) > 1) continue;
+
+      const isReplaceable =
+        t.type === 'grass' ||
+        t.type === 'forest' ||
+        t.type === 'abandoned' ||
+        ((t.type === 'rural' || t.type === 'residential' || t.type === 'commercial' || t.type === 'industrial') &&
+          (t.level || 1) <= 2);
+      if (!isReplaceable) continue;
+
+      const neigh = getOrthoNeighbors(state, t.x, t.y);
+      const adjRoads = neigh.filter((nt) => nt.type === 'road' && mainRoads.has(nt.y * state.gridWidth + nt.x));
+      if (adjRoads.length === 0) continue;
+
+      let tooClose = false;
+      for (const st of [...existingStations, ...chosen]) {
+        if (Math.hypot(st.x - t.x, st.y - t.y) < minSpacing) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
+
+      const district = getNeighborhoodDistrict(state, t.x, t.y);
+      const touchesWideAve = adjRoads.some((r) => isWideAvenue2x2Tile(state, r.x, r.y));
+      const touchesAvenue = adjRoads.some((r) => (r.level || 1) >= 2);
+      const nearbyPop = countPopulatedNear(state, t.x, t.y, 4);
+      let score = nearbyPop * 4 + (touchesWideAve ? 24 : touchesAvenue ? 14 : 4);
+      if (!existingDistricts.has(district)) score += 22;
+      if (t.type === 'grass' || t.type === 'forest' || t.type === 'abandoned') score += 12;
+      else if ((t.level || 1) === 1) score += 5;
+      else score -= 4;
+
+      if (!best || score > best.score) best = { tile: t, score };
+    }
+    if (!best) break;
+    chosen.push(best.tile);
+  }
+  return chosen;
+}
+
+function findRoadworkPlanCoords(
+  state: CityState,
+  roadCount: number,
+  tryBridge: boolean = true
+): { roadTiles: Tile[]; bridgeWaterTiles: Tile[] } {
+  const bridgeWaterTiles: Tile[] = [];
+  if (tryBridge) {
+    const bridgeCandidates: Array<{ road: Tile; dx: number; dy: number; priority: number }> = [];
+    for (const t of state.tiles) {
+      if (t.type !== 'road') continue;
+      const plan = classifyPlannedRoadCell(state, t.x, t.y);
+      for (const [dx, dy] of ORTHO_DIRS) {
+        const adj = getTile(state, t.x + dx, t.y + dy);
+        if (adj && adj.type === 'water' && !adj.construction) {
+          const prio = plan.onHighwayAxis ? 3 : plan.onAvenueAxis ? 2 : 1;
+          bridgeCandidates.push({ road: t, dx, dy, priority: prio });
+        }
+      }
+    }
+    bridgeCandidates.sort((a, b) => b.priority - a.priority);
+    for (const cand of bridgeCandidates) {
+      const span: Tile[] = [];
+      let cx = cand.road.x + cand.dx;
+      let cy = cand.road.y + cand.dy;
+      let okSpan = false;
+      for (let step = 0; step < 10; step++) {
+        const t = getTile(state, cx, cy);
+        if (!t || t.construction) break;
+        if (t.type === 'water') {
+          if (span.length >= 8) break;
+          span.push(t);
+        } else if (t.type === 'grass' || t.type === 'forest' || isRoadLike(t.type)) {
+          if (span.length > 0) {
+            let tooClose = false;
+            for (const st of span) {
+              for (const other of state.tiles) {
+                if (other.type !== 'bridge') continue;
+                if (Math.abs(other.x - st.x) + Math.abs(other.y - st.y) < MIN_BRIDGE_SPACING_TILES) {
+                  tooClose = true;
+                  break;
+                }
+              }
+              if (tooClose) break;
+            }
+            if (!tooClose) okSpan = true;
+          }
+          break;
+        } else {
+          break;
+        }
+        cx += cand.dx;
+        cy += cand.dy;
+      }
+      if (okSpan && span.length > 0) {
+        bridgeWaterTiles.push(...span);
+        break;
+      }
+    }
+  }
+
+  const roadTiles: Tile[] = [];
+  const chosenSet = new Set<number>();
+  for (let pass = 0; pass < 4 && roadTiles.length < roadCount; pass++) {
+    const candidates: Array<{ target: Tile; priority: number }> = [];
+    for (const t of state.tiles) {
+      const isSeedRoad = isRoadLike(t.type) || chosenSet.has(t.y * state.gridWidth + t.x);
+      if (!isSeedRoad) continue;
+      for (const [dx, dy] of ORTHO_DIRS) {
+        const target = getTile(state, t.x + dx, t.y + dy);
+        if (!target || target.construction) continue;
+        if (
+          target.x <= 0 ||
+          target.y <= 0 ||
+          target.x >= state.gridWidth - 1 ||
+          target.y >= state.gridHeight - 1
+        ) {
+          continue;
+        }
+        const key = target.y * state.gridWidth + target.x;
+        if (chosenSet.has(key)) continue;
+        if (target.type !== 'grass' && target.type !== 'forest') continue;
+        const plan = classifyPlannedRoadCell(state, target.x, target.y);
+        if (!plan.isPlanned) continue;
+        const behind = getTile(state, t.x - dx, t.y - dy);
+        const straight = behind && isRoadLike(behind.type) ? 1.5 : 0;
+        const prio =
+          (plan.isArterialCross ? 6 : 0) +
+          (plan.onHighwayAxis ? 4 : plan.onAvenueAxis ? 3 : 1) +
+          straight;
+        candidates.push({ target, priority: prio });
+      }
+    }
+    if (candidates.length === 0) break;
+    candidates.sort((a, b) => b.priority - a.priority);
+    for (const c of candidates) {
+      if (roadTiles.length >= roadCount) break;
+      const key = c.target.y * state.gridWidth + c.target.x;
+      if (chosenSet.has(key)) continue;
+      chosenSet.add(key);
+      roadTiles.push(c.target);
+    }
+  }
+  return { roadTiles, bridgeWaterTiles };
+}
+
+function syncWorkTilesRemainingMonths(state: CityState, work: PendingConstructionWork): void {
+  if (work.targetCoords) {
+    for (const c of work.targetCoords) {
+      const t = getTile(state, c.x, c.y);
+      if (t?.construction && t.construction.workId === work.id) {
+        t.construction.remainingMonths = Math.max(0, work.remainingMonths);
+      }
+    }
+  }
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (t.construction && t.construction.workId === work.id) {
+      t.construction.remainingMonths = Math.max(0, work.remainingMonths);
+    }
+  }
+}
+
+function clearWorkTileConstruction(state: CityState, workId: string): void {
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (t.construction && t.construction.workId === workId) {
+      t.construction = undefined;
+    }
+  }
+}
+
+function canUseReservedRectForLandmark(
+  state: CityState,
+  ax: number,
+  ay: number,
+  fw: number,
+  fh: number,
+  allowedSameType?: TileType
+): boolean {
+  if (ax < 1 || ay < 1 || ax + fw > state.gridWidth - 1 || ay + fh > state.gridHeight - 1) {
+    return false;
+  }
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) {
+      const qt = getTile(state, ax + dx, ay + dy);
+      if (!qt || qt.construction || qt.type === 'water' || qt.type === 'bridge') return false;
+      if (isLandmarkType(qt.type) && qt.type !== allowedSameType) return false;
+    }
+  }
+  return true;
+}
+
+/** Finalize a completed multi-month public work when its remainingMonths reaches 0 */
+function finalizePendingWork(state: CityState, work: PendingConstructionWork): void {
+  clearWorkTileConstruction(state, work.id);
+
+  const actionId = work.actionId;
+  const tier = work.tier;
+
+  if (actionId === 'sports_center_project') {
+    let built = false;
+    if (
+      typeof work.anchorX === 'number' &&
+      typeof work.anchorY === 'number' &&
+      canUseReservedRectForLandmark(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? 2,
+        work.lotHeight ?? 1
+      )
+    ) {
+      const compound = assignCompoundLot(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? 2,
+        work.lotHeight ?? 1,
+        'commercial',
+        ESTABLISHMENT_MAP.sports_court.hostLevel,
+        work.variant ?? pickEstablishmentVariation(state, 'sports_court'),
+        1.85,
+        'sports_court'
+      );
+      ensureTileConnectedToMainRoad(state, compound);
+      state.mapVersion += 1;
+      built = compound.length > 0;
+    }
+    if (!built) {
+      built = placeSpecificEstablishmentOnBestSlot(state, 'sports_court', true);
+    }
+    if (!built) {
+      plantImmediateParks(state, 2);
+    }
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluído e inaugurado! Novo Centro Esportivo Pequeno eleva o lazer nos bairros.`,
+      'milestone'
+    );
+  } else if (actionId === 'bus_transit_project') {
+    let placed = 0;
+    if (work.targetCoords) {
+      for (const c of work.targetCoords) {
+        const t = getTile(state, c.x, c.y);
+        if (!t || t.construction) continue;
+        if (t.type === 'bus_station') {
+          if (t.level < tier) t.level = tier;
+          t.evolveFlash = 1.75;
+        } else if (
+          t.type === 'grass' ||
+          t.type === 'forest' ||
+          t.type === 'abandoned' ||
+          ((t.type === 'rural' || t.type === 'residential' || t.type === 'commercial' || t.type === 'industrial') &&
+            (t.level || 1) <= 2 &&
+            !t.establishmentId)
+        ) {
+          assignCompoundLot(state, t.x, t.y, 1, 1, 'bus_station', Math.max(1, Math.min(3, tier)), placed % 3, 1.85);
+          ensureTileConnectedToMainRoad(state, [t]);
+          placed++;
+        }
+      }
+    }
+    if (placed === 0) {
+      placed = placeTransitStationOnBestSlot(state, 'bus_station', 2, tier);
+    }
+    for (const t of state.tiles) {
+      if (t.type === 'bus_station' && (t.level || 1) < tier) {
+        t.level = Math.min(3, tier);
+        t.evolveFlash = 1.6;
+      }
+    }
+    if (tier >= 2) {
+      tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 8);
+    }
+    state.mapVersion += 1;
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluído! ${placed > 0 ? `${placed} terminais de ônibus` : 'Frota modernizada'} e ônibus urbanos agora circulam pelos bairros.`,
+      'milestone'
+    );
+  } else if (actionId === 'metro_transit_project') {
+    let placed = 0;
+    if (work.targetCoords) {
+      for (const c of work.targetCoords) {
+        const t = getTile(state, c.x, c.y);
+        if (!t || t.construction) continue;
+        if (t.type === 'metro_station') {
+          if (t.level < tier) t.level = tier;
+          t.evolveFlash = 1.75;
+        } else if (
+          t.type === 'grass' ||
+          t.type === 'forest' ||
+          t.type === 'abandoned' ||
+          ((t.type === 'rural' || t.type === 'residential' || t.type === 'commercial' || t.type === 'industrial') &&
+            (t.level || 1) <= 2 &&
+            !t.establishmentId)
+        ) {
+          assignCompoundLot(state, t.x, t.y, 1, 1, 'metro_station', Math.max(1, Math.min(3, tier)), placed % 3, 1.85);
+          ensureTileConnectedToMainRoad(state, [t]);
+          placed++;
+        }
+      }
+    }
+    if (placed === 0) {
+      placed = placeTransitStationOnBestSlot(state, 'metro_station', 2, tier);
+    }
+    for (const t of state.tiles) {
+      if (t.type === 'metro_station' && (t.level || 1) < tier) {
+        t.level = Math.min(3, tier);
+        t.evolveFlash = 1.6;
+      }
+    }
+    tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10);
+    state.mapVersion += 1;
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluído! ${placed > 0 ? `${placed} novas Estações de Metrô` : 'Malha metroviária'} conectam os bairros no subsolo.`,
+      'milestone'
+    );
+  } else if (actionId === 'environmental_cleanup') {
+    let planted = 0;
+    if (work.targetCoords) {
+      for (const c of work.targetCoords) {
+        const t = getTile(state, c.x, c.y);
+        if (t && !t.construction && (t.type === 'grass' || t.type === 'forest')) {
+          t.type = 'park';
+          t.level = 1;
+          t.age = 0;
+          t.evolveFlash = 1.8;
+          planted++;
+        }
+      }
+    }
+    const targetParks = tier * 2;
+    if (planted < targetParks) {
+      planted += plantImmediateParks(state, targetParks - planted);
+    }
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluído! ${planted} novos parques entregues à cidade.`,
+      'good'
+    );
+  } else if (actionId === 'revitalization') {
+    let recovered = 0;
+    if (work.targetCoords) {
+      for (const c of work.targetCoords) {
+        const t = getTile(state, c.x, c.y);
+        if (t && t.type === 'abandoned') {
+          t.type = t.previousType ?? 'residential';
+          t.level = tier >= 2 && t.type !== 'industrial' ? 2 : 1;
+          t.age = 0;
+          t.evolveFlash = 1.85;
+          recovered++;
+        }
+      }
+    }
+    if (recovered === 0) {
+      const abandonedTiles = state.tiles.filter((t) => t.type === 'abandoned' && !t.construction);
+      const maxRestore = tier >= 3 ? abandonedTiles.length : tier === 2 ? 10 : 6;
+      for (let i = 0; i < Math.min(maxRestore, abandonedTiles.length); i++) {
+        const t = abandonedTiles[i];
+        t.type = t.previousType ?? 'residential';
+        t.level = tier >= 2 && t.type !== 'industrial' ? 2 : 1;
+        t.age = 0;
+        t.evolveFlash = 1.85;
+        recovered++;
+      }
+    }
+    const upgraded = tier >= 3 ? upgradeTopBuildings(state, tier === 4 ? 4 : 2) : 0;
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluída! ${recovered} imóveis recuperados${upgraded > 0 ? ` e ${upgraded} modernizados` : ''}!`,
+      'good'
+    );
+  } else if (actionId === 'tourism_festival') {
+    if (tier >= 2 && state.totalPopulation >= 20000 && state.stats.stadiumCount === 0) {
+      state.breakthroughCharge.entertainment = Math.min(
+        100,
+        state.breakthroughCharge.entertainment + 30
+      );
+    }
+    const upgraded = tier >= 3 ? upgradeTopBuildings(state, tier === 4 ? 4 : 2, 'commercial') : 0;
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      `${work.title} encerrado com sucesso! Legado turístico consolidado${upgraded > 0 ? ` (${upgraded} comércios modernizados)` : ''}!`,
+      'milestone'
+    );
+  } else if (actionId === 'emergency_roadworks') {
+    const roadTargets = [4, 6, 8, 10][tier - 1] ?? 8;
+    let roadsLaid = 0;
+    let builtBridge = false;
+
+    if (work.targetCoords && work.targetCoords.length > 0) {
+      const bridgeSpan: Tile[] = [];
+      for (const c of work.targetCoords) {
+        const t = getTile(state, c.x, c.y);
+        if (!t || t.construction) continue;
+        if (t.type === 'water') {
+          bridgeSpan.push(t);
+        } else if (t.type === 'grass' || t.type === 'forest') {
+          const plan = classifyPlannedRoadCell(state, t.x, t.y);
+          t.type = 'road';
+          t.level = plan.corridorLevel;
+          t.age = 0;
+          t.evolveFlash = 1.6;
+          roadsLaid++;
+        }
+      }
+      if (bridgeSpan.length > 0) {
+        const bridgeLv = getCurrentBridgeLevel(state);
+        for (const wt of bridgeSpan) {
+          wt.type = 'bridge';
+          wt.level = bridgeLv;
+          wt.variant = bridgeLv >= 2 || bridgeSpan.length >= 4 ? 1 : 0;
+          wt.age = 0;
+          wt.evolveFlash = 1.5;
+        }
+        builtBridge = true;
+      }
+    }
+    if (roadsLaid < roadTargets || !builtBridge) {
+      const extra = buildImmediateRoads(
+        state,
+        Math.max(0, roadTargets - roadsLaid),
+        !builtBridge
+      );
+      roadsLaid += extra.roadsLaid;
+      builtBridge = builtBridge || extra.builtBridge;
+    }
+
+    const wideAvenueAdded =
+      tier >= 2 ? tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10) : 0;
+    const targetBridgeLv =
+      tier >= 4 && state.totalPopulation >= 22000
+        ? 4
+        : tier >= 3 && state.totalPopulation >= 12000
+          ? 3
+          : tier >= 2 && state.totalPopulation >= 3500
+            ? 2
+            : 1;
+    const bridgesUpgraded =
+      targetBridgeLv >= 2 ? upgradeAllBridges(state, targetBridgeLv) : 0;
+    if (tier >= 3) {
+      upgradeTopBuildings(state, tier === 4 ? 3 : 2);
+    }
+    reconcileRoadHierarchy(state);
+    state.mapVersion += 1;
+    const wideAveMsg = wideAvenueAdded > 0 ? ' + Avenida Larga 2×2' : '';
+    const bridgeMsg =
+      bridgesUpgraded > 0
+        ? targetBridgeLv >= 4
+          ? ' e pontes alargadas para Megaponte de 2 Espaços (Nv. 4)'
+          : ` e pontes evoluídas para Nv. ${targetBridgeLv}`
+        : '';
+    state.pendingSounds.push({ type: bridgesUpgraded > 0 || builtBridge ? 'bridge' : 'milestone' });
+    pushNews(
+      state,
+      `${work.title} concluída! ${roadsLaid} vias entregues${wideAveMsg}${bridgeMsg}!`,
+      'milestone'
+    );
+  } else if (actionId === 'port_evolution') {
+    const targetPortLv = Math.max(1, Math.min(3, tier));
+    if (tier === 1) {
+      let placed: Tile | null = null;
+      if (
+        typeof work.anchorX === 'number' &&
+        typeof work.anchorY === 'number' &&
+        canUseReservedRectForLandmark(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 2,
+          work.lotHeight ?? 2,
+          'port'
+        )
+      ) {
+        const compound = assignCompoundLot(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 2,
+          work.lotHeight ?? 2,
+          'port',
+          1,
+          work.variant ?? 0,
+          1.75
+        );
+        ensureTileConnectedToMainRoad(state, compound);
+        state.mapVersion += 1;
+        placed = compound[0] ?? null;
+      }
+      if (!placed) {
+        placed = placePortOnRiverfront(state, true, 1);
+      }
+      if (!placed) {
+        upgradeExistingLandmarks(state, 'port', 2);
+      }
+      state.pendingSounds.push({ type: 'bridge' });
+      pushNews(
+        state,
+        'Porto Fluvial concluído e integrado às rotas de navegação!',
+        'milestone'
+      );
+    } else if (tier === 2) {
+      const count = upgradeExistingLandmarks(state, 'port', 2);
+      if (count === 0) {
+        placePortOnRiverfront(state, true, 2);
+      }
+      state.pendingSounds.push({ type: 'bridge' });
+      pushNews(
+        state,
+        'Porto evoluído para Nível 2! Navio cargueiro e pátio de contêineres em operação.',
+        'milestone'
+      );
+    } else if (tier === 3) {
+      if (
+        typeof work.anchorX === 'number' &&
+        typeof work.anchorY === 'number' &&
+        canUseReservedRectForLandmark(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 2,
+          work.lotHeight ?? 4,
+          'port'
+        )
+      ) {
+        for (const oldP of state.tiles) {
+          if (
+            oldP.type === 'port' &&
+            (oldP.x < work.anchorX ||
+              oldP.x >= work.anchorX + (work.lotWidth ?? 2) ||
+              oldP.y < work.anchorY ||
+              oldP.y >= work.anchorY + (work.lotHeight ?? 4))
+          ) {
+            resetTileToGrass(oldP, 0.5);
+          }
+        }
+        const compound = assignCompoundLot(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 2,
+          work.lotHeight ?? 4,
+          'port',
+          3,
+          work.variant ?? 0,
+          1.75
+        );
+        ensureTileConnectedToMainRoad(state, compound);
+        state.mapVersion += 1;
+      } else {
+        upgradeExistingLandmarks(state, 'port', 3);
+        if (getCruisePortNavigationInfo(state).targetPortAnchor === null) {
+          placePortOnRiverfront(state, true, 3);
+        }
+      }
+      state.pendingSounds.push({ type: 'bridge' });
+      pushNews(
+        state,
+        'Terminal Internacional de Cruzeiros 2×4 (Nv. 3) concluído em trecho fluvial livre de pontes!',
+        'milestone'
+      );
+    } else {
+      upgradeExistingLandmarks(state, 'port', targetPortLv);
+      upgradeTopBuildings(state, 3, 'commercial');
+      state.pendingSounds.push({ type: 'milestone' });
+      pushNews(
+        state,
+        'Zona Franca & Hub Marítimo Global concluídos! Comércio exterior em capacidade máxima!',
+        'milestone'
+      );
+    }
+  } else if (actionId === 'airport_evolution') {
+    const targetAirLv = Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
+    const { w, h } = AIRPORT_FOOTPRINT_BY_LEVEL[targetAirLv];
+    let placed: Tile | null = null;
+    if (
+      typeof work.anchorX === 'number' &&
+      typeof work.anchorY === 'number' &&
+      canUseReservedRectForLandmark(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? w,
+        work.lotHeight ?? h,
+        'airport'
+      )
+    ) {
+      for (const oldA of state.tiles) {
+        if (
+          oldA.type === 'airport' &&
+          (oldA.x < work.anchorX ||
+            oldA.x >= work.anchorX + (work.lotWidth ?? w) ||
+            oldA.y < work.anchorY ||
+            oldA.y >= work.anchorY + (work.lotHeight ?? h))
+        ) {
+          resetTileToGrass(oldA, 0.5);
+        }
+      }
+      const compound = assignCompoundLot(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? w,
+        work.lotHeight ?? h,
+        'airport',
+        targetAirLv,
+        work.variant ?? 0,
+        1.85
+      );
+      ensureTileConnectedToMainRoad(state, compound);
+      state.mapVersion += 1;
+      placed = compound[0] ?? null;
+    }
+    if (!placed) {
+      if (tier === 1) {
+        placed = placeLandmarkOnBestSlot(state, 'airport', true, 1);
+        if (!placed) upgradeExistingLandmarks(state, 'airport', 2);
+      } else {
+        const count = upgradeExistingLandmarks(state, 'airport', targetAirLv);
+        if (count === 0) placeLandmarkOnBestSlot(state, 'airport', true, targetAirLv);
+      }
+    }
+    if (tier >= 4) {
+      upgradeTopBuildings(state, 4);
+    }
+    state.pendingSounds.push({ type: 'milestone' });
+    pushNews(
+      state,
+      tier === 1
+        ? `Complexo Aeroportuário ${work.lotWidth ?? 4}×${work.lotHeight ?? 10} (Nv. 1) concluído e aberto para pousos e decolagens!`
+        : tier === 2
+          ? 'Aeroporto evoluído para Médio 8×16 (Nv. 2)! Torre ATC com radar e terminal de vidro em operação!'
+          : tier === 3
+            ? 'Aeroporto Grande Internacional (Nv. 3) concluído! Rotas intercontinentais ativas!'
+            : 'Megahub Aeroespacial & Ponte Aérea Mundial concluídos! Pixópolis conectada ao planeta!',
+      'milestone'
+    );
+  } else if (actionId === 'shopping_evolution') {
+    const targetShopLv = Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
+    const { w, h } = SHOPPING_FOOTPRINT_BY_LEVEL[targetShopLv];
+    let placed: Tile | null = null;
+    if (
+      typeof work.anchorX === 'number' &&
+      typeof work.anchorY === 'number' &&
+      canUseReservedRectForLandmark(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? w,
+        work.lotHeight ?? h,
+        'shopping'
+      )
+    ) {
+      for (const oldS of state.tiles) {
+        if (
+          oldS.type === 'shopping' &&
+          (oldS.x < work.anchorX ||
+            oldS.x >= work.anchorX + (work.lotWidth ?? w) ||
+            oldS.y < work.anchorY ||
+            oldS.y >= work.anchorY + (work.lotHeight ?? h))
+        ) {
+          resetTileToGrass(oldS, 0.5);
+        }
+      }
+      const compound = assignCompoundLot(
+        state,
+        work.anchorX,
+        work.anchorY,
+        work.lotWidth ?? w,
+        work.lotHeight ?? h,
+        'shopping',
+        targetShopLv,
+        work.variant ?? 0,
+        1.85
+      );
+      ensureTileConnectedToMainRoad(state, compound);
+      state.mapVersion += 1;
+      placed = compound[0] ?? null;
+    }
+    if (!placed) {
+      placeOrExpandShoppingComplex(state, targetShopLv, true);
+    }
+    if (tier >= 2) {
+      upgradeTopBuildings(state, tier === 3 ? 3 : 2, 'commercial');
+    }
+    state.pendingSounds.push({ type: 'milestone' });
+    const sizeLabel =
+      targetShopLv === 3
+        ? 'Shopping Grande 9×9 (Grand Megamall · Nv. 3)'
+        : targetShopLv === 2
+          ? 'Shopping Médio 8×8 (Metropolitano · Nv. 2)'
+          : 'Shopping Pequeno 6×6 (Galleria Regional · Nv. 1)';
+    pushNews(
+      state,
+      `${sizeLabel} concluído e inaugurado com conexão viária e praça comercial!`,
+      'milestone'
+    );
+  } else if (actionId === 'landmark_project') {
+    if (tier === 1) {
+      let built = false;
+      if (
+        typeof work.anchorX === 'number' &&
+        typeof work.anchorY === 'number' &&
+        canUseReservedRectForLandmark(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 4,
+          work.lotHeight ?? 3
+        )
+      ) {
+        const compound = assignCompoundLot(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 4,
+          work.lotHeight ?? 3,
+          'stadium',
+          1,
+          work.variant ?? 0,
+          1.85,
+          'soccer_stadium'
+        );
+        ensureTileConnectedToMainRoad(state, compound);
+        state.mapVersion += 1;
+        built = compound.length > 0;
+      }
+      if (!built) placeLandmarkOnBestSlot(state, 'stadium', true, 1);
+      state.pendingSounds.push({ type: 'milestone' });
+      pushNews(
+        state,
+        `Estádio de Futebol ${work.lotWidth ?? 4}×${work.lotHeight ?? 3} concluído! Esporte e lazer elevam a felicidade da cidade!`,
+        'milestone'
+      );
+    } else if (tier === 2) {
+      let built = false;
+      if (
+        typeof work.anchorX === 'number' &&
+        typeof work.anchorY === 'number' &&
+        canUseReservedRectForLandmark(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 3,
+          work.lotHeight ?? 3
+        )
+      ) {
+        const compound = assignCompoundLot(
+          state,
+          work.anchorX,
+          work.anchorY,
+          work.lotWidth ?? 3,
+          work.lotHeight ?? 3,
+          'park',
+          ESTABLISHMENT_MAP.amusement_park.hostLevel,
+          work.variant ?? 0,
+          1.85,
+          'amusement_park'
+        );
+        ensureTileConnectedToMainRoad(state, compound);
+        state.mapVersion += 1;
+        built = compound.length > 0;
+      }
+      if (!built) {
+        built = placeSpecificEstablishmentOnBestSlot(state, 'amusement_park', true);
+      }
+      if (!built) {
+        plantImmediateParks(state, 3);
+      }
+      state.pendingSounds.push({ type: 'milestone' });
+      pushNews(
+        state,
+        'Grande Parque de Diversões concluído e inaugurado! Fluxo de visitantes e turismo disparam!',
+        'milestone'
+      );
+    } else {
+      if (state.stats.stadiumCount < 2) {
+        if (
+          typeof work.anchorX === 'number' &&
+          typeof work.anchorY === 'number' &&
+          canUseReservedRectForLandmark(
+            state,
+            work.anchorX,
+            work.anchorY,
+            work.lotWidth ?? 4,
+            work.lotHeight ?? 3
+          )
+        ) {
+          const compound = assignCompoundLot(
+            state,
+            work.anchorX,
+            work.anchorY,
+            work.lotWidth ?? 4,
+            work.lotHeight ?? 3,
+            'stadium',
+            1,
+            work.variant ?? 0,
+            1.85,
+            'soccer_stadium'
+          );
+          ensureTileConnectedToMainRoad(state, compound);
+          state.mapVersion += 1;
+        } else {
+          placeLandmarkOnBestSlot(state, 'stadium', true, 1);
+        }
+      }
+      upgradeTopBuildings(state, 4);
+      state.pendingSounds.push({ type: 'milestone' });
+      pushNews(
+        state,
+        'Distrito Metropolitano & Arena Global concluídos! Grande salto econômico e urbano!',
+        'milestone'
+      );
+    }
+  }
+
+  // Advance work line tier ONLY upon true project completion!
+  const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
+  const maxTier = lineSpec ? lineSpec.tiers.length : 4;
+  const currentTier = state.workTiers[actionId] ?? 1;
+  state.workTiers[actionId] = Math.min(maxTier, Math.max(currentTier, tier + 1));
+}
+
 /** Execute one of the progressive evolving Emergency / Landmark Works */
 export function executeEmergencyAction(
   state: CityState,
@@ -6205,6 +7865,10 @@ export function executeEmergencyAction(
       executedTitle: res.resolvedTitle ? `Conter ${res.resolvedTitle}` : undefined,
       evolvedToTier: 1,
     };
+  }
+
+  if (!Array.isArray(state.pendingWorks)) {
+    state.pendingWorks = [];
   }
 
   const offers = getEmergencyOffers(state);
@@ -6252,105 +7916,293 @@ export function executeEmergencyAction(
     }
   };
 
+  // Immediate project (0 durationMonths): Toll Plaza
+  if (offer.durationMonths <= 1 || actionId === 'toll_plaza_project') {
+    if (actionId === 'toll_plaza_project') {
+      ensureExternalHighwayConnected(state, state.externalHighway?.edge);
+      if (!state.tollPlaza) {
+        state.tollPlaza = createInitialTollPlaza();
+      }
+      state.tollPlaza.built = true;
+      state.tollPlaza.tariff = state.tollPlaza.tariff ?? 'medium';
+      const tollTile = state.externalHighway
+        ? getTile(state, state.externalHighway.tollX, state.externalHighway.tollY)
+        : null;
+      if (tollTile) {
+        tollTile.evolveFlash = 1.8;
+      }
+      reconcileRoadHierarchy(state);
+      pushNews(
+        state,
+        'Praça de Pedágio inaugurada na Rodovia Externa! Ajuste a tarifa (Baixa, Média ou Alta) em Finanças ou clicando no pedágio.',
+        'milestone'
+      );
+    }
+
+    const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
+    const maxTier = lineSpec ? lineSpec.tiers.length : 4;
+    const nextTier = Math.min(maxTier, tier + 1);
+    state.workTiers[actionId] = nextTier;
+    state.pendingSounds.push({ type: 'emergency' });
+    recomputeFieldsAndStats(state);
+    return {
+      ok: true,
+      executedTitle: offer.title,
+      evolvedToTier: nextTier,
+    };
+  }
+
+  // Multi-month public work: reserve lot(s)/construction site on the map and deliver upon real completion!
+  const work: PendingConstructionWork = {
+    id: `work_${actionId}_${state.tick}_${Math.floor(nextRandom(state) * 10000)}`,
+    actionId,
+    tier,
+    title: offer.title,
+    totalMonths: offer.durationMonths,
+    remainingMonths: offer.durationMonths,
+  };
+
   if (actionId === 'sports_center_project') {
-    upsertBoost(offer.title, offer.durationMonths);
-    const placed = placeSpecificEstablishmentOnBestSlot(state, 'sports_court', true);
-    if (!placed) {
-      plantImmediateParks(state, 2);
+    const slot = findBestEstablishmentRect(state, 'sports_court', true);
+    work.variant = pickEstablishmentVariation(state, 'sports_court');
+    if (slot) {
+      reserveCompoundConstructionRect(
+        state,
+        slot.x,
+        slot.y,
+        slot.fw,
+        slot.fh,
+        work,
+        'commercial',
+        ESTABLISHMENT_MAP.sports_court.hostLevel,
+        [],
+        'sports_court'
+      );
     }
     pushNews(
       state,
-      `${offer.title} inaugurado! Novo Centro Esportivo Pequeno eleva o lazer e a qualidade de vida nos bairros.`,
-      'milestone'
+      `Canteiro de obras aberto: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      'info'
     );
   } else if (actionId === 'bus_transit_project') {
-    upsertBoost(offer.title, offer.durationMonths);
-    const placed = placeTransitStationOnBestSlot(state, 'bus_station', 2, tier);
-    if (tier >= 2) {
-      tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 8);
+    const slots = findTransitStationSlots(state, 'bus_station', 2);
+    const existingStations = state.tiles.filter((t) => t.type === 'bus_station' && !t.construction);
+    const coords: Array<{ x: number; y: number }> = [];
+    for (const s of slots) {
+      clearObstructionAndReserveTile(state, s, [], {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: 'bus_station',
+        targetLevel: tier,
+        isUpgrade: false,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      });
+      coords.push({ x: s.x, y: s.y });
     }
+    for (const st of existingStations) {
+      if ((st.level || 1) < tier && !st.construction) {
+        st.construction = {
+          workId: work.id,
+          actionId,
+          title: offer.title,
+          targetType: 'bus_station',
+          targetLevel: tier,
+          isUpgrade: true,
+          lotWidth: 1,
+          lotHeight: 1,
+          lotDx: 0,
+          lotDy: 0,
+          totalMonths: work.totalMonths,
+          remainingMonths: work.remainingMonths,
+        };
+        coords.push({ x: st.x, y: st.y });
+      }
+    }
+    work.targetCoords = coords;
+    work.targetType = 'bus_station';
+    work.targetLevel = tier;
     pushNews(
       state,
-      `${offer.title} inaugurado! ${placed > 0 ? `${placed} terminais de ônibus` : 'Frota modernizada'} e ônibus urbanos agora circulam pelos bairros.`,
-      'milestone'
+      `Obras iniciadas: ${offer.title} (${offer.durationMonths} meses para entrega dos terminais).`,
+      'info'
     );
   } else if (actionId === 'metro_transit_project') {
-    upsertBoost(offer.title, offer.durationMonths);
-    const placed = placeTransitStationOnBestSlot(state, 'metro_station', 2, tier);
-    tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10);
+    const slots = findTransitStationSlots(state, 'metro_station', 2);
+    const existingStations = state.tiles.filter((t) => t.type === 'metro_station' && !t.construction);
+    const coords: Array<{ x: number; y: number }> = [];
+    for (const s of slots) {
+      clearObstructionAndReserveTile(state, s, [], {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: 'metro_station',
+        targetLevel: tier,
+        isUpgrade: false,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      });
+      coords.push({ x: s.x, y: s.y });
+    }
+    for (const st of existingStations) {
+      if ((st.level || 1) < tier && !st.construction) {
+        st.construction = {
+          workId: work.id,
+          actionId,
+          title: offer.title,
+          targetType: 'metro_station',
+          targetLevel: tier,
+          isUpgrade: true,
+          lotWidth: 1,
+          lotHeight: 1,
+          lotDx: 0,
+          lotDy: 0,
+          totalMonths: work.totalMonths,
+          remainingMonths: work.remainingMonths,
+        };
+        coords.push({ x: st.x, y: st.y });
+      }
+    }
+    work.targetCoords = coords;
+    work.targetType = 'metro_station';
+    work.targetLevel = tier;
     pushNews(
       state,
-      `${offer.title} concluído! ${placed > 0 ? `${placed} novas Estações de Metrô` : 'Malha metroviária'} conectam os bairros no subsolo.`,
-      'milestone'
-    );
-  } else if (actionId === 'toll_plaza_project') {
-    ensureExternalHighwayConnected(state, state.externalHighway?.edge);
-    if (!state.tollPlaza) {
-      state.tollPlaza = createInitialTollPlaza();
-    }
-    state.tollPlaza.built = true;
-    state.tollPlaza.tariff = state.tollPlaza.tariff ?? 'medium';
-    const tollTile = state.externalHighway
-      ? getTile(state, state.externalHighway.tollX, state.externalHighway.tollY)
-      : null;
-    if (tollTile) {
-      tollTile.evolveFlash = 1.8;
-    }
-    reconcileRoadHierarchy(state);
-    pushNews(
-      state,
-      'Praça de Pedágio inaugurada na Rodovia Externa! Ajuste a tarifa (Baixa, Média ou Alta) em Finanças ou clicando no pedágio.',
-      'milestone'
+      `Escavações iniciadas: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      'info'
     );
   } else if (actionId === 'environmental_cleanup') {
+    // Explicit ongoing environmental cleanup crew buff + reserved park slots completed at term end
     upsertBoost(offer.title, offer.durationMonths);
-    const planted = plantImmediateParks(state, tier * 2);
+    const parkTargets = tier * 2;
+    const openSlots: Tile[] = [];
+    for (const t of state.tiles) {
+      if (
+        (t.type === 'grass' || t.type === 'forest') &&
+        !t.construction &&
+        getOrthoNeighbors(state, t.x, t.y).some((nt) => nt.type === 'road')
+      ) {
+        openSlots.push(t);
+      }
+    }
+    const coords: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < parkTargets && openSlots.length > 0; i++) {
+      const idx = Math.floor(nextRandom(state) * openSlots.length);
+      const slot = openSlots.splice(idx, 1)[0];
+      slot.construction = {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: 'park',
+        targetLevel: 1,
+        isUpgrade: false,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      };
+      slot.evolveFlash = 0.85;
+      coords.push({ x: slot.x, y: slot.y });
+    }
+    work.targetCoords = coords;
+    work.targetType = 'park';
     pushNews(
       state,
-      `${offer.title} (${offer.tierLabel}) concluído! ${planted} parques plantados e ar purificado por ${offer.durationMonths} meses.`,
+      `${offer.title} em execução! Equipes despoluem o ar e preparam ${parkTargets} parques (${offer.durationMonths} meses).`,
       'good'
     );
   } else if (actionId === 'revitalization') {
+    // Explicit ongoing anti-abandonment shield + multi-month restoration scaffolds on abandoned buildings
     upsertBoost(offer.title, offer.durationMonths);
-    const abandonedTiles = state.tiles.filter((t) => t.type === 'abandoned');
+    const abandonedTiles = state.tiles.filter((t) => t.type === 'abandoned' && !t.construction);
     const maxRestore = tier >= 3 ? abandonedTiles.length : tier === 2 ? 10 : 6;
-    let recovered = 0;
+    const coords: Array<{ x: number; y: number }> = [];
     for (let i = 0; i < Math.min(maxRestore, abandonedTiles.length); i++) {
       const t = abandonedTiles[i];
-      t.type = t.previousType ?? 'residential';
-      t.level = tier >= 2 && t.type !== 'industrial' ? 2 : 1;
-      t.age = 0;
-      t.evolveFlash = 1.75;
-      recovered++;
+      t.construction = {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: t.previousType ?? 'residential',
+        targetLevel: tier >= 2 ? 2 : 1,
+        isUpgrade: true,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      };
+      t.evolveFlash = 0.85;
+      coords.push({ x: t.x, y: t.y });
     }
-    const upgraded = tier >= 3 ? upgradeTopBuildings(state, tier === 4 ? 4 : 2) : 0;
+    work.targetCoords = coords;
+    work.isUpgrade = true;
     pushNews(
       state,
-      `${offer.title} (${offer.tierLabel}): ${recovered} recuperados${upgraded > 0 ? ` e ${upgraded} modernizados` : ''}!`,
+      `${offer.title} iniciada! Andaimes instalados em ${coords.length} imóveis (${offer.durationMonths} meses para entrega).`,
       'good'
     );
   } else if (actionId === 'tourism_festival') {
+    // Explicit festival campaign boost during execution + commercial upgrades delivered upon conclusion
     upsertBoost(offer.title, offer.durationMonths);
-    if (tier >= 2 && state.totalPopulation >= 20000 && state.stats.stadiumCount === 0) {
-      state.breakthroughCharge.entertainment = Math.min(
-        100,
-        state.breakthroughCharge.entertainment + 30
-      );
-    }
-    if (tier >= 3) {
-      upgradeTopBuildings(state, tier === 4 ? 4 : 2, 'commercial');
-    }
     pushNews(
       state,
-      `${offer.title} (${offer.tierLabel}) agita a cidade e multiplica o turismo por ${offer.durationMonths} meses!`,
+      `${offer.title} em andamento por ${offer.durationMonths} meses! Atrações aquecem o turismo e o comércio local.`,
       'milestone'
     );
   } else if (actionId === 'emergency_roadworks') {
-    upsertBoost(offer.title, offer.durationMonths);
     const roadTargets = [4, 6, 8, 10][tier - 1] ?? 8;
-    const { roadsLaid } = buildImmediateRoads(state, roadTargets, true);
-    const wideAvenueAdded =
-      tier >= 2 ? tryWidenAvenueNear(state, state.roadOriginX, state.roadOriginY, 10) : 0;
+    const { roadTiles, bridgeWaterTiles } = findRoadworkPlanCoords(state, roadTargets, true);
+    const coords: Array<{ x: number; y: number }> = [];
+    for (const rt of roadTiles) {
+      const plan = classifyPlannedRoadCell(state, rt.x, rt.y);
+      rt.construction = {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: 'road',
+        targetLevel: plan.corridorLevel,
+        isUpgrade: false,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      };
+      rt.evolveFlash = 0.85;
+      coords.push({ x: rt.x, y: rt.y });
+    }
+    for (const wt of bridgeWaterTiles) {
+      wt.construction = {
+        workId: work.id,
+        actionId,
+        title: offer.title,
+        targetType: 'bridge',
+        targetLevel: getCurrentBridgeLevel(state),
+        isUpgrade: false,
+        lotWidth: 1,
+        lotHeight: 1,
+        lotDx: 0,
+        lotDy: 0,
+        totalMonths: work.totalMonths,
+        remainingMonths: work.remainingMonths,
+      };
+      wt.evolveFlash = 0.85;
+      coords.push({ x: wt.x, y: wt.y });
+    }
     const targetBridgeLv =
       tier >= 4 && state.totalPopulation >= 22000
         ? 4
@@ -6359,148 +8211,193 @@ export function executeEmergencyAction(
           : tier >= 2 && state.totalPopulation >= 3500
             ? 2
             : 1;
-    const bridgesUpgraded =
-      targetBridgeLv >= 2 ? upgradeAllBridges(state, targetBridgeLv) : 0;
-    if (tier >= 3) {
-      upgradeTopBuildings(state, tier === 4 ? 3 : 2);
+    if (targetBridgeLv >= 2) {
+      for (const bt of state.tiles) {
+        if (bt.type === 'bridge' && (bt.level || 1) < targetBridgeLv && !bt.construction) {
+          bt.construction = {
+            workId: work.id,
+            actionId,
+            title: offer.title,
+            targetType: 'bridge',
+            targetLevel: targetBridgeLv,
+            isUpgrade: true,
+            lotWidth: 1,
+            lotHeight: 1,
+            lotDx: 0,
+            lotDy: 0,
+            totalMonths: work.totalMonths,
+            remainingMonths: work.remainingMonths,
+          };
+          coords.push({ x: bt.x, y: bt.y });
+        }
+      }
     }
-    const wideAveMsg = wideAvenueAdded > 0 ? ' + Avenida Larga 2×2' : '';
-    const bridgeMsg =
-      bridgesUpgraded > 0
-        ? targetBridgeLv >= 4
-          ? ' e alarga pontes do rio para Megaponte de 2 Espaços (Nv. 4)'
-          : ` e evolui pontes do rio para Nv. ${targetBridgeLv}`
-        : '';
+    work.targetCoords = coords;
     pushNews(
       state,
-      `${offer.title} (${offer.tierLabel}) abre ${roadsLaid} vias${wideAveMsg}${bridgeMsg} por ${offer.durationMonths} meses!`,
-      'good'
+      `Canteiros viários abertos: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      'info'
     );
   } else if (actionId === 'port_evolution') {
-    upsertBoost(offer.title, offer.durationMonths);
+    const targetPortLv = Math.max(1, Math.min(3, tier));
+    work.variant = Math.floor(nextRandom(state) * 4);
+    const existingPorts = state.tiles.filter((t) => t.type === 'port' && !t.construction);
     if (tier === 1) {
-      const placed = placePortOnRiverfront(state, true, 1);
-      if (!placed) {
-        upgradeExistingLandmarks(state, 'port', 2);
-        pushNews(
-          state,
-          'Porto Fluvial desbloqueado e integrado às rotas de navegação!',
-          'milestone'
-        );
-      }
-    } else if (tier === 2) {
-      const count = upgradeExistingLandmarks(state, 'port', 2);
-      if (count === 0) {
-        placePortOnRiverfront(state, true, 2);
-      } else {
-        pushNews(
-          state,
-          'Porto evoluído para Nível 2! Navio cargueiro e pátio de contêineres em operação.',
-          'milestone'
-        );
+      const slot = findBestPortReservationRect(state, 1);
+      if (slot) {
+        reserveCompoundConstructionRect(state, slot.x, slot.y, slot.fw, slot.fh, work, 'port', 1, []);
       }
     } else if (tier === 3) {
-      upgradeExistingLandmarks(state, 'port', 3);
-      if (getCruisePortNavigationInfo(state).targetPortAnchor === null) {
-        placePortOnRiverfront(state, true, 3);
+      const slot = findBestPortReservationRect(state, 3);
+      if (slot) {
+        reserveCompoundConstructionRect(state, slot.x, slot.y, slot.fw, slot.fh, work, 'port', 3, ['port']);
+      } else if (existingPorts.length > 0) {
+        for (const pt of existingPorts) {
+          pt.construction = {
+            workId: work.id,
+            actionId,
+            title: offer.title,
+            targetType: 'port',
+            targetLevel: targetPortLv,
+            isUpgrade: true,
+            lotWidth: pt.lotWidth ?? 1,
+            lotHeight: pt.lotHeight ?? 1,
+            lotDx: pt.lotDx ?? 0,
+            lotDy: pt.lotDy ?? 0,
+            totalMonths: work.totalMonths,
+            remainingMonths: work.remainingMonths,
+          };
+        }
+        work.targetCoords = existingPorts.map((p) => ({ x: p.x, y: p.y }));
       }
-      pushNews(
-        state,
-        'Terminal Internacional de Cruzeiros 2×4 (Nv. 3) concluído em trecho fluvial livre de pontes!',
-        'milestone'
-      );
+    } else if (existingPorts.length > 0) {
+      work.variant = existingPorts[0].variant;
+      work.isUpgrade = true;
+      for (const pt of existingPorts) {
+        pt.construction = {
+          workId: work.id,
+          actionId,
+          title: offer.title,
+          targetType: 'port',
+          targetLevel: targetPortLv,
+          isUpgrade: true,
+          lotWidth: pt.lotWidth ?? 1,
+          lotHeight: pt.lotHeight ?? 1,
+          lotDx: pt.lotDx ?? 0,
+          lotDy: pt.lotDy ?? 0,
+          totalMonths: work.totalMonths,
+          remainingMonths: work.remainingMonths,
+        };
+      }
+      work.targetCoords = existingPorts.map((p) => ({ x: p.x, y: p.y }));
     } else {
-      upgradeExistingLandmarks(state, 'port', 3);
-      upgradeTopBuildings(state, 3, 'commercial');
-      pushNews(
-        state,
-        'Zona Franca & Hub Marítimo Global inaugurados! Comércio exterior em capacidade máxima!',
-        'milestone'
-      );
+      const slot = findBestPortReservationRect(state, targetPortLv);
+      if (slot) {
+        reserveCompoundConstructionRect(state, slot.x, slot.y, slot.fw, slot.fh, work, 'port', targetPortLv, []);
+      }
     }
+    pushNews(
+      state,
+      `Obras portuárias iniciadas: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      'info'
+    );
   } else if (actionId === 'airport_evolution') {
-    upsertBoost(offer.title, offer.durationMonths);
-    if (tier === 1) {
-      const placed = placeLandmarkOnBestSlot(state, 'airport', true, 1);
-      if (!placed) {
-        upgradeExistingLandmarks(state, 'airport', 2);
-      }
-    } else if (tier === 2) {
-      const count = upgradeExistingLandmarks(state, 'airport', 2);
-      if (count === 0) {
-        placeLandmarkOnBestSlot(state, 'airport', true, 2);
-      } else {
-        pushNews(
+    const targetAirLv = Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
+    const slot = findBestAirportReservationRect(state, targetAirLv);
+    work.variant = slot?.existingAnchor ? slot.existingAnchor.variant : Math.floor(nextRandom(state) * 8);
+    if (slot) {
+      work.isUpgrade = Boolean(slot.existingAnchor);
+      reserveCompoundConstructionRect(
+        state,
+        slot.x,
+        slot.y,
+        slot.fw,
+        slot.fh,
+        work,
+        'airport',
+        targetAirLv,
+        ['airport']
+      );
+    }
+    pushNews(
+      state,
+      `Canteiro aeroportuário aberto: ${offer.title} (${offer.durationMonths} meses para inauguração).`,
+      'info'
+    );
+  } else if (actionId === 'shopping_evolution') {
+    const targetShopLv = Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
+    const slot = findBestShoppingReservationRect(state, targetShopLv);
+    work.variant = slot?.existingAnchor ? slot.existingAnchor.variant : Math.floor(nextRandom(state) * 8);
+    if (slot) {
+      work.isUpgrade = Boolean(slot.existingAnchor);
+      reserveCompoundConstructionRect(
+        state,
+        slot.x,
+        slot.y,
+        slot.fw,
+        slot.fh,
+        work,
+        'shopping',
+        targetShopLv,
+        ['shopping']
+      );
+    }
+    pushNews(
+      state,
+      `Obras iniciadas: ${offer.title} (${offer.durationMonths} meses para inauguração).`,
+      'info'
+    );
+  } else if (actionId === 'landmark_project') {
+    if (tier === 1 || (tier >= 3 && state.stats.stadiumCount < 2)) {
+      const slot = findBestStadiumRect(state, true);
+      work.variant = pickEstablishmentVariation(state, 'soccer_stadium');
+      if (slot) {
+        reserveCompoundConstructionRect(
           state,
-          'Aeroporto evoluído para Médio (Nv. 2)! Torre de controle ATC com radar e terminal de vidro inaugurados!',
-          'milestone'
+          slot.x,
+          slot.y,
+          slot.fw,
+          slot.fh,
+          work,
+          'stadium',
+          1,
+          [],
+          'soccer_stadium'
         );
       }
-    } else if (tier === 3) {
-      upgradeExistingLandmarks(state, 'airport', 3);
-      if (state.stats.airportCount === 0) {
-        placeLandmarkOnBestSlot(state, 'airport', true, 3);
-      }
-      pushNews(
-        state,
-        'Aeroporto Grande Internacional (Nv. 3) inaugurado! Rotas intercontinentais ativas!',
-        'milestone'
-      );
-    } else {
-      upgradeExistingLandmarks(state, 'airport', 3);
-      upgradeTopBuildings(state, 4);
-      pushNews(
-        state,
-        'Megahub Aeroespacial & Ponte Aérea Mundial inaugurados! Pixópolis conectada ao planeta!',
-        'milestone'
-      );
-    }
-  } else if (actionId === 'shopping_evolution') {
-    upsertBoost(offer.title, offer.durationMonths);
-    const targetShoppingLv = Math.max(1, Math.min(3, tier));
-    placeOrExpandShoppingComplex(state, targetShoppingLv, true);
-    if (tier >= 2) {
-      upgradeTopBuildings(state, tier === 3 ? 3 : 2, 'commercial');
-    }
-  } else if (actionId === 'landmark_project') {
-    upsertBoost(offer.title, offer.durationMonths);
-    if (tier === 1) {
-      placeLandmarkOnBestSlot(state, 'stadium', true, 1);
     } else if (tier === 2) {
-      const placedPark = placeSpecificEstablishmentOnBestSlot(state, 'amusement_park', true);
-      if (!placedPark) {
-        plantImmediateParks(state, 3);
+      const slot = findBestEstablishmentRect(state, 'amusement_park', true);
+      work.variant = pickEstablishmentVariation(state, 'amusement_park');
+      if (slot) {
+        reserveCompoundConstructionRect(
+          state,
+          slot.x,
+          slot.y,
+          slot.fw,
+          slot.fh,
+          work,
+          'park',
+          ESTABLISHMENT_MAP.amusement_park.hostLevel,
+          [],
+          'amusement_park'
+        );
       }
-      pushNews(
-        state,
-        'Grande Parque de Diversões inaugurado! Fluxo de visitantes e turismo disparam!',
-        'milestone'
-      );
-    } else {
-      if (state.stats.stadiumCount < 2) {
-        placeLandmarkOnBestSlot(state, 'stadium', true, 1);
-      }
-      upgradeTopBuildings(state, 4);
-      pushNews(
-        state,
-        'Distrito Metropolitano & Arena Global inaugurados! Grande salto econômico e urbano!',
-        'milestone'
-      );
     }
+    pushNews(
+      state,
+      `Canteiro monumental aberto: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      'info'
+    );
   }
 
-  // Evolve this work line to the next, more advanced & complex phase!
-  const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
-  const maxTier = lineSpec ? lineSpec.tiers.length : 4;
-  const nextTier = Math.min(maxTier, tier + 1);
-  state.workTiers[actionId] = nextTier;
-
+  state.pendingWorks.push(work);
+  state.mapVersion += 1;
   state.pendingSounds.push({ type: 'emergency' });
   recomputeFieldsAndStats(state);
   return {
     ok: true,
     executedTitle: offer.title,
-    evolvedToTier: nextTier,
+    evolvedToTier: tier,
   };
 }
 
@@ -6526,7 +8423,7 @@ function triggerSystemBreakthrough(state: CityState, area: BudgetAreaKey): void 
     upgradeTopBuildings(state, 2, 'commercial');
     pushNews(
       state,
-      'SALTO CULTURAL & LAZER! Novas praças e comércio cultural aquecem a cidade!',
+      'SALTO DE CULTURA & LAZER! Novas praças e comércio cultural aquecem a cidade!',
       'milestone'
     );
   } else if (area === 'education') {
@@ -6552,7 +8449,7 @@ function triggerSystemBreakthrough(state: CityState, area: BudgetAreaKey): void 
     }
     pushNews(
       state,
-      `REVOLUÇÃO ECOLÓGICA! Superinvestimento em Bem-estar cria ${planted} parques e purifica o ar!`,
+      `REVOLUÇÃO ECOLÓGICA! Superinvestimento em Saúde & Meio Ambiente cria ${planted} parques e purifica o ar!`,
       'milestone'
     );
   } else if (area === 'security') {
@@ -6594,14 +8491,14 @@ function triggerSystemBreakthrough(state: CityState, area: BudgetAreaKey): void 
       state.activeBoosts.push({
         id: `breakthrough_tour_${state.tick}`,
         actionId: 'tourism_festival',
-        label: 'Boom Turístico Global',
+        label: 'Boom Turismo & Comércio',
         tier: 2,
         remainingMonths: 3,
       });
     }
     pushNews(
       state,
-      `BOOM TURÍSTICO GLOBAL! Pixópolis recebe visitantes internacionais e +$${windfall.toLocaleString('pt-BR')} em caixa!`,
+      `BOOM DE TURISMO & COMÉRCIO! Pixópolis recebe visitantes externos e +$${windfall.toLocaleString('pt-BR')} em caixa!`,
       'milestone'
     );
   }
@@ -6860,7 +8757,16 @@ export function stepCityTick(state: CityState): void {
   const festivalBoost = festTier > 0 ? 1.25 + festTier * 0.25 : 1.0;
   const revitTier = getBoostTier(state, 'revitalization');
   const revitShield = revitTier > 0 ? Math.max(0.15, 0.4 - revitTier * 0.08) : 1.0;
-  const fairTax = computeFairTaxRate(state.stats.serviceCoverageAvg, state.difficulty);
+  const fairTax = computeFairTaxRate(
+    state.stats.serviceCoverageAvg,
+    state.difficulty,
+    state.stats.coverage.education.coveragePct
+  );
+  const maxUpgradesThisTick = getScaledMaxUpgradesPerTick(
+    state.totalPopulation,
+    state.gridWidth,
+    state.gridHeight
+  );
 
   // Collect active frontier lists strictly following the Plano Diretor Viário
   const roadFrontier: Array<{
@@ -6883,7 +8789,7 @@ export function stepCityTick(state: CityState): void {
       for (const dir of ORTHO_DIRS) {
         const target = getTile(state, t.x + dir[0], t.y + dir[1]);
         if (!target) continue;
-        if (target.type === 'water' && t.type === 'road') {
+        if (target.type === 'water' && t.type === 'road' && !target.construction) {
           const plan = classifyPlannedRoadCell(state, t.x, t.y);
           // Prioritize river bridges on arterial Avenidas & Estradas
           const bridgePrio = plan.onHighwayAxis ? 2.4 : plan.onAvenueAxis ? 2.0 : 0.7;
@@ -6895,6 +8801,7 @@ export function stepCityTick(state: CityState): void {
             corridorLevel: plan.corridorLevel,
           });
         } else if (
+          !target.construction &&
           (target.type === 'grass' || target.type === 'forest') &&
           target.x > 0 &&
           target.y > 0 &&
@@ -6927,6 +8834,7 @@ export function stepCityTick(state: CityState): void {
             corridorLevel: targetPlan.corridorLevel,
           });
         } else if (
+          !target.construction &&
           (target.type === 'abandoned' ||
             ((target.type === 'rural' || target.type === 'residential' || target.type === 'commercial') &&
               target.level <= 1 &&
@@ -6951,8 +8859,10 @@ export function stepCityTick(state: CityState): void {
         }
       }
     } else if (isBuildingType(t.type)) {
-      buildings.push(t);
-    } else if (t.type === 'grass' || t.type === 'forest') {
+      if (!t.construction) {
+        buildings.push(t);
+      }
+    } else if ((t.type === 'grass' || t.type === 'forest') && !t.construction) {
       // Reserve planned road corridors (right-of-way) and require adjacency to the main connected road network!
       const cellPlan = classifyPlannedRoadCell(state, t.x, t.y);
       if (!cellPlan.isPlanned) {
@@ -7104,7 +9014,7 @@ export function stepCityTick(state: CityState): void {
   // (NEVER touch intentional 2×2 Wide Avenues / Boulevards!)
   for (let i = 0; i < state.tiles.length; i++) {
     const rt = state.tiles[i];
-    if (rt.type !== 'road') continue;
+    if (rt.type !== 'road' || rt.construction) continue;
     if (
       isExternalBorderRoadTile(state, rt.x, rt.y) ||
       isTollPlazaTile(state, rt.x, rt.y) ||
@@ -7204,20 +9114,21 @@ export function stepCityTick(state: CityState): void {
       : 0.02;
 
     let wRes =
-      (2.2 + wellCov * 1.5 + eduCov * 1.15 + entCov * 0.85 + adj.residential * 1.15 + adj.park * 0.75 + adj.water * 0.4 + adj.landmark * 0.45) *
+      (2.1 + wellCov * 1.45 + eduCov * 1.1 + entCov * 1.15 + adj.residential * 1.15 + adj.park * 0.75 + adj.water * 0.4 + adj.landmark * 0.45) *
       tm.residentialWeightMultiplier *
       resTaxFactor;
+    const secComMult = secCov < 0.85 ? Math.max(0.75, 0.75 + (secCov / 0.85) * 0.25) : 1.0;
     let wCom =
-      (1.15 + entCov * 1.45 + tourCov * 1.25 + infraCov * 0.65 + adj.commercial * 1.2 + adj.residential * 0.25 + adj.landmark * 1.15) *
+      (1.1 + entCov * 1.55 + tourCov * 1.35 * secComMult + infraCov * 0.65 + adj.commercial * 1.2 + adj.residential * 0.25 + adj.landmark * 1.15) *
       tm.commercialWeightMultiplier *
       festivalBoost *
       comTaxFactor;
     let wInd =
-      (0.85 + infraCov * 0.95 + adj.industrial * 1.3 - wellCov * 0.32 - eduCov * 0.22) *
+      (0.85 + infraCov * 0.95 + adj.industrial * 1.3 - wellCov * 0.35 - eduCov * 0.25) *
       tm.industrialWeightMultiplier *
       indTaxFactor;
     let wPark =
-      (0.28 + wellCov * 1.65 + tourCov * 0.6 + adj.water * 0.45 + (tile.pollution > 22 ? 0.75 : 0)) *
+      (0.28 + wellCov * 1.85 + tourCov * 0.55 + adj.water * 0.45 + (tile.pollution > 22 ? 0.75 : 0)) *
       tm.parkWeightMultiplier;
 
     // Cohesive Neighborhood District Specialization (Bairros Residenciais, Comerciais & Distritos Industriais):
@@ -7339,6 +9250,7 @@ export function stepCityTick(state: CityState): void {
       const canUse = (cand: Tile | null) =>
         Boolean(
           cand &&
+            !cand.construction &&
             (cand.type === 'grass' || cand.type === 'forest') &&
             !classifyPlannedRoadCell(state, cand.x, cand.y).isPlanned
         );
@@ -7376,6 +9288,7 @@ export function stepCityTick(state: CityState): void {
     const marinaSpec = ESTABLISHMENT_MAP.river_marina;
     for (let i = 0; i < state.tiles.length; i++) {
       const st = state.tiles[i];
+      if (st.construction) continue;
       if (st.type !== 'grass' && st.type !== 'forest' && (st.type !== 'park' || st.establishmentId)) {
         continue;
       }
@@ -7446,7 +9359,7 @@ export function stepCityTick(state: CityState): void {
       const taxOk = state.taxes.residential <= fairTax + 1.5;
       if (state.money >= 0 && taxOk && tile.pollution < 45 && state.globalHappiness >= 48) {
         const recChance =
-          GROWTH_CONFIG.baseRecoveryChance + secCov * 0.09 + wellCov * 0.04;
+          GROWTH_CONFIG.baseRecoveryChance + secCov * 0.11 + wellCov * 0.04;
         if (nextRandom(state) < recChance) {
           const restoredType = tile.previousType ?? 'residential';
           for (const ct of getCompoundTiles(state, tile)) {
@@ -7493,12 +9406,16 @@ export function stepCityTick(state: CityState): void {
     if (secCov < 0.45 && tile.age > 14) {
       decayRisk += (0.45 - secCov) * 0.045;
     }
-    if (tile.type === 'residential' && entCov < 0.35 && tile.age > 18) {
-      decayRisk += (0.35 - entCov) * 0.025;
+    if (tile.type === 'residential' && entCov < 0.40 && tile.age > 18) {
+      decayRisk += (0.40 - entCov) * 0.028;
+    }
+    // High Cultura & Lazer boosts resident retention and reduces urban churn
+    if (tile.type === 'residential' && entCov > 1.05) {
+      decayRisk *= Math.max(0.72, 1 - (entCov - 1.0) * 0.85);
     }
 
     if (decayRisk > 0) {
-      const securityMitigation = 1 / (1 + secCov * 2.2);
+      const securityMitigation = 1 / (1 + secCov * 2.4);
       const effectiveMitigation =
         sectorTaxExcess >= 4 ? Math.max(0.55, securityMitigation) : securityMitigation;
       const finalDecayChance =
@@ -7765,7 +9682,7 @@ export function stepCityTick(state: CityState): void {
         continue;
       }
 
-      if (upgradesThisTick >= GROWTH_CONFIG.maxUpgradesPerTick) {
+      if (upgradesThisTick >= maxUpgradesThisTick) {
         continue;
       }
 
@@ -7897,7 +9814,7 @@ export function stepCityTick(state: CityState): void {
           const east = getTile(state, tile.x + 1, tile.y);
           const south = getTile(state, tile.x, tile.y + 1);
           const canAbsorbNeighbor = (nb: Tile | null) => {
-            if (!nb || nb.establishmentId) return false;
+            if (!nb || nb.construction || nb.establishmentId) return false;
             if (classifyPlannedRoadCell(state, nb.x, nb.y).isPlanned) return false;
             if ((nb.lotWidth ?? 1) !== 1 || (nb.lotHeight ?? 1) !== 1) return false;
             if (nb.type === tile.type) return true;
@@ -7999,7 +9916,10 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
   }
 
   return CIVIC_MILESTONES.map((m) => {
-    const unlocked = Boolean(state.milestonesReached[m.id]);
+    const legacy20k =
+      (m.id === 'civic_stadium_20k' || m.id === 'civic_toll_20k') &&
+      Boolean(state.milestonesReached.civic_stadium_toll_20k);
+    const unlocked = Boolean(state.milestonesReached[m.id] || legacy20k);
     const progressPct = unlocked
       ? 100
       : Math.max(0, Math.min(99, Math.floor((pop / Math.max(1, m.populationTarget)) * 100)));
@@ -8021,9 +9941,8 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
     else if (m.id === 'civic_shopping_lv2') built = maxShoppingLv >= 2;
     else if (m.id === 'civic_shopping_lv3') built = maxShoppingLv >= 3;
     else if (m.id === 'civic_vertical_10k') built = unlocked;
-    else if (m.id === 'civic_stadium_toll_20k') {
-      built = state.stats.stadiumCount >= 1 || Boolean(state.tollPlaza?.built);
-    }
+    else if (m.id === 'civic_stadium_20k') built = state.stats.stadiumCount >= 1;
+    else if (m.id === 'civic_toll_20k') built = Boolean(state.tollPlaza?.built);
 
     return {
       id: m.id,
@@ -8047,15 +9966,21 @@ export function dismissMilestoneBanner(state: CityState): void {
 
 /**
  * Evaluate population-based Civic Milestones automatically:
- * Unlocks 10 staged population milestones (1.2k -> 30k+), awards civic grants,
+ * Unlocks staged population milestones (1.2k -> 30k+), awards civic grants,
  * and notifies the mayor that the new project is ready to be ordered & paid in Obras!
  */
 export function evaluateCivicMilestones(state: CityState): string[] {
   const triggered: string[] = [];
   const pop = state.totalPopulation;
+  const legacy20k = Boolean(state.milestonesReached.civic_stadium_toll_20k);
 
   for (const m of CIVIC_MILESTONES) {
     if (pop < m.populationTarget || state.milestonesReached[m.id]) continue;
+
+    if (legacy20k && (m.id === 'civic_stadium_20k' || m.id === 'civic_toll_20k')) {
+      state.milestonesReached[m.id] = true;
+      continue;
+    }
 
     state.milestonesReached[m.id] = true;
     state.money += m.rewardCash;
@@ -8126,7 +10051,12 @@ export function closeFinancialMonth(state: CityState): void {
         'warning'
       );
     }
-  } else if (resExcess <= -1.5 && state.globalHappiness >= 64) {
+  } else if (
+    (resExcess <= -1.5 && state.globalHappiness >= 64) ||
+    (getCovRatio(state, 'entertainment') >= 1.1 &&
+      resExcess <= -0.4 &&
+      state.globalHappiness >= 68)
+  ) {
     const openSlots: Tile[] = [];
     for (const t of state.tiles) {
       if (
@@ -8138,7 +10068,8 @@ export function closeFinancialMonth(state: CityState): void {
         openSlots.push(t);
       }
     }
-    const arrivals = Math.min(1, openSlots.length);
+    const cultureArrivalCap = getCovRatio(state, 'entertainment') >= 1.15 ? 2 : 1;
+    const arrivals = Math.min(cultureArrivalCap, openSlots.length);
     for (let i = 0; i < arrivals; i++) {
       const idx = Math.floor(nextRandom(state) * openSlots.length);
       const slot = openSlots.splice(idx, 1)[0];
@@ -8171,6 +10102,25 @@ export function closeFinancialMonth(state: CityState): void {
       }
     }
     state.activeBoosts = remaining;
+  }
+
+  // Advance / complete multi-month public works under construction!
+  if (state.pendingWorks && state.pendingWorks.length > 0) {
+    const stillBuilding: PendingConstructionWork[] = [];
+    const completedNow: PendingConstructionWork[] = [];
+    for (const work of state.pendingWorks) {
+      work.remainingMonths = Math.max(0, (work.remainingMonths ?? 1) - 1);
+      syncWorkTilesRemainingMonths(state, work);
+      if (work.remainingMonths <= 0) {
+        completedNow.push(work);
+      } else {
+        stillBuilding.push(work);
+      }
+    }
+    state.pendingWorks = stillBuilding;
+    for (const doneWork of completedNow) {
+      finalizePendingWork(state, doneWork);
+    }
   }
 
   // Advance / expire active Economic Cycles & Urban Incidents
@@ -8222,6 +10172,7 @@ export function closeFinancialMonth(state: CityState): void {
   }
 
   recomputeFieldsAndStats(state);
+  evaluateCivicMilestones(state);
 
   state.history.push({
     dateLabel: formatDateLabel(state.month, state.year),
@@ -8352,7 +10303,7 @@ export function computeCityNeeds(state: CityState): CityNeedItem[] {
       id: 'city_pollution',
       severity: state.stats.avgPollution >= 40 ? 'critical' : 'warning',
       title: `Poluição urbana elevada (${state.stats.avgPollution}%)`,
-      detail: 'Invista mais em Bem-estar e Educação ou acione uma obra ambiental.',
+      detail: 'Invista mais em Saúde & Meio Ambiente e Educação ou acione uma obra ambiental.',
       targetTab: 'emergencies',
     });
   }
@@ -8363,6 +10314,7 @@ export function computeCityNeeds(state: CityState): CityNeedItem[] {
     'infrastructure',
     'education',
     'entertainment',
+    'tourism',
   ];
   for (const area of checkAreas) {
     const cov = state.stats.coverage[area];
@@ -8546,6 +10498,7 @@ export function deserializeCitySave(rawJson: string): CityState | null {
         lotHeight: t.lotHeight ?? 1,
         lotDx: t.lotDx ?? 0,
         lotDy: t.lotDy ?? 0,
+        construction: t.construction ? { ...t.construction } : undefined,
       })),
       budgets,
       budgetTargetsPct,
@@ -8586,13 +10539,28 @@ export function deserializeCitySave(rawJson: string): CityState | null {
                 : b.remainingMonths,
           }))
         : [],
+      pendingWorks: Array.isArray(parsed.pendingWorks)
+        ? parsed.pendingWorks.map((w) => ({
+            ...w,
+            targetCoords: Array.isArray(w.targetCoords)
+              ? w.targetCoords.map((c) => ({ x: c.x, y: c.y }))
+              : undefined,
+          }))
+        : [],
       history: Array.isArray(parsed.history) ? parsed.history : [],
       rngState:
         typeof parsed.rngState === 'number'
           ? parsed.rngState
           : (parsed.seed ^ 0x9e3779b9) >>> 0,
       pendingSounds: [],
-      milestonesReached: parsed.milestonesReached ?? {},
+      milestonesReached: (() => {
+        const mr = { ...(parsed.milestonesReached ?? {}) };
+        if (mr.civic_stadium_toll_20k) {
+          mr.civic_stadium_20k = true;
+          mr.civic_toll_20k = true;
+        }
+        return mr;
+      })(),
       recentMilestoneBanner: parsed.recentMilestoneBanner ?? null,
       weather: parsed.weather
         ? {
@@ -8965,6 +10933,10 @@ export function createHudSnapshot(state: CityState): HudSnapshot {
       : null,
     news: state.news.slice(0, 12),
     activeBoosts: state.activeBoosts.map((b) => ({ ...b })),
+    pendingWorks: (state.pendingWorks ?? []).map((w) => ({
+      ...w,
+      targetCoords: w.targetCoords?.map((c) => ({ ...c })),
+    })),
     history: state.history.map((h) => ({ ...h })),
     needs: computeCityNeeds(state),
     tick: state.tick,
