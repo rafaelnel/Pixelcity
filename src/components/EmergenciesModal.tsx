@@ -30,7 +30,7 @@ const DIRECTION_ARROWS: Record<ExpandDirection, string> = {
 };
 
 interface LandmarkArtPreviewProps {
-  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping';
+  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports';
   level: number;
   builtCount: number;
   active: boolean;
@@ -49,7 +49,7 @@ function computeWorkProgressPct(
 function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maxArtLevel = kind === 'bridge' ? 4 : 3;
+  const maxArtLevel = kind === 'bridge' ? 4 : kind === 'sports' ? 2 : 3;
   const [previewLevel, setPreviewLevel] = useState<number>(Math.max(1, Math.min(maxArtLevel, level)));
   const [isInView, setIsInView] = useState<boolean>(true);
 
@@ -129,14 +129,16 @@ function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPrev
                   ? `Arte 64-bit do Sistema de Metrô Metropolitano Nível ${previewLevel}`
                   : kind === 'shopping'
                     ? `Arte 64-bit do Shopping Center Nível ${previewLevel}`
-                    : `Arte 64-bit da Ponte Fluvial Nível ${previewLevel}`
+                    : kind === 'sports'
+                      ? `Arte 64-bit do Centro de Esporte ${previewLevel === 1 ? '2×2' : '4×4'}`
+                      : `Arte 64-bit da Ponte Fluvial Nível ${previewLevel}`
         }
         className="w-full h-[106px] block"
       />
       {/* Quick level art preview switcher */}
       <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1 bg-[#0b101b]/85 px-1.5 py-0.5 border border-[#334361]">
         <span className="font-pixel text-[6px] text-[#9eb0c9] mr-0.5">ARTE:</span>
-        {(kind === 'bridge' ? [1, 2, 3, 4] : [1, 2, 3]).map((lv) => (
+        {(kind === 'bridge' ? [1, 2, 3, 4] : kind === 'sports' ? [1, 2] : [1, 2, 3]).map((lv) => (
           <button
             key={lv}
             type="button"
@@ -156,7 +158,11 @@ function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPrev
                   : lv === 2
                     ? '7×7 Nv.2'
                     : '9×9 Nv.3'
-                : `Nv.${lv}`}
+                : kind === 'sports'
+                  ? lv === 1
+                    ? '2×2 Nv.1'
+                    : '4×4 Nv.2'
+                  : `Nv.${lv}`}
           </button>
         ))}
       </div>
@@ -185,6 +191,7 @@ export function EmergenciesModal({
   );
   const isIllustratedEvolutionWork = (id: EmergencyActionId) =>
     id === 'port_evolution' ||
+    id === 'sports_center_project' ||
     id === 'airport_evolution' ||
     id === 'shopping_evolution' ||
     id === 'bus_transit_project' ||
@@ -320,7 +327,8 @@ export function EmergenciesModal({
     const isBus = offer.id === 'bus_transit_project';
     const isMetro = offer.id === 'metro_transit_project';
     const isShopping = offer.id === 'shopping_evolution';
-    const kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' = isPort
+    const isSports = offer.id === 'sports_center_project';
+    const kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports' = isPort
       ? 'port'
       : isBridge
         ? 'bridge'
@@ -330,7 +338,9 @@ export function EmergenciesModal({
             ? 'metro'
             : isShopping
               ? 'shopping'
-              : 'airport';
+              : isSports
+                ? 'sports'
+                : 'airport';
     const builtCount = isPort
       ? st.portCount
       : isBridge
@@ -341,13 +351,17 @@ export function EmergenciesModal({
             ? st.metroStationCount
             : isShopping
               ? st.shoppingCount
-              : st.airportCount;
+              : isSports
+                ? st.sportsCenterCount
+                : st.airportCount;
     const isBuilt = builtCount > 0;
     const artLevel = isBridge
       ? Math.max(1, Math.min(4, isBuilt ? Math.max(st.bridgeLevel, offer.tier) : offer.tier))
       : isShopping
         ? Math.max(1, Math.min(3, isBuilt ? Math.max(st.shoppingLevel || 1, offer.tier) : offer.tier))
-        : Math.max(1, Math.min(3, isBuilt ? Math.max(1, offer.tier - 1) : offer.tier));
+        : isSports
+          ? Math.max(1, Math.min(2, offer.tier))
+          : Math.max(1, Math.min(3, isBuilt ? Math.max(1, offer.tier - 1) : offer.tier));
     const canAfford = hud.money >= offer.cost;
     const pendingWork = pendingWorks.find((w) => w.actionId === offer.id);
     const isExecuting = Boolean(pendingWork);
@@ -364,7 +378,9 @@ export function EmergenciesModal({
           ? ['Linha 1', 'Anel Nv.2', 'Expresso 3']
           : isShopping
             ? ['Pequeno 5×5', 'Médio 7×7', 'Grande 9×9']
-            : ['Fase I · Nv.1', 'Fase II · Nv.2', 'Fase III · Nv.3', 'Fase IV · Hub'];
+            : isSports
+              ? ['1º Centro 2×2', '2º Complexo 4×4']
+              : ['Fase I · Nv.1', 'Fase II · Nv.2', 'Fase III · Nv.3', 'Fase IV · Hub'];
 
     return (
       <div
@@ -382,7 +398,9 @@ export function EmergenciesModal({
                   ? 'rgba(139, 92, 246, 0.52)'
                   : isShopping
                     ? 'rgba(244, 114, 182, 0.55)'
-                    : 'rgba(255, 224, 102, 0.45)',
+                    : isSports
+                      ? 'rgba(102, 217, 140, 0.52)'
+                      : 'rgba(255, 224, 102, 0.45)',
         }}
       >
         <div className="flex flex-col gap-2">
@@ -414,7 +432,9 @@ export function EmergenciesModal({
                           ? `${builtCount} ${builtCount === 1 ? 'ESTAÇÃO' : 'ESTAÇÕES'} ATIVA`
                           : isShopping
                             ? `SHOPPING NV.${st.shoppingLevel || 1} (${st.shoppingLevel === 3 ? '9×9' : st.shoppingLevel === 2 ? '7×7' : '5×5'})`
-                            : `CONSTRUÍDO (${builtCount} no mapa)`
+                            : isSports
+                              ? `${builtCount} ${builtCount === 1 ? 'CENTRO' : 'CENTROS'} DE ESPORTE`
+                              : `CONSTRUÍDO (${builtCount} no mapa)`
                       : offer.unlocked
                         ? 'LIBERADO · AGUARDANDO ORDEM'
                         : 'BLOQUEADO · MARCO POPULACIONAL'}
@@ -441,7 +461,7 @@ export function EmergenciesModal({
           />
 
           {/* Evolutionary Progress Steps */}
-          <div className={`grid gap-1 ${stepLabels.length === 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+          <div className={`grid gap-1 ${stepLabels.length === 2 ? 'grid-cols-2' : stepLabels.length === 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
             {stepLabels.map((stepLabel, idx) => {
               const stepNum = idx + 1;
               const done =

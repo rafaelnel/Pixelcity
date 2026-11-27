@@ -3571,6 +3571,186 @@ test('available works and milestones are ordered by first necessity and 2x2 mark
   );
 });
 
+test('Mercado (2x2) is a basic early-game commercial establishment that boosts local commercial distribution, Sports Centers build 2x2 then 4x4, courts are 2x1 every few blocks, and Stadiums obey 1 per 100k inhabitants', async () => {
+  const {
+    getMaxStadiumsForPopulation,
+    getZoneDisplayLabel,
+  } = await import('./cityEngine');
+  const {
+    ESTABLISHMENT_CATALOG,
+    SPORTS_CENTER_FOOTPRINT_BY_TIER,
+    STADIUM_POPULATION_INTERVAL,
+  } = await import('./simulationConfig');
+
+  // 1. Mercado (municipal_market) is a 2×2 basic commercial establishment available right after game start (minPopulation: 0, hostLevel: 1)
+  const marketSpec = ESTABLISHMENT_CATALOG.find((e) => e.id === 'municipal_market')!;
+  assert.ok(marketSpec);
+  assert.equal(marketSpec.label, 'Mercado');
+  assert.equal(marketSpec.hostTileType, 'commercial');
+  assert.equal(marketSpec.hostLevel, 1);
+  assert.equal(marketSpec.footprintW, 2);
+  assert.equal(marketSpec.footprintH, 2);
+  assert.equal(marketSpec.minPopulation, 0);
+  assert.equal(marketSpec.minDistanceRadius, 8);
+
+  // 2. Neighborhood Sports Courts (sports_court) are 2×1 placed every few blocks (minDistanceRadius: 8, minPopulation: 0)
+  const courtSpec = ESTABLISHMENT_CATALOG.find((e) => e.id === 'sports_court')!;
+  assert.ok(courtSpec);
+  assert.equal(courtSpec.label, 'Quadra Esportiva');
+  assert.equal(courtSpec.footprintW, 2);
+  assert.equal(courtSpec.footprintH, 1);
+  assert.equal(courtSpec.minDistanceRadius, 8);
+  assert.equal(courtSpec.minPopulation, 0);
+
+  // 3. Sports Center footprints: first = 2×2, next = 4×4
+  assert.deepEqual(SPORTS_CENTER_FOOTPRINT_BY_TIER[1], { w: 2, h: 2 });
+  assert.deepEqual(SPORTS_CENTER_FOOTPRINT_BY_TIER[2], { w: 4, h: 4 });
+
+  const city = createNewCity(889911, 'easy');
+  city.money = 10_000_000;
+
+  // Verify local commercial distribution boost from a 2×2 Mercado on an adjacent commercial tile
+  const commNeighbor = getTile(city, 5, 5)!;
+  commNeighbor.type = 'commercial';
+  commNeighbor.level = 1;
+  commNeighbor.establishmentId = undefined;
+  recomputeFieldsAndStats(city);
+  const landValBeforeMarket = commNeighbor.landValue;
+  assert.ok(landValBeforeMarket < 100, `Expected outer commercial tile baseline landValue < 100, got ${landValBeforeMarket}`);
+
+  // Stamp a 2×2 Mercado right next to commNeighbor
+  const mx = commNeighbor.x + 1;
+  const my = commNeighbor.y;
+  for (let dy = 0; dy < 2; dy++) {
+    for (let dx = 0; dx < 2; dx++) {
+      const mt = getTile(city, mx + dx, my + dy)!;
+      mt.type = 'commercial';
+      mt.level = 1;
+      mt.establishmentId = 'municipal_market';
+      mt.lotRole = dx === 0 && dy === 0 ? 'anchor' : 'part';
+      mt.lotWidth = 2;
+      mt.lotHeight = 2;
+      mt.lotDx = dx;
+      mt.lotDy = dy;
+    }
+  }
+  recomputeFieldsAndStats(city);
+  assert.ok(
+    commNeighbor.landValue > landValBeforeMarket,
+    `Expected 2×2 Mercado to boost nearby commercial distribution/landValue (${commNeighbor.landValue} > ${landValBeforeMarket})`
+  );
+  assert.ok(
+    getZoneDisplayLabel(getTile(city, mx, my)!).includes('Mercado') &&
+      getZoneDisplayLabel(getTile(city, mx, my)!).includes('2×2'),
+    `Expected Mercado 2×2 label, got: ${getZoneDisplayLabel(getTile(city, mx, my)!)}`
+  );
+
+  // Populate city to 7,000 hab. so both Tier 1 (2k) and Tier 2 (6k) Sports Centers can be built
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 7200) {
+      t.type = 'residential';
+      t.level = 3;
+      recomputeFieldsAndStats(city);
+    }
+  }
+
+  // Build 1st Sports Center (Tier 1 -> 2×2 = 4 tiles)
+  assert.equal(city.workTiers.sports_center_project, 1);
+  const startSports1 = executeEmergencyAction(city, 'sports_center_project');
+  assert.equal(startSports1.ok, true);
+  const reservedSports1 = city.tiles.filter((t) => t.construction?.actionId === 'sports_center_project');
+  assert.equal(reservedSports1.length, 4, '1st Sports Center must reserve a 2×2 (4-tile) footprint');
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.workTiers.sports_center_project, 2);
+  assert.equal(city.stats.sportsCenterCount, 1);
+  const anchor2x2 = city.tiles.find(
+    (t) =>
+      t.establishmentId === 'sports_court' &&
+      t.lotRole === 'anchor' &&
+      t.lotWidth === 2 &&
+      t.lotHeight === 2
+  );
+  assert.ok(anchor2x2, 'Expected completed 1st Sports Center to be a 2×2 compound');
+  assert.ok(
+    getZoneDisplayLabel(anchor2x2!).includes('Centro de Esporte') &&
+      getZoneDisplayLabel(anchor2x2!).includes('2×2'),
+    `Expected Centro de Esporte 2×2 label, got: ${getZoneDisplayLabel(anchor2x2!)}`
+  );
+
+  // Build 2nd Sports Center (Tier 2 -> 4×4 = 16 tiles)
+  const startSports2 = executeEmergencyAction(city, 'sports_center_project');
+  assert.equal(startSports2.ok, true);
+  const reservedSports2 = city.tiles.filter((t) => t.construction?.actionId === 'sports_center_project');
+  assert.equal(reservedSports2.length, 16, '2nd Sports Center must reserve a 4×4 (16-tile) footprint');
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.sportsCenterCount, 2);
+  const anchor4x4 = city.tiles.find(
+    (t) =>
+      t.establishmentId === 'sports_court' &&
+      t.lotRole === 'anchor' &&
+      t.lotWidth === 4 &&
+      t.lotHeight === 4
+  );
+  assert.ok(anchor4x4, 'Expected completed 2nd Sports Center to be a 4×4 Olympic Sports Complex');
+  assert.ok(
+    getZoneDisplayLabel(anchor4x4!).includes('Complexo de Esporte Olímpico') &&
+      getZoneDisplayLabel(anchor4x4!).includes('4×4'),
+    `Expected Complexo de Esporte Olímpico 4×4 label, got: ${getZoneDisplayLabel(anchor4x4!)}`
+  );
+
+  // 4. Stadium rule: 1 stadium per 100,000 inhabitants
+  assert.equal(STADIUM_POPULATION_INTERVAL, 100000);
+  assert.equal(getMaxStadiumsForPopulation(15000), 0);
+  assert.equal(getMaxStadiumsForPopulation(20000), 1);
+  assert.equal(getMaxStadiumsForPopulation(99999), 1);
+  assert.equal(getMaxStadiumsForPopulation(100000), 2);
+  assert.equal(getMaxStadiumsForPopulation(199999), 2);
+  assert.equal(getMaxStadiumsForPopulation(200000), 3);
+
+  // At 25,000 inhabitants, 1st Stadium (Tier 1) can be built, Tier 2 expands complex,
+  // but Tier 3 (which adds a 2nd Stadium) MUST remain locked until 100,000 inhabitants!
+  city.totalPopulation = 25000;
+  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.stadiumCount, 1);
+  assert.equal(city.workTiers.landmark_project, 2);
+
+  // Tier 2 (Arena & Esplanada Cultural expansion, doesn't add a 2nd stadium) can be built at 45,000 hab.
+  city.totalPopulation = 45000;
+  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.stadiumCount, 1);
+  assert.equal(city.workTiers.landmark_project, 3);
+
+  // At 85,000 inhabitants (< 100k), 2nd Stadium is blocked by the 1-per-100k rule
+  city.totalPopulation = 85000;
+  const offerAt85k = getEmergencyOffers(city).find((o) => o.id === 'landmark_project')!;
+  assert.equal(offerAt85k.unlocked, false);
+  assert.ok(
+    offerAt85k.lockReason?.includes('100.000'),
+    `Expected lockReason at 85k to require 100.000 hab., got: ${offerAt85k.lockReason}`
+  );
+  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, false);
+
+  // At 100,000 inhabitants, 2nd Stadium unlocks!
+  city.totalPopulation = 100000;
+  const offerAt100k = getEmergencyOffers(city).find((o) => o.id === 'landmark_project')!;
+  assert.equal(offerAt100k.unlocked, true);
+});
+
+
 
 
 

@@ -148,6 +148,14 @@ export const FIXED_COSTS_CONFIG = {
 
 /** Toll Plaza (Pedágio Rodoviário) unlock threshold and 3 adjustable tariff tiers */
 export const TOLL_MIN_POPULATION = 20000;
+export const STADIUM_POPULATION_INTERVAL = 100000;
+
+/** Sports Center footprints by project tier: 1st Sports Center is 2×2, next Sports Center is 4×4 */
+export const SPORTS_CENTER_FOOTPRINT_BY_TIER: Record<1 | 2, { w: number; h: number }> = {
+  1: { w: 2, h: 2 },
+  2: { w: 4, h: 4 },
+};
+
 export const TOLL_TARIFF_ORDER: TollTariffLevel[] = ['low', 'medium', 'high'];
 
 export const TOLL_TARIFF_CONFIGS: Record<TollTariffLevel, TollTariffSpec> = {
@@ -549,10 +557,10 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
     tiers: [
       {
         tier: 1,
-        tierLabel: 'Marco 2.000 hab.',
-        title: 'Centro Esportivo Pequeno',
-        summary: 'Constrói um Centro Esportivo Comunitário (quadra poliesportiva e área de lazer) liberado a partir de 2.000 habitantes.',
-        effectHint: 'Constrói Centro Esportivo Pequeno · +felicidade, valorização e lazer nos bairros',
+        tierLabel: '1º Centro · 2×2 · 2.000 hab.',
+        title: 'Centro de Esporte 2×2',
+        summary: 'Constrói o primeiro Centro de Esporte (área 2×2) com ginásio poliesportivo coberto, quadra iluminada e arquibancadas.',
+        effectHint: 'Constrói Centro de Esporte 2×2 · +felicidade, saúde e lazer nos bairros',
         baseCost: 8500,
         revScalePct: 0.25,
         durationMonths: 2,
@@ -560,10 +568,10 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       },
       {
         tier: 2,
-        tierLabel: 'Ampliação Esportiva',
-        title: 'Rede de Centros Esportivos de Bairro',
-        summary: 'Instala um novo Centro Esportivo Pequeno em outro bairro da cidade e amplia escolinhas esportivas.',
-        effectHint: 'Novo Centro Esportivo Pequeno · +lazer e +turismo local (3 meses)',
+        tierLabel: '2º Centro · 4×4 · 6.000 hab.',
+        title: 'Complexo de Esporte Olímpico 4×4',
+        summary: 'Constrói o próximo Centro de Esporte em área 4×4 com arena coberta, piscina semiolímpica, pista de atletismo e quadras.',
+        effectHint: 'Constrói Centro de Esporte 4×4 · +cultura, esporte, saúde e turismo regional',
         baseCost: 16500,
         revScalePct: 0.30,
         durationMonths: 3,
@@ -767,10 +775,10 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
     tiers: [
       {
         tier: 1,
-        tierLabel: 'Estádio · 20k hab.',
+        tierLabel: 'Estádio · 1 / 100k hab.',
         title: 'Grande Estádio Monumental',
-        summary: 'Constrói a grande arena esportiva cercada por arquibancadas, liberada apenas para cidades acima de 20.000 habitantes.',
-        effectHint: 'Constrói Estádio 4×3 · +felicidade, turismo e prestígio metropolitano',
+        summary: 'Constrói a grande arena esportiva 4×3 com arquibancadas cobertas e torres de refletores (limite de 1 estádio a cada 100.000 habitantes).',
+        effectHint: 'Constrói Estádio 4×3 (1 a cada 100 mil hab.) · +felicidade, turismo e prestígio',
         baseCost: 72000,
         revScalePct: 0.45,
         durationMonths: 3,
@@ -789,14 +797,14 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       },
       {
         tier: 3,
-        tierLabel: 'Arena Global · 35k',
-        title: 'Distrito Metropolitano & Arena Global',
-        summary: 'Programa monumental que moderniza grandes edifícios e consagra a cidade no cenário internacional.',
-        effectHint: 'Moderniza 4 grandes edifícios + +16% felicidade e turismo (5 meses)',
+        tierLabel: 'Novo Estádio · 1 / 100k hab.',
+        title: 'Novo Estádio Monumental & Arena Global',
+        summary: 'Libera e constrói +1 Estádio Monumental 4×3 a cada novo marco de 100.000 habitantes e moderniza o distrito metropolitano.',
+        effectHint: 'Constrói +1 Estádio 4×3 (1 a cada 100 mil hab.) + +16% felicidade e turismo',
         baseCost: 145000,
         revScalePct: 0.55,
         durationMonths: 5,
-        minPopulation: 35000,
+        minPopulation: 100000,
       },
     ],
   },
@@ -1422,16 +1430,16 @@ export const ESTABLISHMENT_CATALOG: EstablishmentSpec[] = [
   },
   {
     id: 'sports_court',
-    label: 'Centro Esportivo Pequeno',
-    categoryLabel: 'Serviços Locais & Esporte',
+    label: 'Quadra Esportiva',
+    categoryLabel: 'Quadra 2×1 & Esporte Local',
     hostTileType: 'park',
     hostLevel: 1,
-    footprintW: 1,
+    footprintW: 2,
     footprintH: 1,
-    minDistanceRadius: 11,
+    minDistanceRadius: 8,
     variationCount: 3,
     driverArea: 'entertainment',
-    minPopulation: 2000,
+    minPopulation: 0,
     happinessBonus: 2.8,
     landValueBonus: 16,
     landValueRadius: 3,
@@ -1544,16 +1552,16 @@ export const ESTABLISHMENT_CATALOG: EstablishmentSpec[] = [
   },
   {
     id: 'municipal_market',
-    label: 'Mercado Municipal',
-    categoryLabel: 'Mercado & Abastecimento 2×2',
+    label: 'Mercado',
+    categoryLabel: 'Mercado 2×2 · Distribuição Comercial Local',
     hostTileType: 'commercial',
     hostLevel: 1,
     footprintW: 2,
     footprintH: 2,
-    minDistanceRadius: 10,
+    minDistanceRadius: 8,
     variationCount: 3,
-    driverArea: 'tourism',
-    minPopulation: 400,
+    driverArea: 'entertainment',
+    minPopulation: 0,
     happinessBonus: 2.8,
     landValueBonus: 19,
     landValueRadius: 4,

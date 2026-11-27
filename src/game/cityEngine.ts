@@ -32,6 +32,8 @@ import {
   SECONDS_PER_MONTH_1X,
   SHOPPING_COMMERCIAL_REVENUE_PER_LEVEL,
   SHOPPING_FOOTPRINT_BY_LEVEL,
+  SPORTS_CENTER_FOOTPRINT_BY_TIER,
+  STADIUM_POPULATION_INTERVAL,
   START_MONTH,
   START_YEAR,
   TOLL_MIN_POPULATION,
@@ -194,6 +196,15 @@ export function getZoneDisplayLabel(tile: Tile): string {
     const vIdx = (tile.variant % 3) + 1;
     const lw = tile.lotWidth ?? spec.footprintW ?? 1;
     const lh = tile.lotHeight ?? spec.footprintH ?? 1;
+    if (tile.establishmentId === 'sports_court') {
+      if (lw >= 4 && lh >= 4) {
+        return `Complexo de Esporte Olímpico (4×4 · Var. ${vIdx} · Esporte & Lazer)`;
+      }
+      if (lw >= 2 && lh >= 2) {
+        return `Centro de Esporte (2×2 · Var. ${vIdx} · Esporte & Lazer)`;
+      }
+      return `Quadra Esportiva (${lw}×${lh} · Var. ${vIdx} · Esporte Local)`;
+    }
     const sizeTag = lw > 1 || lh > 1 ? `${lw}×${lh} · ` : '';
     return `${spec.label} (${sizeTag}Var. ${vIdx} · ${spec.categoryLabel})`;
   }
@@ -401,7 +412,7 @@ function tryPickOrganicEstablishment(
 
   const candidates: Array<{ spec: EstablishmentSpec; weight: number }> = [];
   for (const spec of ESTABLISHMENT_CATALOG) {
-    if (spec.id === 'soccer_stadium' || spec.id === 'sports_court') continue; // Built strictly when unlocked and ordered by the player in Obras
+    if (spec.id === 'soccer_stadium') continue; // Stadium is built strictly when unlocked (1 per 100k hab.) and ordered in Obras
     const levelMatches =
       spec.hostLevel === hostLevel ||
       (hostLevel === 1 && spec.hostLevel === 2 && (spec.minPopulation ?? 0) <= 1000) ||
@@ -416,14 +427,16 @@ function tryPickOrganicEstablishment(
 
     const covPct = state.stats.coverage[spec.driverArea]?.coveragePct ?? 80;
     const covBoost = Math.max(0.5, Math.min(1.8, covPct / 85));
-    // Give shoreline Marina, 2x2 neighborhood Markets, and central services high priority when a valid spaced slot opens
+    // Give shoreline Marina, 2x2 neighborhood Markets, 2x1 Sports Courts, and central services high priority when a valid spaced slot opens
     const baseWeight = spec.requiresWaterAdjacent
       ? 3.2
       : spec.id === 'municipal_market'
-        ? 2.5
-        : spec.prefersCentralDense
-          ? 1.9
-          : 1.4;
+        ? 3.0
+        : spec.id === 'sports_court'
+          ? 2.4
+          : spec.prefersCentralDense
+            ? 1.9
+            : 1.4;
     candidates.push({ spec, weight: baseWeight * covBoost });
   }
 
@@ -4446,16 +4459,28 @@ export function recomputeFieldsAndStats(
       const spec = ESTABLISHMENT_MAP[t.establishmentId];
       if (spec) {
         establishments++;
-        if (t.establishmentId === 'sports_court') {
+        const lw = t.lotWidth ?? spec.footprintW ?? 1;
+        const lh = t.lotHeight ?? spec.footprintH ?? 1;
+        const isSportsCenterComplex =
+          t.establishmentId === 'sports_court' && lw >= 2 && lh >= 2;
+        if (isSportsCenterComplex) {
           sportsCenters++;
         }
-        pop += spec.populationBonus;
-        comBaseTax += spec.monthlyRevenueBonus;
-        estTourismBonus += spec.tourismBonus;
-        estHappyBonus += spec.happinessBonus;
-        if (spec.driverArea === 'wellbeing') estHealthScore += spec.happinessBonus;
-        else if (spec.driverArea === 'security') estSecurityScore += spec.happinessBonus;
-        else if (spec.driverArea === 'education') estEducationScore += spec.happinessBonus;
+        const sportsScale =
+          t.establishmentId === 'sports_court'
+            ? lw >= 4 && lh >= 4
+              ? 2.2
+              : lw >= 2 && lh >= 2
+                ? 1.45
+                : 1.0
+            : 1.0;
+        pop += Math.round(spec.populationBonus * sportsScale);
+        comBaseTax += Math.round(spec.monthlyRevenueBonus * sportsScale);
+        estTourismBonus += Math.round(spec.tourismBonus * sportsScale);
+        estHappyBonus += spec.happinessBonus * sportsScale;
+        if (spec.driverArea === 'wellbeing') estHealthScore += spec.happinessBonus * sportsScale;
+        else if (spec.driverArea === 'security') estSecurityScore += spec.happinessBonus * sportsScale;
+        else if (spec.driverArea === 'education') estEducationScore += spec.happinessBonus * sportsScale;
       }
     }
     if (t.type === 'road') {
@@ -4829,7 +4854,12 @@ export function recomputeFieldsAndStats(
       if (t.establishmentId && t.lotRole !== 'part') {
         const spec = ESTABLISHMENT_MAP[t.establishmentId];
         if (spec) {
-          const r = Math.max(1, spec.landValueRadius);
+          const lw = t.lotWidth ?? spec.footprintW ?? 1;
+          const lh = t.lotHeight ?? spec.footprintH ?? 1;
+          const isLargeSports = t.establishmentId === 'sports_court' && lw >= 4 && lh >= 4;
+          const isMedSports = t.establishmentId === 'sports_court' && lw === 2 && lh === 2;
+          const r = Math.max(1, spec.landValueRadius + (isLargeSports ? 2 : isMedSports ? 1 : 0));
+          const bonusMult = isLargeSports ? 1.65 : isMedSports ? 1.25 : 1.0;
           for (let dy = -r; dy <= r; dy++) {
             for (let dx = -r; dx <= r; dx++) {
               const nx = t.x + dx;
@@ -4838,9 +4868,16 @@ export function recomputeFieldsAndStats(
               const d = Math.hypot(dx, dy);
               if (d > r + 0.35) continue;
               const falloff = 1 - d / (r + 0.75);
-              valBuffer[ny * w + nx] += spec.landValueBonus * falloff;
+              valBuffer[ny * w + nx] += spec.landValueBonus * bonusMult * falloff;
+              // Mercado 2×2 actively improves local commercial distribution and value of surrounding shops
+              if (t.establishmentId === 'municipal_market') {
+                const nt = state.tiles[ny * w + nx];
+                if (nt && nt.type === 'commercial') {
+                  valBuffer[ny * w + nx] += 6 * falloff;
+                }
+              }
               if (spec.pollutionDelta !== 0) {
-                polBuffer[ny * w + nx] += spec.pollutionDelta * falloff;
+                polBuffer[ny * w + nx] += spec.pollutionDelta * bonusMult * falloff;
               }
             }
           }
@@ -5798,11 +5835,26 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
     const spec = line.tiers[curTier - 1];
     const nextSpec = line.tiers[curTier];
     const cost = roundTo10((spec.baseCost + rev * spec.revScalePct) * costMult, 100);
-    const minPop = spec.minPopulation ?? 0;
+    // Stadium rule: 1 stadium per 100,000 inhabitants (1st stadium unlocks at 20k for the initial 0..100k bracket;
+    // each subsequent stadium at Tier 3 requires state.stats.stadiumCount * 100,000 inhabitants!)
+    const isRepeatableStadiumTier = line.id === 'landmark_project' && curTier >= 3;
+    const minPop = isRepeatableStadiumTier
+      ? Math.max(
+          STADIUM_POPULATION_INTERVAL,
+          state.stats.stadiumCount * STADIUM_POPULATION_INTERVAL
+        )
+      : (spec.minPopulation ?? 0);
     const alreadyBuiltToll = line.id === 'toll_plaza_project' && Boolean(state.tollPlaza?.built);
     const activeWork = (state.pendingWorks ?? []).find((w) => w.actionId === line.id);
     const inProgress = Boolean(activeWork);
-    const unlocked = !alreadyBuiltToll && !inProgress && state.totalPopulation >= minPop;
+    const stadiumQuotaReached =
+      isRepeatableStadiumTier &&
+      state.stats.stadiumCount >= getMaxStadiumsForPopulation(state.totalPopulation);
+    const unlocked =
+      !alreadyBuiltToll &&
+      !inProgress &&
+      !stadiumQuotaReached &&
+      state.totalPopulation >= minPop;
 
     structuralOffers.push({
       alreadyBuiltOneOff: alreadyBuiltToll,
@@ -5819,7 +5871,9 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
             ? `Próxima evolução: ${nextSpec.tierLabel} — ${nextSpec.title}`
             : line.id === 'toll_plaza_project'
               ? 'Obra única na rodovia de entrada · Tarifa ajustável (Baixa / Média / Alta)'
-              : 'Nível máximo atingido (obra repetível de alto impacto)',
+              : isRepeatableStadiumTier
+                ? `Regra de Estádio: 1 a cada 100.000 hab. (Atual: ${state.stats.stadiumCount} · Próximo marco: ${minPop.toLocaleString('pt-BR')} hab.)`
+                : 'Nível máximo atingido (obra repetível de alto impacto)',
         cost,
         durationMonths: activeWork ? activeWork.totalMonths : spec.durationMonths,
         accentColor: line.accentColor,
@@ -5834,7 +5888,9 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
             ? `Obra em andamento (${activeWork.remainingMonths} ${activeWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'})`
             : unlocked
               ? undefined
-              : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
+              : isRepeatableStadiumTier
+                ? `Requer ${minPop.toLocaleString('pt-BR')} hab. (1 estádio a cada 100 mil hab.)`
+                : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
       },
     });
   }
@@ -6497,77 +6553,139 @@ function reserveCompoundConstructionRect(
   }
 }
 
+/**
+ * Returns the maximum number of Stadiums allowed for a given population:
+ * - Below 20,000 inhabitants: 0
+ * - 1st Stadium unlocks at the 20,000 hab. civic milestone (covering the first 0..99,999 bracket)
+ * - Thereafter, +1 Stadium per every 100,000 inhabitants (100k -> 2, 200k -> 3, 300k -> 4, etc.)
+ */
+export function getMaxStadiumsForPopulation(population: number): number {
+  if (population < 20000) return 0;
+  return Math.max(1, Math.floor(population / STADIUM_POPULATION_INTERVAL) + 1);
+}
+
 function findBestEstablishmentRect(
   state: CityState,
   establishmentId: EstablishmentId,
-  forceOverwriteLowLevel: boolean = true
+  forceOverwriteLowLevel: boolean = true,
+  customFw?: number,
+  customFh?: number
 ): { x: number; y: number; fw: number; fh: number } | null {
   const spec = ESTABLISHMENT_MAP[establishmentId];
   if (!spec) return null;
+  const fw = Math.max(1, customFw ?? spec.footprintW);
+  const fh = Math.max(1, customFh ?? spec.footprintH);
+  const isLargeFootprint = fw > 2 || fh > 2;
+  const isSportsCenterSearch =
+    establishmentId === 'sports_court' && fw >= 2 && fh >= 2;
   const mainRoadSet = getMainConnectedRoadSet(state);
-  const candidates: Array<{ x: number; y: number; score: number }> = [];
 
-  for (let y = 1; y <= state.gridHeight - spec.footprintH - 1; y++) {
-    for (let x = 1; x <= state.gridWidth - spec.footprintW - 1; x++) {
-      if (!canPlaceEstablishmentAt(state, establishmentId, x, y)) continue;
-      let ok = true;
-      let touchesRoad = false;
-      let overwritePenalty = 0;
+  for (const allowAvenueCross of isLargeFootprint ? [false, true] : [false]) {
+    const candidates: Array<{ x: number; y: number; score: number }> = [];
 
-      for (let dy = 0; dy < spec.footprintH && ok; dy++) {
-        for (let dx = 0; dx < spec.footprintW; dx++) {
-          const t = getTile(state, x + dx, y + dy);
-          if (
-            !t ||
-            t.construction ||
-            t.type === 'water' ||
-            t.type === 'bridge' ||
-            isLandmarkType(t.type) ||
-            isTransitStationType(t.type)
-          ) {
-            ok = false;
-            break;
+    for (let y = 1; y <= state.gridHeight - fh - 1; y++) {
+      for (let x = 1; x <= state.gridWidth - fw - 1; x++) {
+        if (!isSportsCenterSearch) {
+          if (!canPlaceEstablishmentAt(state, establishmentId, x, y)) continue;
+        } else {
+          // For 2×2 and 4×4 Sports Centers, enforce distance against other >=2×2 Sports Centers
+          let tooCloseToCenter = false;
+          for (let i = 0; i < state.tiles.length; i++) {
+            const other = state.tiles[i];
+            if (
+              other.establishmentId === 'sports_court' &&
+              other.lotRole !== 'part' &&
+              (other.lotWidth ?? 1) >= 2 &&
+              (other.lotHeight ?? 1) >= 2
+            ) {
+              if (Math.hypot(other.x - x, other.y - y) < 8) {
+                tooCloseToCenter = true;
+                break;
+              }
+            }
           }
-          if (
-            isExternalBorderRoadTile(state, t.x, t.y) ||
-            isTollPlazaTile(state, t.x, t.y) ||
-            classifyPlannedRoadCell(state, t.x, t.y).isPlanned
-          ) {
-            ok = false;
-            break;
-          }
-          if (t.type === 'grass' || t.type === 'forest') {
-            // ideal
-          } else if (
-            forceOverwriteLowLevel &&
-            !t.establishmentId &&
-            (t.type === 'rural' ||
-              t.type === 'abandoned' ||
-              t.type === 'park' ||
-              ((t.type === 'residential' || t.type === 'commercial') && t.level <= 1))
-          ) {
-            overwritePenalty += 3;
-          } else {
-            ok = false;
-            break;
-          }
-          if (
-            getOrthoNeighbors(state, t.x, t.y).some(
-              (n) => isRoadLike(n.type) && mainRoadSet.has(n.y * state.gridWidth + n.x)
-            )
-          ) {
-            touchesRoad = true;
+          if (tooCloseToCenter) continue;
+        }
+
+        let ok = true;
+        let touchesRoad = false;
+        let overwritePenalty = 0;
+
+        for (let dy = 0; dy < fh && ok; dy++) {
+          for (let dx = 0; dx < fw; dx++) {
+            const t = getTile(state, x + dx, y + dy);
+            if (
+              !t ||
+              t.construction ||
+              t.type === 'water' ||
+              t.type === 'bridge' ||
+              isLandmarkType(t.type) ||
+              isTransitStationType(t.type)
+            ) {
+              ok = false;
+              break;
+            }
+            if (isExternalBorderRoadTile(state, t.x, t.y) || isTollPlazaTile(state, t.x, t.y)) {
+              ok = false;
+              break;
+            }
+            const plan = classifyPlannedRoadCell(state, t.x, t.y);
+            if (!isLargeFootprint && plan.isPlanned) {
+              ok = false;
+              break;
+            }
+            if (isLargeFootprint && !allowAvenueCross && (plan.onAvenueAxis || plan.onHighwayAxis)) {
+              ok = false;
+              break;
+            }
+            if (t.type === 'grass' || t.type === 'forest') {
+              // ideal
+            } else if (
+              isLargeFootprint &&
+              t.type === 'road' &&
+              (allowAvenueCross || (t.level || 1) <= 1)
+            ) {
+              overwritePenalty += 8;
+            } else if (
+              forceOverwriteLowLevel &&
+              (!t.establishmentId ||
+                (isSportsCenterSearch &&
+                  t.establishmentId === 'sports_court' &&
+                  ((t.lotWidth ?? 1) < 2 || (t.lotHeight ?? 1) < 2))) &&
+              (t.type === 'rural' ||
+                t.type === 'abandoned' ||
+                t.type === 'park' ||
+                ((t.type === 'residential' || t.type === 'commercial') &&
+                  t.level <= (isLargeFootprint ? 2 : 1)))
+            ) {
+              overwritePenalty += 3;
+            } else {
+              ok = false;
+              break;
+            }
+            if (
+              getOrthoNeighbors(state, t.x, t.y).some(
+                (n) =>
+                  (n.x < x || n.x >= x + fw || n.y < y || n.y >= y + fh) &&
+                  isRoadLike(n.type) &&
+                  mainRoadSet.has(n.y * state.gridWidth + n.x)
+              )
+            ) {
+              touchesRoad = true;
+            }
           }
         }
+        if (!ok || !touchesRoad) continue;
+        const distCenter = Math.hypot(x - state.gridWidth / 2, y - state.gridHeight / 2);
+        candidates.push({ x, y, score: 40 - distCenter - overwritePenalty });
       }
-      if (!ok || !touchesRoad) continue;
-      const distCenter = Math.hypot(x - state.gridWidth / 2, y - state.gridHeight / 2);
-      candidates.push({ x, y, score: 40 - distCenter - overwritePenalty });
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.score - a.score);
+      return { x: candidates[0].x, y: candidates[0].y, fw, fh };
     }
   }
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => b.score - a.score);
-  return { x: candidates[0].x, y: candidates[0].y, fw: spec.footprintW, fh: spec.footprintH };
+  return null;
 }
 
 function findBestStadiumRect(
@@ -7257,6 +7375,11 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
   const tier = work.tier;
 
   if (actionId === 'sports_center_project') {
+    const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
+    const defaultFp = SPORTS_CENTER_FOOTPRINT_BY_TIER[tierKey];
+    const targetFw = work.lotWidth ?? defaultFp.w;
+    const targetFh = work.lotHeight ?? defaultFp.h;
+    const targetHostLv = tier >= 2 ? 3 : 2;
     let built = false;
     if (
       typeof work.anchorX === 'number' &&
@@ -7265,18 +7388,18 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
         state,
         work.anchorX,
         work.anchorY,
-        work.lotWidth ?? 2,
-        work.lotHeight ?? 1
+        targetFw,
+        targetFh
       )
     ) {
       const compound = assignCompoundLot(
         state,
         work.anchorX,
         work.anchorY,
-        work.lotWidth ?? 2,
-        work.lotHeight ?? 1,
-        'commercial',
-        ESTABLISHMENT_MAP.sports_court.hostLevel,
+        targetFw,
+        targetFh,
+        'park',
+        targetHostLv,
         work.variant ?? pickEstablishmentVariation(state, 'sports_court'),
         1.85,
         'sports_court'
@@ -7286,7 +7409,30 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       built = compound.length > 0;
     }
     if (!built) {
-      built = placeSpecificEstablishmentOnBestSlot(state, 'sports_court', true);
+      const fallbackSlot = findBestEstablishmentRect(
+        state,
+        'sports_court',
+        true,
+        targetFw,
+        targetFh
+      );
+      if (fallbackSlot) {
+        const compound = assignCompoundLot(
+          state,
+          fallbackSlot.x,
+          fallbackSlot.y,
+          fallbackSlot.fw,
+          fallbackSlot.fh,
+          'park',
+          targetHostLv,
+          work.variant ?? pickEstablishmentVariation(state, 'sports_court'),
+          1.85,
+          'sports_court'
+        );
+        ensureTileConnectedToMainRoad(state, compound);
+        state.mapVersion += 1;
+        built = compound.length > 0;
+      }
     }
     if (!built) {
       plantImmediateParks(state, 2);
@@ -7294,7 +7440,7 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
     state.pendingSounds.push({ type: 'milestone' });
     pushNews(
       state,
-      `${work.title} concluído e inaugurado! Novo Centro Esportivo Pequeno eleva o lazer nos bairros.`,
+      `${work.title} (${targetFw}×${targetFh}) concluído e inaugurado! Esporte e saúde fortalecidos em Pixópolis.`,
       'milestone'
     );
   } else if (actionId === 'bus_transit_project') {
@@ -7841,7 +7987,7 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
         'milestone'
       );
     } else {
-      if (state.stats.stadiumCount < 2) {
+      if (state.stats.stadiumCount < getMaxStadiumsForPopulation(state.totalPopulation)) {
         if (
           typeof work.anchorX === 'number' &&
           typeof work.anchorY === 'number' &&
@@ -7875,7 +8021,7 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       state.pendingSounds.push({ type: 'milestone' });
       pushNews(
         state,
-        'Distrito Metropolitano & Arena Global concluídos! Grande salto econômico e urbano!',
+        'Novo Estádio Monumental (1 a cada 100 mil hab.) & Arena Global concluídos! Grande salto esportivo e urbano!',
         'milestone'
       );
     }
@@ -7999,7 +8145,9 @@ export function executeEmergencyAction(
   };
 
   if (actionId === 'sports_center_project') {
-    const slot = findBestEstablishmentRect(state, 'sports_court', true);
+    const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
+    const fp = SPORTS_CENTER_FOOTPRINT_BY_TIER[tierKey];
+    const slot = findBestEstablishmentRect(state, 'sports_court', true, fp.w, fp.h);
     work.variant = pickEstablishmentVariation(state, 'sports_court');
     if (slot) {
       reserveCompoundConstructionRect(
@@ -8009,15 +8157,15 @@ export function executeEmergencyAction(
         slot.fw,
         slot.fh,
         work,
-        'commercial',
-        ESTABLISHMENT_MAP.sports_court.hostLevel,
+        'park',
+        tier >= 2 ? 3 : 2,
         [],
         'sports_court'
       );
     }
     pushNews(
       state,
-      `Canteiro de obras aberto: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
+      `Canteiro de obras aberto: ${offer.title} (${fp.w}×${fp.h} · ${offer.durationMonths} meses para conclusão).`,
       'info'
     );
   } else if (actionId === 'bus_transit_project') {
@@ -8384,7 +8532,10 @@ export function executeEmergencyAction(
       'info'
     );
   } else if (actionId === 'landmark_project') {
-    if (tier === 1 || (tier >= 3 && state.stats.stadiumCount < 2)) {
+    if (
+      tier === 1 ||
+      (tier >= 3 && state.stats.stadiumCount < getMaxStadiumsForPopulation(state.totalPopulation))
+    ) {
       const slot = findBestStadiumRect(state, true);
       work.variant = pickEstablishmentVariation(state, 'soccer_stadium');
       if (slot) {
@@ -9291,10 +9442,15 @@ export function stepCityTick(state: CityState): void {
             !classifyPlannedRoadCell(state, cand.x, cand.y).isPlanned
         );
 
-      if (canUse(east) && canUse(south) && canUse(se) && nextRandom(state) < 0.48) {
+      if (
+        canUse(east) &&
+        canUse(south) &&
+        canUse(se) &&
+        (chosen === 'commercial' || nextRandom(state) < 0.48)
+      ) {
         const marketEstId =
           chosen === 'commercial' &&
-          state.totalPopulation >= (ESTABLISHMENT_MAP.municipal_market?.minPopulation ?? 400) &&
+          state.totalPopulation >= (ESTABLISHMENT_MAP.municipal_market?.minPopulation ?? 0) &&
           canPlaceEstablishmentAt(state, 'municipal_market', tile.x, tile.y, tile)
             ? ('municipal_market' as EstablishmentId)
             : undefined;

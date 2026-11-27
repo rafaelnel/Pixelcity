@@ -4030,15 +4030,51 @@ function drawSteppedBleacherStadium64(
     }
   }
 
-  poly([pt(-innerR, -innerR, fieldZ), pt(innerR, -innerR, fieldZ), pt(innerR, innerR, fieldZ), pt(-innerR, innerR, fieldZ)], '#237a33');
-  const pitchR = innerR * 0.9;
-  const stripeCount = uSpan >= 1.4 ? 8 : 4;
+  // Red synthetic Olympic athletics running track surrounding the emerald pitch
+  const trackOuterR = innerR * 0.99;
+  poly(
+    [
+      pt(-trackOuterR, -trackOuterR, fieldZ),
+      pt(trackOuterR, -trackOuterR, fieldZ),
+      pt(trackOuterR, trackOuterR, fieldZ),
+      pt(-trackOuterR, trackOuterR, fieldZ),
+    ],
+    '#b83b2b',
+    'rgba(255, 255, 255, 0.55)'
+  );
+  const trackLaneR = innerR * 0.945;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+  ctx.lineWidth = 0.85;
+  ctx.beginPath();
+  const [tl0x, tl0y] = pt(-trackLaneR, -trackLaneR, fieldZ);
+  const [tl1x, tl1y] = pt(trackLaneR, -trackLaneR, fieldZ);
+  const [tl2x, tl2y] = pt(trackLaneR, trackLaneR, fieldZ);
+  const [tl3x, tl3y] = pt(-trackLaneR, trackLaneR, fieldZ);
+  ctx.moveTo(tl0x, tl0y);
+  ctx.lineTo(tl1x, tl1y);
+  ctx.lineTo(tl2x, tl2y);
+  ctx.lineTo(tl3x, tl3y);
+  ctx.closePath();
+  ctx.stroke();
+
+  const turfR = innerR * 0.89;
+  poly(
+    [
+      pt(-turfR, -turfR, fieldZ),
+      pt(turfR, -turfR, fieldZ),
+      pt(turfR, turfR, fieldZ),
+      pt(-turfR, turfR, fieldZ),
+    ],
+    '#1e7a32'
+  );
+  const pitchR = innerR * 0.85;
+  const stripeCount = uSpan >= 1.4 ? 10 : 6;
   for (let sIdx = 0; sIdx < stripeCount; sIdx++) {
     const u0 = -pitchR + (sIdx / stripeCount) * (pitchR * 2);
     const u1 = -pitchR + ((sIdx + 1) / stripeCount) * (pitchR * 2);
     poly(
       [pt(u0, -pitchR, fieldZ), pt(u1, -pitchR, fieldZ), pt(u1, pitchR, fieldZ), pt(u0, pitchR, fieldZ)],
-      sIdx % 2 === 0 ? '#2b9940' : '#3ec456'
+      sIdx % 2 === 0 ? '#24913b' : '#38bf52'
     );
   }
 
@@ -4047,7 +4083,7 @@ function drawSteppedBleacherStadium64(
   const [f2x, f2y] = pt(pitchR * 0.92, pitchR * 0.88, fieldZ);
   const [f3x, f3y] = pt(-pitchR * 0.92, pitchR * 0.88, fieldZ);
   ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 1.3;
   ctx.beginPath();
   ctx.moveTo(f0x, f0y);
   ctx.lineTo(f1x, f1y);
@@ -4058,24 +4094,28 @@ function drawSteppedBleacherStadium64(
 
   const [m0x, m0y] = pt(0, -pitchR * 0.88, fieldZ);
   const [m1x, m1y] = pt(0, pitchR * 0.88, fieldZ);
-  drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.15);
+  drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.2);
 
   const [pcx, pcy] = pt(0, 0, fieldZ);
   ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.1;
+  ctx.lineWidth = 1.15;
   ctx.beginPath();
   ctx.ellipse(pcx, pcy, Math.max(4, uSpan * 6.2), Math.max(2, uSpan * 3.1), 0, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(pcx, pcy, 1.3, 0, Math.PI * 2);
+  ctx.fill();
 
   for (const endSign of [-1, 1]) {
     const xEnd = endSign * pitchR * 0.92;
-    const xBox = endSign * pitchR * 0.62;
-    const [b0x, b0y] = pt(xEnd, -pitchR * 0.44, fieldZ);
-    const [b1x, b1y] = pt(xBox, -pitchR * 0.44, fieldZ);
-    const [b2x, b2y] = pt(xBox, pitchR * 0.44, fieldZ);
-    const [b3x, b3y] = pt(xEnd, pitchR * 0.44, fieldZ);
+    const xBox = endSign * pitchR * 0.60;
+    const [b0x, b0y] = pt(xEnd, -pitchR * 0.46, fieldZ);
+    const [b1x, b1y] = pt(xBox, -pitchR * 0.46, fieldZ);
+    const [b2x, b2y] = pt(xBox, pitchR * 0.46, fieldZ);
+    const [b3x, b3y] = pt(xEnd, pitchR * 0.46, fieldZ);
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.0;
+    ctx.lineWidth = 1.05;
     ctx.beginPath();
     ctx.moveTo(b0x, b0y);
     ctx.lineTo(b1x, b1y);
@@ -4083,13 +4123,31 @@ function drawSteppedBleacherStadium64(
     ctx.lineTo(b3x, b3y);
     ctx.stroke();
 
+    // Inner 6-yard goal area & penalty spot
+    const xSmall = endSign * pitchR * 0.78;
+    const [s0x, s0y] = pt(xEnd, -pitchR * 0.24, fieldZ);
+    const [s1x, s1y] = pt(xSmall, -pitchR * 0.24, fieldZ);
+    const [s2x, s2y] = pt(xSmall, pitchR * 0.24, fieldZ);
+    const [s3x, s3y] = pt(xEnd, pitchR * 0.24, fieldZ);
+    ctx.beginPath();
+    ctx.moveTo(s0x, s0y);
+    ctx.lineTo(s1x, s1y);
+    ctx.lineTo(s2x, s2y);
+    ctx.lineTo(s3x, s3y);
+    ctx.stroke();
+    const [psx, psy] = pt(endSign * pitchR * 0.70, 0, fieldZ);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(psx, psy, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+
     const [g0x, g0y] = pt(xEnd, -pitchR * 0.17, fieldZ);
     const [g1x, g1y] = pt(xEnd, pitchR * 0.17, fieldZ);
-    const [g2x, g2y] = pt(xEnd, -pitchR * 0.17, fieldZ + 2.8);
-    const [g3x, g3y] = pt(xEnd, pitchR * 0.17, fieldZ + 2.8);
-    drawLine64(ctx, g0x, g0y, g2x, g2y, '#ffffff', 1.1);
-    drawLine64(ctx, g1x, g1y, g3x, g3y, '#ffffff', 1.1);
-    drawLine64(ctx, g2x, g2y, g3x, g3y, '#ffffff', 1.2);
+    const [g2x, g2y] = pt(xEnd, -pitchR * 0.17, fieldZ + 3.2);
+    const [g3x, g3y] = pt(xEnd, pitchR * 0.17, fieldZ + 3.2);
+    drawLine64(ctx, g0x, g0y, g2x, g2y, '#ffffff', 1.2);
+    drawLine64(ctx, g1x, g1y, g3x, g3y, '#ffffff', 1.2);
+    drawLine64(ctx, g2x, g2y, g3x, g3y, '#ffffff', 1.3);
   }
 
   if (withCanopy) {
@@ -4997,6 +5055,739 @@ function getEstablishmentSprite(
           v,
           true
         );
+      }
+    );
+  }
+
+  // Multi-tile 2×2 'Mercado' (Basic Early-Game Commercial Establishment for local distribution)
+  if (estId === 'municipal_market' && lotW === 2 && lotH === 2) {
+    const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+    if (!rotLot.isFrontCorner) {
+      return getOrCreateSprite(
+        `est64_market2x2_base_v${v}_x${rotLot.rDx}y${rotLot.rDy}`,
+        98,
+        128,
+        49,
+        94,
+        (ctx, cx, cy) => {
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#7b8798');
+          fillDiamond64(ctx, cx, cy, 29.5, 14.8, '#cbd5e1');
+        }
+      );
+    }
+    return getOrCreateSprite(
+      `est64_market2x2_hero_v${v}`,
+      210,
+      180,
+      105,
+      128,
+      (ctx, cx, cy) => {
+        const dRx = -0.5;
+        const dRy = -0.5;
+        const mx = cx + (dRx - dRy) * TILE_HW;
+        const my = cy + (dRx + dRy) * TILE_HH;
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+          mx + (u - wv) * TILE_HW,
+          my + (u + wv) * TILE_HH - z,
+        ];
+        const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
+          ctx.beginPath();
+          ctx.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+          ctx.closePath();
+          ctx.fillStyle = fill;
+          ctx.fill();
+          if (stroke) {
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = lw;
+            ctx.stroke();
+          }
+        };
+
+        // 1. Full 2×2 Market Plaza Perimeter & Customer Parking Apron
+        poly([pt(-0.98, -0.98), pt(0.98, -0.98), pt(0.98, 0.98), pt(-0.98, 0.98)], '#4b8f3b', '#1e293b', 1.1);
+        poly([pt(-0.92, -0.92), pt(0.92, -0.92), pt(0.92, 0.92), pt(-0.92, 0.92)], '#cbd5e1', '#94a3b8', 0.9);
+        // Front-right asphalt parking bay
+        poly([pt(0.05, -0.86), pt(0.88, -0.86), pt(0.88, 0.88), pt(0.05, 0.88)], '#334155', '#475569', 0.9);
+        for (const pv of [-0.55, -0.20, 0.15, 0.50]) {
+          const [p0x, p0y] = pt(0.14, pv, 0.3);
+          const [p1x, p1y] = pt(0.46, pv, 0.3);
+          drawLine64(ctx, p0x, p0y, p1x, p1y, '#f8fafc', 1.0);
+        }
+
+        // 2. Main 2×2 Modern Neighborhood 'MERCADO' Building (Back-Left & Center)
+        const roofCol = v === 0 ? '#0f766e' : v === 1 ? '#15803d' : '#b45309';
+        const roofHi = v === 0 ? '#14b8a6' : v === 1 ? '#22c55e' : '#f59e0b';
+        drawIsoSpanBox64(
+          ctx,
+          pt,
+          -0.88,
+          0.12,
+          -0.88,
+          0.32,
+          0,
+          24,
+          {
+            top: '#e2e8f0',
+            left: '#f8fafc',
+            right: '#cbd5e1',
+            stroke: '#1e293b',
+          },
+          1.0
+        );
+        // Colored market roof fascia & skylight clerestory
+        poly(
+          [
+            pt(-0.84, -0.84, 24.4),
+            pt(0.08, -0.84, 24.4),
+            pt(0.08, 0.28, 24.4),
+            pt(-0.84, 0.28, 24.4),
+          ],
+          roofCol,
+          '#ffffff',
+          0.9
+        );
+        drawIsoSpanBox64(
+          ctx,
+          pt,
+          -0.64,
+          -0.12,
+          -0.62,
+          0.06,
+          24,
+          5.5,
+          {
+            top: '#7dd3fc',
+            left: roofHi,
+            right: roofCol,
+            stroke: '#0f172a',
+          },
+          0.85
+        );
+
+        // Glass curtain storefront & automatic sliding entrance doors on front-right facade
+        poly(
+          [
+            pt(0.13, -0.74, 2),
+            pt(0.13, 0.22, 2),
+            pt(0.13, 0.22, 18),
+            pt(0.13, -0.74, 18),
+          ],
+          '#38bdf8',
+          '#0284c7',
+          1.0
+        );
+        // Entrance canopy awning
+        drawIsoSpanBox64(
+          ctx,
+          pt,
+          0.12,
+          0.28,
+          -0.42,
+          0.12,
+          11,
+          2.6,
+          {
+            top: roofHi,
+            left: '#f8fafc',
+            right: roofCol,
+            stroke: '#0f172a',
+          },
+          0.85
+        );
+
+        // Illuminated "MERCADO" Rooftop Signboard facing the front avenue
+        const [sg0x, sg0y] = pt(0.10, -0.68, 24);
+        const [sg1x, sg1y] = pt(0.10, 0.18, 24);
+        poly(
+          [
+            [sg0x, sg0y],
+            [sg1x, sg1y],
+            [sg1x, sg1y - 10],
+            [sg0x, sg0y - 10],
+          ],
+          roofCol,
+          '#ffffff',
+          1.1
+        );
+        ctx.save();
+        ctx.translate((sg0x + sg1x) * 0.5, (sg0y + sg1y) * 0.5 - 3.5);
+        ctx.rotate(Math.atan2(sg1y - sg0y, sg1x - sg0x));
+        ctx.font = 'bold 6.8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fef08a';
+        ctx.fillText('MERCADO', 0, 0);
+        ctx.restore();
+
+        // 3. Open-Air Fresh Produce Market Stalls (Front-Left Promenade)
+        const stallCols = ['#ef4444', '#22c55e', '#f59e0b', '#3b82f6'];
+        for (let s = 0; s < 3; s++) {
+          const su0 = -0.80 + s * 0.28;
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            su0,
+            su0 + 0.21,
+            0.44,
+            0.78,
+            0,
+            7.5,
+            {
+              top: stallCols[(s + v) % stallCols.length],
+              left: '#fef3c7',
+              right: '#d97706',
+              stroke: '#1e293b',
+            },
+            0.8
+          );
+        }
+
+        // 4. Parked Customer Cars & Delivery Van in the 2×2 Market Lot
+        const carPalette = ['#ef4444', '#38bdf8', '#facc15', '#22c55e'];
+        for (let c = 0; c < 3; c++) {
+          const cv = -0.38 + c * 0.36;
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            0.22,
+            0.48,
+            cv,
+            cv + 0.18,
+            0,
+            4.5,
+            {
+              top: carPalette[(c + v) % carPalette.length],
+              left: '#1e293b',
+              right: '#0f172a',
+              stroke: '#0f172a',
+            },
+            0.7
+          );
+        }
+        // White delivery truck at back loading bay
+        drawIsoSpanBox64(
+          ctx,
+          pt,
+          0.42,
+          0.78,
+          -0.80,
+          -0.54,
+          0,
+          7.5,
+          {
+            top: '#ffffff',
+            left: '#f1f5f9',
+            right: '#94a3b8',
+            stroke: '#1e293b',
+          },
+          0.8
+        );
+        const [tx, ty] = pt(-0.84, 0.84, 0);
+        drawTree64(ctx, tx, ty, 'emerald', 0.85);
+      }
+    );
+  }
+
+  // Multi-tile Sports Hierarchy ('sports_court'):
+  // - 4×4 Complexo de Esporte Olímpico (2º Centro de Esporte: Indoor Arena + Semi-Olympic Pool + Running Track + Twin Courts)
+  // - 2×2 Centro de Esporte (1º Centro de Esporte: Covered Gymnasium + Illuminated Multi-Sport Court + Bleachers)
+  // - 2×1 Quadra Esportiva (Neighborhood Multi-Sport Court placed every few blocks)
+  if (estId === 'sports_court' && isMulti) {
+    const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+    if (!rotLot.isFrontCorner) {
+      return getOrCreateSprite(
+        `est64_sports_base_v${v}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
+        98,
+        128,
+        49,
+        94,
+        (ctx, cx, cy) => {
+          fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, '#4b8f3b');
+          fillDiamond64(ctx, cx, cy, 29.5, 14.8, '#cbd5e1');
+        }
+      );
+    }
+
+    // Case A: 4×4 Complexo de Esporte Olímpico (2º Centro de Esporte)
+    if (rotLot.rotW >= 4 && rotLot.rotH >= 4) {
+      return getOrCreateSprite(
+        `est64_sports4x4_hero_v${v}_f${f}`,
+        340,
+        260,
+        170,
+        195,
+        (ctx, cx, cy) => {
+          const dRx = -(rotLot.rotW - 1) / 2;
+          const dRy = -(rotLot.rotH - 1) / 2;
+          const mx = cx + (dRx - dRy) * TILE_HW;
+          const my = cy + (dRx + dRy) * TILE_HH;
+          const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+            mx + (u - wv) * TILE_HW,
+            my + (u + wv) * TILE_HH - z,
+          ];
+          const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
+            ctx.beginPath();
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+            ctx.closePath();
+            ctx.fillStyle = fill;
+            ctx.fill();
+            if (stroke) {
+              ctx.strokeStyle = stroke;
+              ctx.lineWidth = lw;
+              ctx.stroke();
+            }
+          };
+
+          // 1. 4×4 Landscaped Olympic Park Campus Base
+          poly([pt(-1.96, -1.96), pt(1.96, -1.96), pt(1.96, 1.96), pt(-1.96, 1.96)], '#489339', '#1e293b', 1.2);
+          poly([pt(-1.84, -1.84), pt(1.84, -1.84), pt(1.84, 1.84), pt(-1.84, 1.84)], '#d5dee8', '#94a3b8', 1.0);
+
+          // Central cross athlete promenade
+          poly([pt(-0.14, -1.82), pt(0.14, -1.82), pt(0.14, 1.82), pt(-0.14, 1.82)], '#94a3b8');
+          poly([pt(-1.82, -0.14), pt(1.82, -0.14), pt(1.82, 0.14), pt(-1.82, 0.14)], '#94a3b8');
+
+          // 2. Quadrant 1 (Back-Left): Grand Covered Indoor Sports Arena Hall ("ARENA ESPORTIVA")
+          const domeCol = v === 0 ? '#0284c7' : v === 1 ? '#0d9488' : '#2563eb';
+          const domeHi = v === 0 ? '#38bdf8' : v === 1 ? '#2dd4bf' : '#60a5fa';
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -1.76,
+            -0.22,
+            -1.76,
+            -0.24,
+            0,
+            26,
+            {
+              top: '#e2e8f0',
+              left: '#f8fafc',
+              right: '#cbd5e1',
+              stroke: '#1e293b',
+            },
+            1.1
+          );
+          // Vaulted metallic arena roof tier & skylight ribs
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -1.62,
+            -0.36,
+            -1.62,
+            -0.38,
+            26,
+            7,
+            {
+              top: domeHi,
+              left: '#7dd3fc',
+              right: domeCol,
+              stroke: '#0f172a',
+            },
+            1.0
+          );
+          // Glass curtain facade on arena front
+          poly(
+            [
+              pt(-1.64, -0.23, 3),
+              pt(-0.34, -0.23, 3),
+              pt(-0.34, -0.23, 21),
+              pt(-1.64, -0.23, 21),
+            ],
+            '#38bdf8',
+            '#0369a1',
+            1.0
+          );
+          // "CENTRO ESPORTIVO" sign on arena parapet
+          const [as0x, as0y] = pt(-1.58, -0.22, 27);
+          const [as1x, as1y] = pt(-0.38, -0.22, 27);
+          poly(
+            [
+              [as0x, as0y],
+              [as1x, as1y],
+              [as1x, as1y - 9],
+              [as0x, as0y - 9],
+            ],
+            '#0f172a',
+            '#38bdf8',
+            1.0
+          );
+          ctx.save();
+          ctx.translate((as0x + as1x) * 0.5, (as0y + as1y) * 0.5 - 3.2);
+          ctx.rotate(Math.atan2(as1y - as0y, as1x - as0x));
+          ctx.font = 'bold 5.8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillText('COMPLEXO 4x4', 0, 0);
+          ctx.restore();
+
+          // 3. Quadrant 2 (Back-Right): Semi-Olympic Aquatic Center Pool with Racing Lanes
+          poly([pt(0.24, -1.72), pt(1.74, -1.72), pt(1.74, -0.24), pt(0.24, -0.24)], '#f1f5f9', '#94a3b8', 1.0);
+          poly([pt(0.38, -1.58), pt(1.60, -1.58), pt(1.60, -0.38), pt(0.38, -0.38)], '#0ea5e9', '#ffffff', 1.3);
+          for (let lane = 1; lane <= 4; lane++) {
+            const lv = -1.58 + (lane / 5) * 1.2;
+            const [l0x, l0y] = pt(0.42, lv, 0.2);
+            const [l1x, l1y] = pt(1.56, lv, 0.2);
+            drawLine64(ctx, l0x, l0y, l1x, l1y, lane % 2 === 0 ? '#fde047' : '#bae6fd', 1.0);
+          }
+
+          // 4. Quadrant 3 (Front-Left): Red Synthetic Athletics Track & Main Championship Multi-Sport Court + Bleachers
+          poly([pt(-1.74, 0.24), pt(-0.24, 0.24), pt(-0.24, 1.74), pt(-1.74, 1.74)], '#c2410c', '#ffffff', 1.2);
+          poly([pt(-1.54, 0.42), pt(-0.44, 0.42), pt(-0.44, 1.56), pt(-1.54, 1.56)], '#2563eb', '#ffffff', 1.2);
+          // Court keys & center circle
+          poly([pt(-1.54, 0.78), pt(-1.28, 0.78), pt(-1.28, 1.20), pt(-1.54, 1.20)], '#f97316', '#ffffff', 0.9);
+          poly([pt(-0.70, 0.78), pt(-0.44, 0.78), pt(-0.44, 1.20), pt(-0.70, 1.20)], '#f97316', '#ffffff', 0.9);
+          const [ml0x, ml0y] = pt(-0.99, 0.42, 0.2);
+          const [ml1x, ml1y] = pt(-0.99, 1.56, 0.2);
+          drawLine64(ctx, ml0x, ml0y, ml1x, ml1y, '#ffffff', 1.1);
+          const [ccx, ccy] = pt(-0.99, 0.99, 0.2);
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.05;
+          ctx.beginPath();
+          ctx.ellipse(ccx, ccy, 6, 3.2, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          // Stepped spectator bleachers along back edge of main court
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -1.66,
+            -0.36,
+            0.20,
+            0.38,
+            0,
+            8,
+            {
+              top: '#f8fafc',
+              left: '#e2e8f0',
+              right: '#94a3b8',
+              stroke: '#475569',
+            },
+            0.8
+          );
+
+          // 5. Quadrant 4 (Front-Right): Twin Tennis & Volleyball Courts + Floodlight Towers & Trees
+          poly([pt(0.24, 0.24), pt(1.72, 0.24), pt(1.72, 0.92), pt(0.24, 0.92)], '#15803d', '#ffffff', 1.1);
+          const [tn0x, tn0y] = pt(0.98, 0.26, 2.0);
+          const [tn1x, tn1y] = pt(0.98, 0.90, 2.0);
+          drawLine64(ctx, tn0x, tn0y, tn1x, tn1y, '#ffffff', 1.5);
+
+          poly([pt(0.24, 1.04), pt(1.72, 1.04), pt(1.72, 1.72), pt(0.24, 1.72)], '#d97706', '#ffffff', 1.1);
+          const [vn0x, vn0y] = pt(0.98, 1.06, 2.0);
+          const [vn1x, vn1y] = pt(0.98, 1.70, 2.0);
+          drawLine64(ctx, vn0x, vn0y, vn1x, vn1y, '#ffffff', 1.5);
+
+          // 4 Tall Olympic LED Floodlight Masts
+          for (const [lu, lv] of [
+            [-1.78, 1.78],
+            [1.78, -1.78],
+            [1.78, 1.78],
+            [0.18, 1.78],
+          ]) {
+            const [lx, ly] = pt(lu, lv, 0);
+            drawLine64(ctx, lx, ly, lx, ly - 24, '#64748b', 2.0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(lx - 3.5, ly - 26, 7, 3);
+            drawGlow64(ctx, lx, ly - 25, 8, 'rgba(254, 249, 195, 0.85)', 'rgba(254, 249, 195, 0)');
+          }
+
+          for (const [tu, tv] of [
+            [-1.86, 0.0],
+            [0.0, 1.86],
+            [1.86, 0.0],
+          ]) {
+            const [tx, ty] = pt(tu, tv, 0);
+            drawTree64(ctx, tx, ty, 'emerald', 0.88);
+          }
+        }
+      );
+    }
+
+    // Case B: 2×2 Centro de Esporte (1º Centro de Esporte)
+    if (rotLot.rotW === 2 && rotLot.rotH === 2) {
+      return getOrCreateSprite(
+        `est64_sports2x2_hero_v${v}_f${f}`,
+        215,
+        185,
+        107,
+        130,
+        (ctx, cx, cy) => {
+          const dRx = -0.5;
+          const dRy = -0.5;
+          const mx = cx + (dRx - dRy) * TILE_HW;
+          const my = cy + (dRx + dRy) * TILE_HH;
+          const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+            mx + (u - wv) * TILE_HW,
+            my + (u + wv) * TILE_HH - z,
+          ];
+          const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
+            ctx.beginPath();
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+            ctx.closePath();
+            ctx.fillStyle = fill;
+            ctx.fill();
+            if (stroke) {
+              ctx.strokeStyle = stroke;
+              ctx.lineWidth = lw;
+              ctx.stroke();
+            }
+          };
+
+          // 1. 2×2 Sports Center Grounds & Athletic Apron
+          poly([pt(-0.98, -0.98), pt(0.98, -0.98), pt(0.98, 0.98), pt(-0.98, 0.98)], '#489339', '#1e293b', 1.1);
+          poly([pt(-0.90, -0.90), pt(0.90, -0.90), pt(0.90, 0.90), pt(-0.90, 0.90)], '#cbd5e1', '#94a3b8', 0.9);
+
+          // 2. Back Wing: Covered Gymnasium Hall ("ESPORTE 2x2")
+          const gymRoof = v === 0 ? '#0284c7' : v === 1 ? '#dc2626' : '#0d9488';
+          const gymHi = v === 0 ? '#38bdf8' : v === 1 ? '#f87171' : '#2dd4bf';
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -0.86,
+            0.86,
+            -0.86,
+            -0.08,
+            0,
+            21,
+            {
+              top: '#e2e8f0',
+              left: '#f8fafc',
+              right: '#cbd5e1',
+              stroke: '#1e293b',
+            },
+            1.0
+          );
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -0.76,
+            0.76,
+            -0.76,
+            -0.16,
+            21,
+            5,
+            {
+              top: gymHi,
+              left: gymHi,
+              right: gymRoof,
+              stroke: '#0f172a',
+            },
+            0.9
+          );
+          // Gymnasium front glass clerestory windows
+          poly(
+            [
+              pt(-0.74, -0.07, 4),
+              pt(0.74, -0.07, 4),
+              pt(0.74, -0.07, 17),
+              pt(-0.74, -0.07, 17),
+            ],
+            '#38bdf8',
+            '#0369a1',
+            0.95
+          );
+          // "ESPORTE" Rooftop Signboard
+          const [es0x, es0y] = pt(-0.55, -0.08, 22);
+          const [es1x, es1y] = pt(0.55, -0.08, 22);
+          poly(
+            [
+              [es0x, es0y],
+              [es1x, es1y],
+              [es1x, es1y - 8.5],
+              [es0x, es0y - 8.5],
+            ],
+            '#0f172a',
+            gymHi,
+            1.0
+          );
+          ctx.save();
+          ctx.translate((es0x + es1x) * 0.5, (es0y + es1y) * 0.5 - 2.8);
+          ctx.rotate(Math.atan2(es1y - es0y, es1x - es0x));
+          ctx.font = 'bold 6px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#fef08a';
+          ctx.fillText('ESPORTE 2x2', 0, 0);
+          ctx.restore();
+
+          // 3. Front Wing: Outdoor Illuminated Multi-Sport Court + Bleachers & Hoops/Goals
+          const courtMain = v === 0 ? '#2563eb' : v === 1 ? '#d97706' : '#16a34a';
+          const courtKey = v === 0 ? '#f97316' : v === 1 ? '#dc2626' : '#0284c7';
+          poly([pt(-0.82, 0.04), pt(0.82, 0.04), pt(0.82, 0.84), pt(-0.82, 0.84)], courtMain, '#ffffff', 1.25);
+          poly([pt(-0.82, 0.24), pt(-0.52, 0.24), pt(-0.52, 0.64), pt(-0.82, 0.64)], courtKey, '#ffffff', 0.9);
+          poly([pt(0.52, 0.24), pt(0.82, 0.24), pt(0.82, 0.64), pt(0.52, 0.64)], courtKey, '#ffffff', 0.9);
+          const [cl0x, cl0y] = pt(0, 0.04, 0.2);
+          const [cl1x, cl1y] = pt(0, 0.84, 0.2);
+          drawLine64(ctx, cl0x, cl0y, cl1x, cl1y, '#ffffff', 1.15);
+          const [ccx, ccy] = pt(0, 0.44, 0.2);
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.05;
+          ctx.beginPath();
+          ctx.ellipse(ccx, ccy, 6.2, 3.1, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Goals / Basketball Backboards at both ends of the outdoor court
+          for (const endU of [-0.82, 0.82]) {
+            const [gx, gy] = pt(endU, 0.44, 0);
+            drawLine64(ctx, gx, gy, gx, gy - 10, '#e2e8f0', 1.6);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 0.9;
+            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.4);
+          }
+
+          // Floodlight masts at front corners
+          for (const [lu, lv] of [
+            [-0.88, 0.88],
+            [0.88, 0.88],
+          ]) {
+            const [lx, ly] = pt(lu, lv, 0);
+            drawLine64(ctx, lx, ly, lx, ly - 19, '#64748b', 1.7);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(lx - 3, ly - 21, 6, 2.6);
+            drawGlow64(ctx, lx, ly - 20, 7, 'rgba(254, 249, 195, 0.82)', 'rgba(254, 249, 195, 0)');
+          }
+        }
+      );
+    }
+
+    // Case C: 2×1 (or 1×2) Quadra Poliesportiva de Bairro placed every few blocks!
+    return getOrCreateSprite(
+      `est64_sports2x1_hero_v${v}_f${f}_w${rotLot.rotW}h${rotLot.rotH}`,
+      168,
+      148,
+      84,
+      104,
+      (ctx, cx, cy) => {
+        const dRx = -(rotLot.rotW - 1) / 2;
+        const dRy = -(rotLot.rotH - 1) / 2;
+        const mx = cx + (dRx - dRy) * TILE_HW;
+        const my = cy + (dRx + dRy) * TILE_HH;
+        const halfU = rotLot.rotW * 0.47;
+        const halfV = rotLot.rotH * 0.47;
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+          mx + (u - wv) * TILE_HW,
+          my + (u + wv) * TILE_HH - z,
+        ];
+        const poly = (pts: Array<[number, number]>, fill: string, stroke?: string, lw: number = 1) => {
+          ctx.beginPath();
+          ctx.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+          ctx.closePath();
+          ctx.fillStyle = fill;
+          ctx.fill();
+          if (stroke) {
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = lw;
+            ctx.stroke();
+          }
+        };
+
+        // 1. 2×1 Park Surround & Concrete Apron
+        poly([pt(-halfU * 1.03, -halfV * 1.03), pt(halfU * 1.03, -halfV * 1.03), pt(halfU * 1.03, halfV * 1.03), pt(-halfU * 1.03, halfV * 1.03)], '#4d993e', '#1e293b', 1.0);
+        poly([pt(-halfU * 0.94, -halfV * 0.94), pt(halfU * 0.94, -halfV * 0.94), pt(halfU * 0.94, halfV * 0.94), pt(-halfU * 0.94, halfV * 0.94)], '#cbd5e1', '#64748b', 0.9);
+
+        // 2. Full 2×1 Multi-Sport Court Surface & Crisp White Markings
+        const pal =
+          v === 0
+            ? { main: '#2563eb', key: '#f97316', border: '#1d4ed8' } // Royal Blue Futsal/Basketball + Orange Key
+            : v === 1
+              ? { main: '#d97706', key: '#dc2626', border: '#b45309' } // Championship Orange Basketball + Crimson Key
+              : { main: '#16a34a', key: '#0284c7', border: '#15803d' }; // Emerald Tennis/Volleyball + Sky Blue Key
+        const cu = halfU * 0.82;
+        const cv = halfV * 0.78;
+        poly([pt(-cu, -cv), pt(cu, -cv), pt(cu, cv), pt(-cu, cv)], pal.main, '#ffffff', 1.3);
+
+        const alongU = rotLot.rotW >= rotLot.rotH;
+        if (alongU) {
+          // Keys at -cu and +cu ends
+          poly([pt(-cu, -cv * 0.52), pt(-cu * 0.56, -cv * 0.52), pt(-cu * 0.56, cv * 0.52), pt(-cu, cv * 0.52)], pal.key, '#ffffff', 0.95);
+          poly([pt(cu * 0.56, -cv * 0.52), pt(cu, -cv * 0.52), pt(cu, cv * 0.52), pt(cu * 0.56, cv * 0.52)], pal.key, '#ffffff', 0.95);
+          const [m0x, m0y] = pt(0, -cv, 0.2);
+          const [m1x, m1y] = pt(0, cv, 0.2);
+          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.2);
+          // 3D Goals & Backboards at both U ends
+          for (const sgn of [-1, 1]) {
+            const [gx, gy] = pt(sgn * cu * 0.96, 0, 0);
+            drawLine64(ctx, gx, gy, gx, gy - 10, '#f8fafc', 1.6);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 0.9;
+            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.2);
+          }
+          // Concrete Bleachers along the back (-cv) edge
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -cu * 0.75,
+            cu * 0.75,
+            -halfV * 0.94,
+            -cv * 1.03,
+            0,
+            6.5,
+            {
+              top: '#f8fafc',
+              left: '#e2e8f0',
+              right: '#94a3b8',
+              stroke: '#475569',
+            },
+            0.75
+          );
+        } else {
+          // Keys at -cv and +cv ends
+          poly([pt(-cu * 0.52, -cv), pt(cu * 0.52, -cv), pt(cu * 0.52, -cv * 0.56), pt(-cu * 0.52, -cv * 0.56)], pal.key, '#ffffff', 0.95);
+          poly([pt(-cu * 0.52, cv * 0.56), pt(cu * 0.52, cv * 0.56), pt(cu * 0.52, cv), pt(-cu * 0.52, cv)], pal.key, '#ffffff', 0.95);
+          const [m0x, m0y] = pt(-cu, 0, 0.2);
+          const [m1x, m1y] = pt(cu, 0, 0.2);
+          drawLine64(ctx, m0x, m0y, m1x, m1y, '#ffffff', 1.2);
+          for (const sgn of [-1, 1]) {
+            const [gx, gy] = pt(0, sgn * cv * 0.96, 0);
+            drawLine64(ctx, gx, gy, gx, gy - 10, '#f8fafc', 1.6);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(gx - 3, gy - 12.5, 6, 3.8);
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 0.9;
+            ctx.strokeRect(gx - 2, gy - 11.5, 4, 2.2);
+          }
+          drawIsoSpanBox64(
+            ctx,
+            pt,
+            -halfU * 0.94,
+            -cu * 1.03,
+            -cv * 0.75,
+            cv * 0.75,
+            0,
+            6.5,
+            {
+              top: '#f8fafc',
+              left: '#e2e8f0',
+              right: '#94a3b8',
+              stroke: '#475569',
+            },
+            0.75
+          );
+        }
+
+        // Center jump circle
+        const [ccx, ccy] = pt(0, 0, 0.2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.ellipse(ccx, ccy, 6.2, 3.2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Corner LED Floodlights
+        for (const [lu, lv] of [
+          [-halfU * 0.90, halfV * 0.90],
+          [halfU * 0.90, -halfV * 0.90],
+          [halfU * 0.90, halfV * 0.90],
+        ]) {
+          const [lx, ly] = pt(lu, lv, 0);
+          drawLine64(ctx, lx, ly, lx, ly - 16, '#64748b', 1.5);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(lx - 2.5, ly - 17.5, 5, 2.2);
+          drawGlow64(ctx, lx, ly - 17, 6, 'rgba(254, 249, 195, 0.8)', 'rgba(254, 249, 195, 0)');
+        }
       }
     );
   }
@@ -6550,8 +7341,10 @@ function drawIsoSpanBox64(
     left: string;
     right: string;
     outline?: string;
+    stroke?: string;
     parapetColor?: string;
-  }
+  },
+  lineW = 1.0
 ): void {
   const z1 = z0 + h;
   const p01_0 = pt(u0, v1, z0);
@@ -6561,7 +7354,7 @@ function drawIsoSpanBox64(
   const p10_1 = pt(u1, v0, z1);
   const p11_1 = pt(u1, v1, z1);
   const p01_1 = pt(u0, v1, z1);
-  const strokeCol = colors.outline ?? '#1e293b';
+  const strokeCol = colors.outline ?? colors.stroke ?? '#1e293b';
 
   // Left-front face (v = v1, u from u0 to u1)
   ctx.beginPath();
@@ -6573,7 +7366,7 @@ function drawIsoSpanBox64(
   ctx.fillStyle = colors.left;
   ctx.fill();
   ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = lineW;
   ctx.stroke();
 
   // Right-front face (u = u1, v from v0 to v1)
@@ -6586,7 +7379,7 @@ function drawIsoSpanBox64(
   ctx.fillStyle = colors.right;
   ctx.fill();
   ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = lineW;
   ctx.stroke();
 
   // Top roof face (z = z1)
@@ -6599,7 +7392,7 @@ function drawIsoSpanBox64(
   ctx.fillStyle = colors.top;
   ctx.fill();
   ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = 1.0;
+  ctx.lineWidth = lineW;
   ctx.stroke();
 
   if (colors.parapetColor) {
@@ -10721,14 +11514,14 @@ export function renderCityCanvas(
  */
 export function renderLandmarkArtworkCanvas(
   ctx: CanvasRenderingContext2D,
-  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping',
+  kind: 'port' | 'airport' | 'bridge' | 'bus' | 'metro' | 'shopping' | 'sports' | 'stadium',
   level: number,
   unlocked: boolean,
   timeSec: number = 0
 ): void {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const maxLv = kind === 'bridge' ? 4 : 3;
+  const maxLv = kind === 'bridge' ? 4 : kind === 'sports' ? 2 : 3;
   const lv = Math.max(1, Math.min(maxLv, level || 1));
   const blink = Math.floor(timeSec * 3) % 2 === 0;
 
@@ -10736,7 +11529,66 @@ export function renderLandmarkArtworkCanvas(
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, w, h);
 
-  if (kind === 'bridge') {
+  if (kind === 'sports') {
+    const lawnGrad = ctx.createLinearGradient(0, 0, 0, h);
+    lawnGrad.addColorStop(0, '#1e3a2f');
+    lawnGrad.addColorStop(1, '#2d6a4f');
+    ctx.fillStyle = lawnGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    const targetDim = lv >= 2 ? 4 : 2;
+    const heroSprite = getEstablishmentSprite(
+      'sports_court',
+      0,
+      Math.floor(timeSec * 2) % 2,
+      targetDim,
+      targetDim,
+      targetDim - 1,
+      targetDim - 1,
+      0
+    );
+    const fitScale = Math.min((w - 14) / heroSprite.canvas.width, (h - 6) / heroSprite.canvas.height) * 1.05;
+    const dw = Math.round(heroSprite.canvas.width * fitScale);
+    const dh = Math.round(heroSprite.canvas.height * fitScale);
+    ctx.drawImage(heroSprite.canvas, Math.round((w - dw) * 0.56), Math.round((h - dh) * 0.48), dw, dh);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
+    ctx.fillRect(6, h - 24, 124, 18);
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 1.1;
+    ctx.strokeRect(6.5, h - 23.5, 123, 17);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(lv >= 2 ? '4×4 COMPLEXO OLÍMPICO' : '2×2 CENTRO DE ESPORTE', 10, h - 12);
+  } else if (kind === 'stadium') {
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
+    skyGrad.addColorStop(0, '#0f172a');
+    skyGrad.addColorStop(1, '#1e3a5f');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    const heroSprite =
+      lv === 2
+        ? getEstablishmentSprite('amusement_park', 0, Math.floor(timeSec * 2) % 2, 1, 1, 0, 0, 0)
+        : getEstablishmentSprite('soccer_stadium', lv >= 3 ? 1 : 0, 0, 4, 3, 3, 2, 0);
+    const fitScale = Math.min((w - 14) / heroSprite.canvas.width, (h - 6) / heroSprite.canvas.height) * 1.06;
+    const dw = Math.round(heroSprite.canvas.width * fitScale);
+    const dh = Math.round(heroSprite.canvas.height * fitScale);
+    ctx.drawImage(heroSprite.canvas, Math.round((w - dw) * 0.58), Math.round((h - dh) * 0.48), dw, dh);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
+    ctx.fillRect(6, h - 24, 132, 18);
+    ctx.strokeStyle = '#ff8ec7';
+    ctx.lineWidth = 1.1;
+    ctx.strokeRect(6.5, h - 23.5, 131, 17);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(
+      lv === 2 ? '3×3 PARQUE DE DIVERSÕES' : '4×3 ESTÁDIO (1 / 100k)',
+      10,
+      h - 12
+    );
+  } else if (kind === 'bridge') {
     const sky = ctx.createLinearGradient(0, 0, 0, h * 0.62);
     sky.addColorStop(0, '#0e1b33');
     sky.addColorStop(1, '#224773');
