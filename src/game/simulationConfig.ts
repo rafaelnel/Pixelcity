@@ -1,5 +1,6 @@
 import type {
   BudgetAreaKey,
+  BudgetAreaStatus,
   CityTrait,
   CivicMilestoneKind,
   DifficultyConfig,
@@ -799,194 +800,128 @@ export const EMERGENCY_LINES: EmergencyLineSpec[] = [
       },
     ],
   },
+];
+
+export interface BudgetCampaignProgramSpec {
+  id: 'environmental_cleanup' | 'revitalization' | 'tourism_festival';
+  accentColor: string;
+  primaryArea: BudgetAreaKey;
+  secondaryArea: BudgetAreaKey;
+  primaryWeight: number;
+  secondaryWeight: number;
+  minPrimaryPct: number;
+  minSecondaryPct: number;
+  minWeightedPct: number;
+  summary: string;
+  effectHint: string;
+  tierTitles: [string, string, string, string];
+}
+
+export const BUDGET_CAMPAIGN_PROGRAMS: BudgetCampaignProgramSpec[] = [
   {
     id: 'environmental_cleanup',
     accentColor: '#66d98c',
-    tiers: [
-      {
-        tier: 1,
-        tierLabel: 'Fase I',
-        title: 'Mutirão Ambiental',
-        summary: 'Limpeza rápida de focos de fumaça e plantio de praças urbanas.',
-        effectHint: '-45% poluição (3 meses) · Cria até 2 parques',
-        baseCost: 2200,
-        revScalePct: 0.22,
-        durationMonths: 3,
-      },
-      {
-        tier: 2,
-        tierLabel: 'Fase II',
-        title: 'Reflorestamento Metropolitano',
-        summary: 'Corredores verdes integrados e filtros industriais modernos.',
-        effectHint: '-60% poluição (4 meses) · Cria até 4 parques · +6% felicidade',
-        baseCost: 5600,
-        revScalePct: 0.30,
-        durationMonths: 4,
-      },
-      {
-        tier: 3,
-        tierLabel: 'Fase III',
-        title: 'Usina de Filtragem Ecológica',
-        summary: 'Engenharia ambiental pesada purificando o ar e valorizando terrenos.',
-        effectHint: '-72% poluição (5 meses) · Cria até 6 parques · +10% felicidade',
-        baseCost: 14000,
-        revScalePct: 0.36,
-        durationMonths: 5,
-      },
-      {
-        tier: 4,
-        tierLabel: 'Fase IV',
-        title: 'Cinturão Verde Carbono Zero',
-        summary: 'Programa permanente de biourbanismo de última geração em toda a cidade.',
-        effectHint: '-82% poluição (6 meses) · Cria até 8 parques · Grande salto de valor',
-        baseCost: 28000,
-        revScalePct: 0.42,
-        durationMonths: 6,
-      },
+    primaryArea: 'wellbeing',
+    secondaryArea: 'education',
+    primaryWeight: 0.65,
+    secondaryWeight: 0.35,
+    minPrimaryPct: 95,
+    minSecondaryPct: 85,
+    minWeightedPct: 100,
+    summary: 'Limpeza contínua de focos de fumaça e plantio gradual de praças urbanas.',
+    effectHint: '-45% a -75% poluição · Cria praças quando a cidade precisa',
+    tierTitles: [
+      'Mutirão Ambiental',
+      'Reflorestamento Metropolitano',
+      'Usina de Filtragem Ecológica',
+      'Cinturão Verde Carbono Zero',
     ],
   },
   {
     id: 'revitalization',
     accentColor: '#c28bff',
-    tiers: [
-      {
-        tier: 1,
-        tierLabel: 'Fase I',
-        title: 'Reforma de Revitalização',
-        summary: 'Restaura imóveis abandonados e recupera áreas degradadas à vista.',
-        effectHint: 'Recupera até 6 imóveis abandonados · Estabilidade (2 meses)',
-        baseCost: 2400,
-        revScalePct: 0.22,
-        durationMonths: 2,
-      },
-      {
-        tier: 2,
-        tierLabel: 'Fase II',
-        title: 'Requalificação de Bairros',
-        summary: 'Restaura imóveis vazios já evoluídos para Prédio Médio (Nv. 2) e blinda a cidade.',
-        effectHint: 'Recupera até 10 imóveis (Nv. 2) · Escudo anti-abandono (3 meses)',
-        baseCost: 6200,
-        revScalePct: 0.30,
-        durationMonths: 3,
-      },
-      {
-        tier: 3,
-        tierLabel: 'Fase III',
-        title: 'Renovação Urbana Integrada',
-        summary: 'Reconstrói imóveis abandonados e moderniza edifícios vizinhos.',
-        effectHint: 'Recupera todos os abandonados + evolui 2 prédios · Escudo (4 meses)',
-        baseCost: 15000,
-        revScalePct: 0.36,
-        durationMonths: 4,
-      },
-      {
-        tier: 4,
-        tierLabel: 'Fase IV',
-        title: 'Programa Metrópole Renovada',
-        summary: 'Reestruturação completa com edifícios de alto padrão e segurança plena.',
-        effectHint: 'Recuperação total em Nv. 2 + evolui 4 prédios · Escudo (6 meses)',
-        baseCost: 30000,
-        revScalePct: 0.42,
-        durationMonths: 6,
-      },
+    primaryArea: 'security',
+    secondaryArea: 'infrastructure',
+    primaryWeight: 0.65,
+    secondaryWeight: 0.35,
+    minPrimaryPct: 95,
+    minSecondaryPct: 85,
+    minWeightedPct: 100,
+    summary: 'Restaura imóveis abandonados automaticamente e blinda bairros contra degradação.',
+    effectHint: 'Recupera imóveis abandonados · Escudo anti-abandono',
+    tierTitles: [
+      'Reforma de Revitalização',
+      'Requalificação de Bairros',
+      'Renovação Urbana Integrada',
+      'Programa Metrópole Renovada',
     ],
   },
   {
     id: 'tourism_festival',
     accentColor: '#f5b73b',
-    tiers: [
-      {
-        tier: 1,
-        tierLabel: 'Fase I',
-        title: 'Festival / Campanha Turística',
-        summary: 'Programação cultural para atrair visitantes externos e aquecer o comércio.',
-        effectHint: 'Turismo +90% · +8% felicidade · +fluxo de visitantes (3 meses)',
-        baseCost: 2600,
-        revScalePct: 0.24,
-        durationMonths: 3,
-      },
-      {
-        tier: 2,
-        tierLabel: 'Fase II',
-        title: 'Temporada Cultural & Esportiva',
-        summary: 'Campeonatos e shows impulsionam lazer, hotéis e arrecadação.',
-        effectHint: 'Turismo +130% · +12% felicidade · Mais visitantes na rodovia (4 meses)',
-        baseCost: 6800,
-        revScalePct: 0.32,
-        durationMonths: 4,
-      },
-      {
-        tier: 3,
-        tierLabel: 'Fase III',
-        title: 'Bienal Internacional',
-        summary: 'Evento de porte continental que impulsiona comércio e serviços culturais.',
-        effectHint: 'Turismo +175% · +15% felicidade · Evolui comércios (5 meses)',
-        baseCost: 16500,
-        revScalePct: 0.38,
-        durationMonths: 5,
-      },
-      {
-        tier: 4,
-        tierLabel: 'Fase IV',
-        title: 'Expo Global & Jogos da Metrópole',
-        summary: 'Megaevento mundial que transforma a cidade em vitrine internacional.',
-        effectHint: 'Turismo +220% · +18% felicidade · Grande onda de evolução (6 meses)',
-        baseCost: 34000,
-        revScalePct: 0.45,
-        durationMonths: 6,
-      },
-    ],
-  },
-  {
-    id: 'emergency_roadworks',
-    accentColor: '#56c2ff',
-    tiers: [
-      {
-        tier: 1,
-        tierLabel: 'Fase I · Ponte Nv.1',
-        title: 'Obra Viária & Ponte Histórica de Pedra',
-        summary: 'Abre novas ruas e constrói ponte de pedra e madeira sobre o rio.',
-        effectHint: 'Abre 4 ruas + Ponte Nv. 1 no rio · Expansão viária 1,8x mais rápida (3 meses)',
-        baseCost: 2200,
-        revScalePct: 0.22,
-        durationMonths: 3,
-      },
-      {
-        tier: 2,
-        tierLabel: 'Fase II · Ponte Nv.2',
-        title: 'Avenidas Expressas & Ponte de Arcos Metálicos',
-        summary: 'Moderniza as pontes do rio para Nível 2 com arcos de aço estrutural e abre avenidas largas.',
-        effectHint: 'Evolui Pontes para Nv. 2 (Arcos Metálicos) + 6 ruas · Expansão 2,1x (4 meses)',
-        baseCost: 7200,
-        revScalePct: 0.32,
-        durationMonths: 4,
-        minPopulation: 3500,
-      },
-      {
-        tier: 3,
-        tierLabel: 'Fase III · Ponte Nv.3',
-        title: 'Anel Metropolitano & Ponte Estaiada Monumental',
-        summary: 'Transforma as pontes em Pontes Estaiadas Nível 3 com torres iluminadas e cabos tensores.',
-        effectHint: 'Evolui Pontes para Nv. 3 (Estaiada) + 8 ruas · Evolui 2 prédios (5 meses)',
-        baseCost: 21000,
-        revScalePct: 0.40,
-        durationMonths: 5,
-        minPopulation: 12000,
-      },
-      {
-        tier: 4,
-        tierLabel: 'Fase IV · Ponte 2× Nv.4',
-        title: 'Megaponte Expressa de 2 Espaços (Nv. 4)',
-        summary: 'Última evolução de pontes: alarga travessias do rio para 2 espaços de largura (pista dupla monumental) sempre que houver margem livre e abre corredores expressos.',
-        effectHint: 'Alarga pontes para 2 espaços de largura (Nv. 4) + 10 ruas + evolui 3 prédios · Logística máxima (6 meses)',
-        baseCost: 42000,
-        revScalePct: 0.46,
-        durationMonths: 6,
-        minPopulation: 22000,
-      },
+    primaryArea: 'tourism',
+    secondaryArea: 'entertainment',
+    primaryWeight: 0.60,
+    secondaryWeight: 0.40,
+    minPrimaryPct: 95,
+    minSecondaryPct: 85,
+    minWeightedPct: 100,
+    summary: 'Programação cultural e eventos para atrair visitantes e aquecer o comércio.',
+    effectHint: 'Turismo +25% a +125% · +felicidade · +fluxo de visitantes',
+    tierTitles: [
+      'Festival / Campanha Turística',
+      'Temporada Cultural & Esportiva',
+      'Bienal Internacional',
+      'Expo Global & Jogos da Metrópole',
     ],
   },
 ];
+
+export interface EvaluatedBudgetCampaign {
+  spec: BudgetCampaignProgramSpec;
+  primaryPct: number;
+  secondaryPct: number;
+  weightedPct: number;
+  eligible: boolean;
+  tier: 0 | 1 | 2 | 3 | 4;
+  tierTitle: string;
+}
+
+export function evaluateBudgetCampaignStatus(
+  coverage: Record<BudgetAreaKey, BudgetAreaStatus>,
+  money: number
+): EvaluatedBudgetCampaign[] {
+  return BUDGET_CAMPAIGN_PROGRAMS.map((spec) => {
+    const primaryPct = coverage[spec.primaryArea]?.coveragePct ?? 0;
+    const secondaryPct = coverage[spec.secondaryArea]?.coveragePct ?? 0;
+    const weightedPct = Math.round(
+      primaryPct * spec.primaryWeight + secondaryPct * spec.secondaryWeight
+    );
+    const eligible =
+      money >= 0 &&
+      primaryPct >= spec.minPrimaryPct &&
+      secondaryPct >= spec.minSecondaryPct &&
+      weightedPct >= spec.minWeightedPct;
+
+    let tier: 0 | 1 | 2 | 3 | 4 = 0;
+    if (eligible) {
+      if (weightedPct >= 185) tier = 4;
+      else if (weightedPct >= 155) tier = 3;
+      else if (weightedPct >= 125) tier = 2;
+      else tier = 1;
+    }
+
+    return {
+      spec,
+      primaryPct,
+      secondaryPct,
+      weightedPct,
+      eligible,
+      tier,
+      tierTitle: tier > 0 ? spec.tierTitles[tier - 1] : spec.tierTitles[0],
+    };
+  });
+}
 
 /** Minimum Manhattan tile distance required between two river bridges */
 export const MIN_BRIDGE_SPACING_TILES = 11;
@@ -1230,10 +1165,9 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     id: 'civic_bridge_lv2',
     populationTarget: 3500,
     kind: 'bridge',
-    title: 'Pontes de Arcos Metálicos Nv. 2 Liberadas',
-    subtitle: 'Libera a modernização das pontes do rio para Arcos de Aço (Nv. 2) ao investir em Obras.',
+    title: 'Pontes de Arcos Metálicos Nv. 2',
+    subtitle: 'Aos 3.500 habitantes, as pontes do rio evoluem automaticamente para Arcos de Aço (Nv. 2)!',
     rewardCash: 2500,
-    actionId: 'emergency_roadworks',
   },
   {
     id: 'civic_bus_system',
@@ -1283,10 +1217,9 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     id: 'civic_bridge_lv3',
     populationTarget: 12000,
     kind: 'bridge',
-    title: 'Pontes Estaiadas Nv. 3 Liberadas',
-    subtitle: 'Libera a evolução das travessias do rio para Pontes Estaiadas Monumentais (Nv. 3) em Obras.',
+    title: 'Pontes Estaiadas Monumentais Nv. 3',
+    subtitle: 'Aos 12.000 habitantes, as travessias do rio evoluem automaticamente para Pontes Estaiadas (Nv. 3)!',
     rewardCash: 5500,
-    actionId: 'emergency_roadworks',
   },
   {
     id: 'civic_metro_system',
@@ -1346,10 +1279,9 @@ export const CIVIC_MILESTONES: CivicMilestoneDef[] = [
     id: 'civic_bridge_lv4',
     populationTarget: 22000,
     kind: 'bridge',
-    title: 'Megaponte de 2 Espaços (Nv. 4) Liberada',
-    subtitle: 'Aos 22.000 habitantes, libera a última evolução de pontes: travessias duplas com 2 espaços de largura em Obras!',
+    title: 'Megaponte de 2 Espaços (Nv. 4)',
+    subtitle: 'Aos 22.000 habitantes, as travessias do rio evoluem automaticamente para Megapontes duplas (Nv. 4)!',
     rewardCash: 11500,
-    actionId: 'emergency_roadworks',
   },
   {
     id: 'civic_shopping_lv3',

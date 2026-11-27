@@ -404,7 +404,7 @@ test('population-based Civic Milestones unlock Sports Center (2k), Airports (5k/
   assert.ok(boats.length > 0, 'River ships should spawn once Port is built');
   assert.ok(planes.length > 0, 'Commercial planes should spawn once Airport is built');
 
-  // Verify Obras Evolutivas still evolve cleanly (e.g. tourism_festival Fase I -> Fase II upon completion)
+  // Verify Obras Evolutivas still evolve cleanly (e.g. port_evolution Fase I -> Fase II upon completion)
   for (const area of BUDGET_AREA_ORDER) {
     setCityBudget(city, area, city.stats.coverage[area].needed);
   }
@@ -412,17 +412,8 @@ test('population-based Civic Milestones unlock Sports Center (2k), Airports (5k/
   city.activeUrbanIncident = null;
   recomputeFieldsAndStats(city);
   city.money = Math.max(5_000_000, city.financials.revenue.total * 10);
-  const beforeFest = getEmergencyOffers(city).find((o) => o.id === 'tourism_festival')!;
-  assert.equal(beforeFest.tier, 1);
-  const res1 = runEmergencyWorkToCompletion(city, 'tourism_festival');
-  assert.equal(res1.ok, true);
-  assert.equal(res1.evolvedToTier, 2);
-  city.activeEconomicEvent = null;
-  city.activeUrbanIncident = null;
-  recomputeFieldsAndStats(city);
-  const afterFest = getEmergencyOffers(city).find((o) => o.id === 'tourism_festival')!;
-  assert.equal(afterFest.tier, 2);
-  assert.ok(afterFest.cost > beforeFest.cost, 'Phase II work should be more complex/expensive');
+  const beforePort = getEmergencyOffers(city).find((o) => o.id === 'port_evolution')!;
+  assert.ok(beforePort.tier >= 2, 'Port should have evolved to Phase II after Phase I completion');
 });
 
 test('Salto Evolutivo advances naturally at 100% investment, accelerates at 200%, and respects the 20k Stadium population gate', () => {
@@ -465,8 +456,15 @@ test('city save and load round-trips full expanded map, budgets, taxes, landmark
   const { serializeCitySave, deserializeCitySave } = await import('./cityEngine');
   const city = createNewCity(707070);
   city.money = 45000;
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 1500) {
+      t.type = 'residential';
+      t.level = 2;
+      recomputeFieldsAndStats(city);
+    }
+  }
   expandCityLand(city, 'leste');
-  executeEmergencyAction(city, 'emergency_roadworks');
+  executeEmergencyAction(city, 'port_evolution');
   setCityBudget(city, 'infrastructure', 999);
   setTaxRate(city, 'commercial', 14);
 
@@ -481,17 +479,17 @@ test('city save and load round-trips full expanded map, budgets, taxes, landmark
   assert.equal(midLoaded.budgets.infrastructure, 999);
   assert.equal(midLoaded.taxes.commercial, 14);
   assert.equal(midLoaded.pendingWorks.length, 1);
-  assert.equal(midLoaded.workTiers.emergency_roadworks, 1);
+  assert.equal(midLoaded.workTiers.port_evolution, 1);
   assert.equal(midLoaded.tiles.length, city.tiles.length);
 
   // Advancing remaining months on the loaded city completes the work and advances workTier to 2
   while (midLoaded.pendingWorks.length > 0) {
     closeFinancialMonth(midLoaded);
   }
-  assert.equal(midLoaded.workTiers.emergency_roadworks, 2);
+  assert.equal(midLoaded.workTiers.port_evolution, 2);
   const completedLoaded = deserializeCitySave(serializeCitySave(midLoaded));
   assert.ok(completedLoaded);
-  assert.equal(completedLoaded.workTiers.emergency_roadworks, 2);
+  assert.equal(completedLoaded.workTiers.port_evolution, 2);
 });
 
 test('tax tolerance scales with service coverage and abusive taxes cause happiness drop, exodus & city need alerts', () => {
@@ -587,15 +585,12 @@ test('river allows as many bridges as needed when well-spaced, bridges evolve Nv
     `Expected road network to keep expanding (${initialRoads} -> ${city.stats.roadCount})`
   );
 
-  // Expand map along the river and run roadworks so multiple well-spaced bridges can be built (>2 possible when needed)
+  // Expand map along the river and grow roads so multiple well-spaced bridges can be built (>2 possible when needed)
   city.money = 250000;
   expandCityLand(city, 'norte');
   expandCityLand(city, 'sul');
   expandCityLand(city, 'leste');
   expandCityLand(city, 'oeste');
-  runEmergencyWorkToCompletion(city, 'emergency_roadworks');
-  runEmergencyWorkToCompletion(city, 'emergency_roadworks');
-  runEmergencyWorkToCompletion(city, 'emergency_roadworks');
   for (let i = 0; i < 90; i++) {
     stepCityTick(city);
   }
@@ -1362,7 +1357,9 @@ test('highways support 2-lane and 4-lane (2 outbound + 2 inbound) classes, wide 
   assert.ok(shorePlaced, 'Expected to find a wide (4-8 tile) river crossing for bridge verification');
 
   city.money = 250000;
-  runEmergencyWorkToCompletion(city, 'emergency_roadworks');
+  city.breakthroughCharge.infrastructure = 99;
+  setCityBudget(city, 'infrastructure', city.stats.coverage.infrastructure.needed * 2);
+  stepCityTick(city);
   const bridgeTiles = city.tiles.filter((t) => t.type === 'bridge');
   assert.ok(bridgeTiles.length >= 4, `Expected wide bridge (>=4 tiles) to span across the varied-width river, got ${bridgeTiles.length}`);
   assert.equal(isNavigableWater('bridge'), true, 'Bridge tiles must allow boats to pass underneath');
@@ -2202,14 +2199,14 @@ test('random Economic Cycles (recession/inflation) and Urban Incidents (storm/bl
   );
 
   // 2. Economic Cycle: Inflation raises fixed expenses & construction costs
-  const costBeforeInf = getEmergencyOffers(city).find((o) => o.id === 'emergency_roadworks')!.cost;
+  const costBeforeInf = getEmergencyOffers(city).find((o) => o.id === 'port_evolution')!.cost;
   triggerRandomEvent(city, 'inflation');
   assert.equal(city.activeEconomicEvent?.id, 'inflation');
   assert.ok(
     city.financials.expenses.fixedTotal > baseFixed,
     `Expected inflation to raise fixed expenses (${baseFixed} -> ${city.financials.expenses.fixedTotal})`
   );
-  const costDuringInf = getEmergencyOffers(city).find((o) => o.id === 'emergency_roadworks')!.cost;
+  const costDuringInf = getEmergencyOffers(city).find((o) => o.id === 'port_evolution')!.cost;
   assert.ok(
     costDuringInf > costBeforeInf,
     `Expected inflation to raise construction costs (${costBeforeInf} -> ${costDuringInf})`
@@ -2280,15 +2277,26 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.equal(city.stats.busStationCount, 0, 'Bus Terminals must NOT auto-build without player order');
   assert.equal(city.stats.metroStationCount, 0, 'Metro Stations must NOT auto-build without player order');
   assert.equal(city.tollPlaza.built, false, 'Toll Plaza must NOT auto-build without player order');
-  assert.equal(city.stats.bridgeLevel, 1, 'River bridges must NOT auto-upgrade without player order');
+  assert.equal(
+    getEmergencyOffers(city).some((o) => o.id === 'emergency_roadworks'),
+    false,
+    'Bridge evolution must NOT appear in manual Obras offers'
+  );
+  assert.equal(city.stats.bridgeLevel, 4, 'River bridges MUST auto-upgrade to Nv. 4 upon reaching 22k+ milestone');
 
-  // All 18 civic milestones should report unlocked=true; all Obras-gated projects remain built=false until player builds them
+  // All 18 civic milestones should report unlocked=true; automatic milestones (verticalization + bridges) are built=true while Obras-gated projects remain built=false until player builds them
   const statusesBefore = getCivicMilestoneStatuses(city);
   assert.equal(statusesBefore.length, 18);
   for (const m of statusesBefore) {
     assert.equal(m.unlocked, true, `Expected milestone ${m.id} to be unlocked at 30k+ pop`);
-    if (m.id === 'civic_vertical_10k') {
-      assert.equal(m.built, true, 'Organic 10k verticalization milestone should activate once unlocked');
+    if (
+      m.id === 'civic_vertical_10k' ||
+      m.id === 'civic_bridge_lv2' ||
+      m.id === 'civic_bridge_lv3' ||
+      m.id === 'civic_bridge_lv4'
+    ) {
+      assert.equal(m.built, true, `Automatic milestone ${m.id} should activate once unlocked`);
+      assert.equal(m.actionId, undefined, `Automatic milestone ${m.id} should not reference a manual Obras actionId`);
     } else {
       assert.equal(m.built, false, `Expected milestone ${m.id} to remain built=false until player builds it`);
       assert.ok(m.actionId, `Expected milestone ${m.id} to reference an Obras actionId`);
@@ -2331,13 +2339,10 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.equal(city.stats.airportCount, 0, 'Multi-month Airport must NOT count as built mid-construction');
   assert.equal(city.stats.stadiumCount, 0, 'Multi-month Stadium must NOT count as built mid-construction');
 
-  // Complete all active multi-month projects and roadworks tiers 1 -> 2 -> 3
+  // Complete all active multi-month projects
   while (city.pendingWorks.length > 0) {
     closeFinancialMonth(city);
   }
-  assert.equal(runEmergencyWorkToCompletion(city, 'emergency_roadworks').ok, true);
-  assert.equal(runEmergencyWorkToCompletion(city, 'emergency_roadworks').ok, true);
-  assert.equal(runEmergencyWorkToCompletion(city, 'emergency_roadworks').ok, true);
   recomputeFieldsAndStats(city);
 
   assert.ok(city.stats.portCount >= 1, 'Expected Port built after completion');
@@ -2347,28 +2352,20 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.ok(city.stats.airportCount >= 1, 'Expected Airport built after completion');
   assert.ok(city.stats.stadiumCount >= 1, 'Expected Stadium built after completion');
   assert.equal(city.tollPlaza.built, true, 'Expected Toll Plaza built after explicit order');
-  assert.equal(city.stats.bridgeLevel, 3, 'Expected river bridges upgraded to Nv. 3 after roadworks Tier 3 completion');
+  assert.equal(city.stats.bridgeLevel, 4, 'Expected river bridges automatically upgraded to Nv. 4');
 
-  const statusesAfterTier3 = getCivicMilestoneStatuses(city);
-  const byIdTier3 = Object.fromEntries(statusesAfterTier3.map((s) => [s.id, s]));
-  assert.equal(byIdTier3.civic_port_lv1.built, true);
-  assert.equal(byIdTier3.civic_sports_small.built, true);
-  assert.equal(byIdTier3.civic_bus_system.built, true);
-  assert.equal(byIdTier3.civic_metro_system.built, true);
-  assert.equal(byIdTier3.civic_bridge_lv2.built, true);
-  assert.equal(byIdTier3.civic_bridge_lv3.built, true);
-  assert.equal(byIdTier3.civic_bridge_lv4.built, false, 'Expected Nv. 4 Mega-Bridge milestone to stay built=false until Tier 4');
-  assert.equal(byIdTier3.civic_airport_lv1.built, true);
-  assert.equal(byIdTier3.civic_stadium_20k.built, true);
-  assert.equal(byIdTier3.civic_toll_20k.built, true);
-
-  // Roadworks Tier 4 at >= 22k pop upgrades bridges to Nv. 4 (2-tile-wide Mega-Bridge) on completion
-  city.money = 10_000_000;
-  assert.equal(runEmergencyWorkToCompletion(city, 'emergency_roadworks').ok, true);
-  recomputeFieldsAndStats(city);
-  assert.equal(city.stats.bridgeLevel, 4, 'Expected river bridges upgraded to Nv. 4 after roadworks Tier 4');
-  const byIdTier4 = Object.fromEntries(getCivicMilestoneStatuses(city).map((s) => [s.id, s]));
-  assert.equal(byIdTier4.civic_bridge_lv4.built, true);
+  const statusesAfterCompletion = getCivicMilestoneStatuses(city);
+  const byId = Object.fromEntries(statusesAfterCompletion.map((s) => [s.id, s]));
+  assert.equal(byId.civic_port_lv1.built, true);
+  assert.equal(byId.civic_sports_small.built, true);
+  assert.equal(byId.civic_bus_system.built, true);
+  assert.equal(byId.civic_metro_system.built, true);
+  assert.equal(byId.civic_bridge_lv2.built, true);
+  assert.equal(byId.civic_bridge_lv3.built, true);
+  assert.equal(byId.civic_bridge_lv4.built, true);
+  assert.equal(byId.civic_airport_lv1.built, true);
+  assert.equal(byId.civic_stadium_20k.built, true);
+  assert.equal(byId.civic_toll_20k.built, true);
 });
 
 test('Nv. 4 Mega-Bridge widens eligible river bridges to 2 tiles wide without overwriting landmarks, keeps cars straight, and demolishes as one span', async () => {
@@ -2436,13 +2433,9 @@ test('Nv. 4 Mega-Bridge widens eligible river bridges to 2 tiles wide without ov
   assert.ok(city.totalPopulation >= 22000, `Expected >=22k pop, got ${city.totalPopulation}`);
   assert.equal(countRiverBridges(city), 2, 'Expected 2 distinct river bridges before Tier 4 upgrade');
 
-  // Execute Roadworks Tiers 1 -> 2 -> 3 -> 4 (each multi-month project completes via closeFinancialMonth)
+  // Reaching the 22k civic milestone automatically upgrades river bridges to Nv. 4 (2-tile-wide Mega-Bridge)
   city.money = 10_000_000;
   evaluateCivicMilestones(city);
-  for (let tier = 1; tier <= 4; tier++) {
-    const res = runEmergencyWorkToCompletion(city, 'emergency_roadworks');
-    assert.equal(res.ok, true, `Expected emergency_roadworks Tier ${tier} to succeed`);
-  }
   recomputeFieldsAndStats(city);
 
   assert.equal(city.stats.bridgeLevel, 4);
@@ -3396,17 +3389,14 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   assert.equal(airOfferBusy.unlocked, false);
   assert.equal(executeEmergencyAction(city, 'airport_evolution').ok, false);
 
-  // Also start Port (2 months) and Environmental Cleanup (3 months, explicit campaign activeBoost + final parks)
+  // Also start Port (2 months) and Bus Transit (3 months)
   const portStart = executeEmergencyAction(city, 'port_evolution');
-  const envStart = executeEmergencyAction(city, 'environmental_cleanup');
+  const busStart = executeEmergencyAction(city, 'bus_transit_project');
   assert.equal(portStart.ok, true);
-  assert.equal(envStart.ok, true);
+  assert.equal(busStart.ok, true);
   assert.equal(city.stats.portCount, 0, 'Port count must remain 0 during construction');
   assert.equal(city.financials.revenue.tradeIncome, 0, 'Port tradeIncome must remain 0 until completion');
-  assert.ok(
-    city.activeBoosts.some((b) => b.actionId === 'environmental_cleanup'),
-    'Environmental cleanup campaign keeps explicit activeBoost while executing'
-  );
+  assert.equal(city.stats.busStationCount, 0, 'Bus count must remain 0 during construction');
 
   // No airplanes or port boats spawn yet before completion
   const boatsMid: BoatEntity[] = [];
@@ -3415,10 +3405,11 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   updateBoatsAndPlanes(city, boatsMid, planesMid, particles, { idx: 0 }, 0.1, 1);
   assert.equal(planesMid.length, 0, 'Planes must NOT spawn while Airport is still under construction');
 
-  // 2. Advance 1 month: Port (2m -> 1m), Airport (3m -> 2m), Environmental Cleanup (3m -> 2m) still building
+  // 2. Advance 1 month: Port (2m -> 1m), Airport (3m -> 2m), Bus Transit (3m -> 2m) still building
   closeFinancialMonth(city);
   assert.equal(city.pendingWorks.find((w) => w.actionId === 'airport_evolution')?.remainingMonths, 2);
   assert.equal(city.pendingWorks.find((w) => w.actionId === 'port_evolution')?.remainingMonths, 1);
+  assert.equal(city.pendingWorks.find((w) => w.actionId === 'bus_transit_project')?.remainingMonths, 2);
   assert.equal(
     reservedAirportTiles.every((t) => t.construction?.remainingMonths === 2),
     true,
@@ -3434,23 +3425,27 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   assert.equal(restored.pendingWorks.length, 3);
   assert.equal(restored.tiles.filter((t) => t.construction?.actionId === 'airport_evolution').length, 40);
 
-  // Month 2 completes Port (2m); Airport & Environmental Cleanup remain at 1m
+  // Month 2 completes Port (2m); Airport and Bus Transit remain at 1m
   closeFinancialMonth(restored);
   assert.equal(restored.stats.portCount, 1, 'Port should complete on month 2');
   assert.ok(restored.financials.revenue.tradeIncome > 0, 'Completed Port should generate tradeIncome');
   assert.equal(restored.workTiers.port_evolution, 2);
+  assert.equal(restored.workTiers.bus_transit_project, 1);
+  assert.equal(restored.stats.busStationCount, 0, 'Bus Transit must remain 0 until month 3 completion');
   assert.equal(restored.pendingWorks.find((w) => w.actionId === 'airport_evolution')?.remainingMonths, 1);
+  assert.equal(restored.pendingWorks.find((w) => w.actionId === 'bus_transit_project')?.remainingMonths, 1);
   assert.equal(restored.stats.airportCount, 0);
 
-  // Month 3 completes Airport (3m) and Environmental Cleanup (3m): clears construction flags, spawns 40 airport tiles, advances workTiers, plays milestone sound
+  // Month 3 completes Airport (3m) and Bus Transit (3m): clears construction flags, spawns tiles/stations, advances workTiers, plays milestone sound
   restored.pendingSounds = [];
   closeFinancialMonth(restored);
   assert.equal(restored.pendingWorks.length, 0);
   assert.equal(restored.stats.airportCount, 1);
+  assert.equal(restored.workTiers.bus_transit_project, 2);
+  assert.ok(restored.stats.busStationCount >= 1, 'Bus Transit should deliver bus stations on month 3');
   assert.equal(restored.tiles.filter((t) => t.type === 'airport').length, 40);
   assert.equal(restored.tiles.some((t) => Boolean(t.construction)), false, 'All construction markers must clear on completion');
   assert.equal(restored.workTiers.airport_evolution, 2);
-  assert.equal(restored.workTiers.environmental_cleanup, 2);
   assert.ok(restored.pendingSounds.some((s) => s.type === 'milestone'));
 
   const boatsDone: BoatEntity[] = [];
@@ -3465,6 +3460,61 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   const legacyLoaded = deserializeCitySave(JSON.stringify(rawLegacy));
   assert.ok(legacyLoaded);
   assert.deepEqual(legacyLoaded.pendingWorks, []);
+});
+
+test('campaigns (Mutirão Ambiental, Revitalização, Festival Turístico) are removed from manual purchase and run automatically from good budget investments', () => {
+  const city = createNewCity(778899, 'medium');
+  city.money = 120_000;
+  recomputeFieldsAndStats(city);
+
+  // 1. Campaigns must NOT be offered as purchasable actions
+  const offerIds = getEmergencyOffers(city).map((o) => o.id);
+  assert.equal(offerIds.includes('environmental_cleanup'), false);
+  assert.equal(offerIds.includes('revitalization'), false);
+  assert.equal(offerIds.includes('tourism_festival'), false);
+  assert.equal(executeEmergencyAction(city, 'environmental_cleanup').ok, false);
+  assert.equal(executeEmergencyAction(city, 'revitalization').ok, false);
+  assert.equal(executeEmergencyAction(city, 'tourism_festival').ok, false);
+
+  // 2. Under low investments (60%), closing a month does NOT activate automatic campaigns
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, 60);
+  }
+  city.activeBoosts = [];
+  closeFinancialMonth(city);
+  assert.equal(
+    city.activeBoosts.some(
+      (b) =>
+        b.actionId === 'environmental_cleanup' ||
+        b.actionId === 'revitalization' ||
+        b.actionId === 'tourism_festival'
+    ),
+    false,
+    'Low budget investments (<100%) must not trigger automatic campaigns'
+  );
+
+  // 3. Create an abandoned building and fund all segments well (150%):
+  //    closing a month automatically launches all 3 campaigns and recovers the abandoned lot
+  const victim = city.tiles.find((t) => t.type === 'residential' && t.lotRole !== 'part')!;
+  victim.previousType = 'residential';
+  victim.type = 'abandoned';
+  victim.level = 1;
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.abandonedCount >= 1);
+
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, 150);
+  }
+  recomputeFieldsAndStats(city);
+  closeFinancialMonth(city);
+
+  const envBoost = city.activeBoosts.find((b) => b.actionId === 'environmental_cleanup');
+  const revitBoost = city.activeBoosts.find((b) => b.actionId === 'revitalization');
+  const tourBoost = city.activeBoosts.find((b) => b.actionId === 'tourism_festival');
+  assert.ok(envBoost && envBoost.tier >= 2, 'Good wellbeing + education investment triggers Mutirão Ambiental');
+  assert.ok(revitBoost && revitBoost.tier >= 2, 'Good security + infrastructure investment triggers Revitalização');
+  assert.ok(tourBoost && tourBoost.tier >= 2, 'Good tourism + entertainment investment triggers Festival Turístico');
+  assert.equal(victim.type, 'residential', 'Automatic Revitalização must restore abandoned building');
 });
 
 

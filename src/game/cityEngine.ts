@@ -37,6 +37,7 @@ import {
   TOLL_MIN_POPULATION,
   TOLL_TARIFF_CONFIGS,
   URBAN_MATURITY_CONFIG,
+  evaluateBudgetCampaignStatus,
   getScaledMaxUpgradesPerTick,
   getSegmentEffectCurve,
   type EstablishmentSpec,
@@ -2669,9 +2670,10 @@ function getCurrentBridgeLevel(state: CityState): number {
       maxLv = t.level;
     }
   }
-  const roadTier = state.workTiers?.emergency_roadworks ?? 1;
-  if (roadTier >= 4 && state.totalPopulation >= 12000) maxLv = Math.max(maxLv, 3);
-  else if (roadTier >= 3 && state.totalPopulation >= 3500) maxLv = Math.max(maxLv, 2);
+  const pop = state.totalPopulation || 0;
+  if (pop >= 22000 || state.milestonesReached?.civic_bridge_lv4) maxLv = Math.max(maxLv, 4);
+  else if (pop >= 12000 || state.milestonesReached?.civic_bridge_lv3) maxLv = Math.max(maxLv, 3);
+  else if (pop >= 3500 || state.milestonesReached?.civic_bridge_lv2) maxLv = Math.max(maxLv, 2);
   return Math.max(1, Math.min(4, maxLv));
 }
 
@@ -5188,7 +5190,7 @@ export function recomputeFieldsAndStats(
     interchangeCount: interchanges,
     bridgeCount: bridges,
     bridgeSpanCount,
-    bridgeLevel: bridges > 0 ? maxBridgeLv : 1,
+    bridgeLevel: bridges > 0 ? maxBridgeLv : getCurrentBridgeLevel(state),
     portCount: ports,
     airportCount: airports,
     stadiumCount: stadiums,
@@ -9931,9 +9933,9 @@ export function getCivicMilestoneStatuses(state: CityState): CivicMilestoneStatu
     else if (m.id === 'civic_sports_small') built = state.stats.sportsCenterCount >= 1;
     else if (m.id === 'civic_bus_system') built = state.stats.busStationCount >= 1;
     else if (m.id === 'civic_metro_system') built = state.stats.metroStationCount >= 1;
-    else if (m.id === 'civic_bridge_lv2') built = state.stats.bridgeLevel >= 2;
-    else if (m.id === 'civic_bridge_lv3') built = state.stats.bridgeLevel >= 3;
-    else if (m.id === 'civic_bridge_lv4') built = state.stats.bridgeLevel >= 4;
+    else if (m.id === 'civic_bridge_lv2') built = unlocked || state.stats.bridgeLevel >= 2;
+    else if (m.id === 'civic_bridge_lv3') built = unlocked || state.stats.bridgeLevel >= 3;
+    else if (m.id === 'civic_bridge_lv4') built = unlocked || state.stats.bridgeLevel >= 4;
     else if (m.id === 'civic_airport_lv1') built = state.stats.airportCount >= 1;
     else if (m.id === 'civic_airport_lv2') built = maxAirportLv >= 2;
     else if (m.id === 'civic_airport_lv3') built = maxAirportLv >= 3;
@@ -9967,7 +9969,7 @@ export function dismissMilestoneBanner(state: CityState): void {
 /**
  * Evaluate population-based Civic Milestones automatically:
  * Unlocks staged population milestones (1.2k -> 30k+), awards civic grants,
- * and notifies the mayor that the new project is ready to be ordered & paid in Obras!
+ * automatically upgrades river bridges on bridge milestones, and notifies the mayor!
  */
 export function evaluateCivicMilestones(state: CityState): string[] {
   const triggered: string[] = [];
@@ -9985,6 +9987,14 @@ export function evaluateCivicMilestones(state: CityState): string[] {
     state.milestonesReached[m.id] = true;
     state.money += m.rewardCash;
 
+    if (m.id === 'civic_bridge_lv2') {
+      upgradeAllBridges(state, 2);
+    } else if (m.id === 'civic_bridge_lv3') {
+      upgradeAllBridges(state, 3);
+    } else if (m.id === 'civic_bridge_lv4') {
+      upgradeAllBridges(state, 4);
+    }
+
     state.recentMilestoneBanner = {
       id: m.id,
       kind: m.kind,
@@ -9996,16 +10006,121 @@ export function evaluateCivicMilestones(state: CityState): string[] {
       actionId: m.actionId,
     };
 
-    state.pendingSounds.push({ type: 'milestone' });
+    state.pendingSounds.push({ type: m.kind === 'bridge' ? 'bridge' : 'milestone' });
     pushNews(
       state,
-      `MARCO CÍVICO (${m.populationTarget.toLocaleString('pt-BR')} hab): ${m.title} (+$${m.rewardCash.toLocaleString('pt-BR')}) — disponível para construir em Obras!`,
+      m.actionId
+        ? `MARCO CÍVICO (${m.populationTarget.toLocaleString('pt-BR')} hab): ${m.title} (+$${m.rewardCash.toLocaleString('pt-BR')}) — disponível para construir em Obras!`
+        : `MARCO CÍVICO (${m.populationTarget.toLocaleString('pt-BR')} hab): ${m.title} (+$${m.rewardCash.toLocaleString('pt-BR')}) — evolução automática ativada!`,
       'milestone'
     );
     triggered.push(m.id);
   }
 
+  // Keep any existing river bridges aligned with already-reached automatic bridge milestones
+  const targetAutoBridgeLv = state.milestonesReached.civic_bridge_lv4
+    ? 4
+    : state.milestonesReached.civic_bridge_lv3
+      ? 3
+      : state.milestonesReached.civic_bridge_lv2
+        ? 2
+        : 1;
+  if (targetAutoBridgeLv >= 2 && state.stats.bridgeCount > 0 && state.stats.bridgeLevel < targetAutoBridgeLv) {
+    upgradeAllBridges(state, targetAutoBridgeLv);
+  }
+
   return triggered;
+}
+
+/**
+ * Automatically run Environmental Cleanup, Revitalization, and Tourism Festival
+ * campaigns based on sustained budget investments in their linked city segments.
+ */
+function evaluateBudgetDrivenCampaigns(state: CityState): void {
+  const evaluated = evaluateBudgetCampaignStatus(state.stats.coverage, state.money);
+
+  for (const item of evaluated) {
+    if (!item.eligible || item.tier <= 0) continue;
+
+    const { spec, tier, tierTitle } = item;
+    const duration = tier >= 3 ? 3 : 2;
+    const existing = state.activeBoosts.find((b) => b.actionId === spec.id);
+    const wasActive = Boolean(existing);
+
+    if (existing) {
+      existing.remainingMonths = Math.max(existing.remainingMonths, duration);
+      existing.totalMonths = Math.max(existing.totalMonths ?? duration, duration);
+      if (tier > existing.tier) {
+        existing.tier = tier;
+      }
+      existing.label = tierTitle;
+    } else {
+      state.activeBoosts.push({
+        id: `auto_${spec.id}_${state.tick}_${state.month}`,
+        actionId: spec.id,
+        label: tierTitle,
+        tier,
+        remainingMonths: duration,
+        totalMonths: duration,
+      });
+    }
+
+    if (spec.id === 'environmental_cleanup') {
+      const targetParkCap = Math.max(6, Math.floor(state.totalPopulation / 260) + 4);
+      if (
+        (!wasActive && state.stats.parkCount < targetParkCap) ||
+        state.stats.avgPollution >= 16
+      ) {
+        plantImmediateParks(state, tier >= 3 ? 2 : 1);
+      }
+      if (!wasActive) {
+        pushNews(
+          state,
+          `${tierTitle} em ação! Bons investimentos em Saúde & Meio Ambiente e Educação purificam a cidade.`,
+          'good'
+        );
+      }
+    } else if (spec.id === 'revitalization') {
+      let recovered = 0;
+      if (state.stats.abandonedCount > 0) {
+        const abandonedTiles = state.tiles.filter(
+          (t) => t.type === 'abandoned' && !t.construction
+        );
+        const maxRestore = Math.min(tier * 2, abandonedTiles.length);
+        for (let i = 0; i < maxRestore; i++) {
+          const t = abandonedTiles[i];
+          t.type = t.previousType ?? 'residential';
+          t.level = tier >= 2 && t.type !== 'industrial' ? 2 : 1;
+          t.age = 0;
+          t.evolveFlash = 1.75;
+          recovered++;
+        }
+      }
+      if (!wasActive && tier >= 3) {
+        upgradeTopBuildings(state, 1);
+      }
+      if (!wasActive || recovered > 0) {
+        pushNews(
+          state,
+          recovered > 0
+            ? `${tierTitle} automática recuperou ${recovered} ${recovered === 1 ? 'imóvel abandonado' : 'imóveis abandonados'}!`
+            : `${tierTitle} ativa graças ao investimento em Segurança e Infraestrutura!`,
+          'good'
+        );
+      }
+    } else if (spec.id === 'tourism_festival') {
+      if (!wasActive && tier >= 3) {
+        upgradeTopBuildings(state, 1, 'commercial');
+      }
+      if (!wasActive) {
+        pushNews(
+          state,
+          `${tierTitle} em andamento! Investimentos em Turismo & Comércio e Cultura & Lazer atraem visitantes.`,
+          'milestone'
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -10103,6 +10218,8 @@ export function closeFinancialMonth(state: CityState): void {
     }
     state.activeBoosts = remaining;
   }
+
+  evaluateBudgetDrivenCampaigns(state);
 
   // Advance / complete multi-month public works under construction!
   if (state.pendingWorks && state.pendingWorks.length > 0) {
@@ -10293,8 +10410,8 @@ export function computeCityNeeds(state: CityState): CityNeedItem[] {
       id: 'city_abandoned',
       severity: state.stats.abandonedCount >= 4 ? 'critical' : 'warning',
       title: `Cidade tem ${state.stats.abandonedCount} prédios abandonados`,
-      detail: 'Reforce Segurança no orçamento geral ou execute uma Reforma de Revitalização.',
-      targetTab: 'emergencies',
+      detail: 'Reforce Segurança e Infraestrutura no orçamento geral para ativar a Revitalização automática.',
+      targetTab: 'budget',
     });
   }
 
@@ -10303,8 +10420,8 @@ export function computeCityNeeds(state: CityState): CityNeedItem[] {
       id: 'city_pollution',
       severity: state.stats.avgPollution >= 40 ? 'critical' : 'warning',
       title: `Poluição urbana elevada (${state.stats.avgPollution}%)`,
-      detail: 'Invista mais em Saúde & Meio Ambiente e Educação ou acione uma obra ambiental.',
-      targetTab: 'emergencies',
+      detail: 'Invista em Saúde & Meio Ambiente e Educação no orçamento para ativar o Mutirão Ambiental automático.',
+      targetTab: 'budget',
     });
   }
 

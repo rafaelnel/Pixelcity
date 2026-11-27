@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { renderLandmarkArtworkCanvas } from '../game/pixelRenderer';
+import {
+  BUDGET_AREA_META,
+  evaluateBudgetCampaignStatus,
+} from '../game/simulationConfig';
 import type {
   EmergencyActionId,
   EmergencyOfferView,
@@ -181,7 +185,6 @@ export function EmergenciesModal({
       o.id === 'port_evolution' ||
       o.id === 'airport_evolution' ||
       o.id === 'shopping_evolution' ||
-      o.id === 'emergency_roadworks' ||
       o.id === 'bus_transit_project' ||
       o.id === 'metro_transit_project'
   );
@@ -192,13 +195,8 @@ export function EmergenciesModal({
       o.id === 'landmark_project'
   );
 
-  // Campaigns & Emergency Interventions (Tab 3: Ações & Urgências)
-  const campaignOffers = hud.emergencyOffers.filter(
-    (o) =>
-      o.id === 'environmental_cleanup' ||
-      o.id === 'revitalization' ||
-      o.id === 'tourism_festival'
-  );
+  // Automatic budget-driven programs (read-only status in Tab 3: Ações & Urgências)
+  const budgetPrograms = evaluateBudgetCampaignStatus(st.coverage, hud.money);
 
   const pendingWorks = hud.pendingWorks ?? [];
   const readyStructuralCount = [...featuredTransportOffers, ...civicStructureOffers].filter(
@@ -211,18 +209,18 @@ export function EmergenciesModal({
   const expandableDirsCount = hud.landExpansions.filter(
     (e) => e.canExpand && hud.money >= e.cost
   ).length;
+  const activeAutoProgramsCount = budgetPrograms.filter(
+    (p) => p.eligible || hud.activeBoosts.some((b) => b.actionId === p.spec.id)
+  ).length;
   const urgentCount =
-    (incidentOffer ? 1 : 0) +
-    hud.activeBoosts.filter((b) => !pendingWorks.some((w) => w.actionId === b.actionId)).length;
+    (incidentOffer ? 1 : 0) + activeAutoProgramsCount;
 
   const renderStandardOfferCard = (offer: EmergencyOfferView) => {
     const canAfford = hud.money >= offer.cost;
-    const noAbandoned =
-      offer.id === 'revitalization' && offer.tier <= 2 && st.abandonedCount === 0;
     const pendingWork = pendingWorks.find((w) => w.actionId === offer.id);
     const isExecuting = Boolean(pendingWork);
-    const isReadyToClick = !isExecuting && offer.unlocked && canAfford && !noAbandoned;
-    const disabled = isExecuting || !offer.unlocked || !canAfford || noAbandoned;
+    const isReadyToClick = !isExecuting && offer.unlocked && canAfford;
+    const disabled = isExecuting || !offer.unlocked || !canAfford;
     const progressPct = pendingWork
       ? computeWorkProgressPct(pendingWork, hud.monthProgress)
       : 0;
@@ -310,11 +308,9 @@ export function EmergenciesModal({
               <span>
                 {!offer.unlocked
                   ? offer.lockReason ?? 'Bloqueado'
-                  : noAbandoned
-                    ? 'Sem imóveis abandonados'
-                    : !canAfford
-                      ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
-                      : `Construir / Executar (-$${offer.cost.toLocaleString('pt-BR')})`}
+                  : !canAfford
+                    ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
+                    : `Construir / Executar (-$${offer.cost.toLocaleString('pt-BR')})`}
               </span>
             </button>
           )}
@@ -555,7 +551,7 @@ export function EmergenciesModal({
   return (
     <PixelModal
       title="OBRAS & AÇÕES · MARCOS, TERRENOS E URGÊNCIAS"
-      subtitle="Evolua Shopping, Ônibus, Metrô, Porto, Aeroporto e Pontes em arte 64-bit, expanda o mapa ou acione intervenções urbanas."
+      subtitle="Evolua Shopping, Ônibus, Metrô, Porto e Aeroporto em arte 64-bit, expanda o mapa ou acione intervenções urbanas."
       headerSummary={
         <>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -757,13 +753,13 @@ export function EmergenciesModal({
           ) : null}
 
           <section
-            aria-label="Desbloqueio e evolução do Shopping, Porto, Aeroporto, Ônibus, Metrô e Pontes do Rio"
+            aria-label="Desbloqueio e evolução do Shopping, Porto, Aeroporto, Ônibus e Metrô"
             data-testid="transport-landmarks-section"
           >
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div>
                 <h3 className="font-pixel text-[9px] text-[#38bdf8]">
-                  OBRAS EVOLUTIVAS: SHOPPING (6×6 / 8×8 / 9×9), ÔNIBUS, METRÔ, PORTO, AEROPORTO &amp; PONTES
+                  OBRAS EVOLUTIVAS: SHOPPING (6×6 / 8×8 / 9×9), ÔNIBUS, METRÔ, PORTO &amp; AEROPORTO
                 </h3>
                 <p className="text-[14.5px] text-[#9eb0c9] leading-tight mt-0.5">
                   Botão <strong className="text-[#4ade80]">verde</strong> indica obra liberada com caixa suficiente. Em execução, vira uma <strong className="text-[#ffe066]">barra de progresso</strong> e abre canteiro no mapa.
@@ -861,56 +857,132 @@ export function EmergenciesModal({
       {/* TAB 3: AÇÕES & URGÊNCIAS */}
       {activeSubTab === 'urgent' ? (
         <div className="flex flex-col gap-3.5">
-          {/* City Condition Quick Strip for Campaigns */}
-          <div className="pixel-inset px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[15.5px] tabular-nums">
-            <span className="text-[#cfd9e8]">
-              Poluição média:{' '}
-              <strong
-                className={
-                  st.avgPollution >= 30
-                    ? 'text-[#ff6b6b]'
-                    : st.avgPollution >= 16
-                      ? 'text-[#f5b73b]'
-                      : 'text-[#66d98c]'
-                }
-              >
-                {st.avgPollution}%
-              </strong>
-            </span>
-            <span className="text-[#cfd9e8]">
-              Imóveis abandonados:{' '}
-              <strong className={st.abandonedCount > 0 ? 'text-[#ff6b6b]' : 'text-[#66d98c]'}>
-                {st.abandonedCount}
-              </strong>
-            </span>
-            <span className="text-[#cfd9e8]">
-              Receita Turismo &amp; Comércio:{' '}
-              <strong className="text-[#f5b73b]">
-                +${st.tourismRevenue.toLocaleString('pt-BR')}/mês
-              </strong>
-            </span>
-          </div>
+          {!incidentOffer ? (
+            <div className="pixel-inset px-3 py-2.5 text-[15px] text-[#9eb0c9]">
+              Nenhum imprevisto urbano ativo no momento. Tempestades, apagões e reparos emergenciais aparecem aqui quando ocorrerem.
+            </div>
+          ) : null}
 
-          <section aria-label="Campanhas urbanas e intervenções pontuais">
-            <h3 className="font-pixel text-[9px] text-[#ffe066] mb-2">
-              CAMPANHAS URBANAS &amp; INTERVENÇÕES PONTUAIS
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {campaignOffers.map(renderStandardOfferCard)}
+          {/* Automatic Budget-Driven Programs Status (Read-Only) */}
+          <section
+            aria-label="Programas urbanos automáticos via orçamento"
+            data-testid="budget-driven-programs-section"
+            className="pixel-inset p-3 flex flex-col gap-2.5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-pixel text-[9px] text-[#66d98c]">
+                  PROGRAMAS AUTOMÁTICOS (VIA ORÇAMENTO)
+                </h3>
+                <p className="text-[14px] text-[#9eb0c9] leading-tight mt-0.5">
+                  Acontecem automaticamente todo mês conforme a qualidade dos investimentos nas áreas de orçamento ligadas a cada programa.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-[14px] tabular-nums text-[#cfd9e8]">
+                <span>
+                  Poluição:{' '}
+                  <strong
+                    className={
+                      st.avgPollution >= 30
+                        ? 'text-[#ff6b6b]'
+                        : st.avgPollution >= 16
+                          ? 'text-[#f5b73b]'
+                          : 'text-[#66d98c]'
+                    }
+                  >
+                    {st.avgPollution}%
+                  </strong>
+                </span>
+                <span>
+                  Abandonados:{' '}
+                  <strong className={st.abandonedCount > 0 ? 'text-[#ff6b6b]' : 'text-[#66d98c]'}>
+                    {st.abandonedCount}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              {budgetPrograms.map((prog) => {
+                const activeBoost = hud.activeBoosts.find((b) => b.actionId === prog.spec.id);
+                const primaryMeta = BUDGET_AREA_META[prog.spec.primaryArea];
+                const secondaryMeta = BUDGET_AREA_META[prog.spec.secondaryArea];
+                const isRunning = Boolean(activeBoost) || prog.eligible;
+
+                return (
+                  <div
+                    key={prog.spec.id}
+                    data-testid={`auto-program-${prog.spec.id}`}
+                    className={`p-2.5 border flex flex-col justify-between gap-1.5 ${
+                      isRunning
+                        ? 'bg-[#11241e] border-[#3d8c61]'
+                        : 'bg-[#0b101b] border-[#26344f]'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1.5 mb-1">
+                        <span
+                          className="font-pixel text-[7.5px]"
+                          style={{ color: prog.spec.accentColor }}
+                        >
+                          {prog.tierTitle}
+                        </span>
+                        <span
+                          className={`font-pixel text-[6.5px] px-1.5 py-0.5 border shrink-0 ${
+                            activeBoost
+                              ? 'bg-[#143326] border-[#66d98c] text-[#66d98c]'
+                              : prog.eligible
+                                ? 'bg-[#162b3d] border-[#56c2ff] text-[#7dd3fc]'
+                                : 'bg-[#161c2b] border-[#334361] text-[#8fa4bf]'
+                          }`}
+                        >
+                          {activeBoost
+                            ? `ATIVO · FASE ${activeBoost.tier}`
+                            : prog.eligible
+                              ? `PRONTO · FASE ${prog.tier}`
+                              : 'INATIVO'}
+                        </span>
+                      </div>
+                      <p className="text-[13.5px] text-[#dce6f2] leading-snug">
+                        {prog.spec.summary}
+                      </p>
+                      <p className="text-[12.5px] text-[#66d98c] leading-snug mt-0.5">
+                        {prog.spec.effectHint}
+                      </p>
+                    </div>
+
+                    <div className="pt-1.5 border-t border-[#1e2a42] flex flex-wrap items-center justify-between gap-1 text-[12.5px] tabular-nums">
+                      <span className="text-[#9eb0c9]">
+                        <strong style={{ color: primaryMeta.color }}>{primaryMeta.label}</strong>{' '}
+                        {prog.primaryPct}% ·{' '}
+                        <strong style={{ color: secondaryMeta.color }}>{secondaryMeta.label}</strong>{' '}
+                        {prog.secondaryPct}%
+                      </span>
+                      <span
+                        className={`font-bold ${
+                          prog.eligible ? 'text-[#66d98c]' : 'text-[#f5b73b]'
+                        }`}
+                      >
+                        Média {prog.weightedPct}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
 
-          {/* Currently Active Construction Works & Timed Campaigns */}
+          {/* Currently Active Construction Works & Active Programs */}
           <div className="pixel-inset p-3">
             <div className="font-pixel text-[8px] text-[#8fa4bf] mb-1.5">
-              OBRAS EM CONSTRUÇÃO E CAMPANHAS ATIVAS
+              OBRAS EM CONSTRUÇÃO E PROGRAMAS ATIVOS
             </div>
             {pendingWorks.length === 0 && hud.activeBoosts.length === 0 ? (
-              <p className="text-[15.5px] text-[#8fa4bf]">
-                Nenhuma obra ou campanha ativa no momento.
+              <p className="text-[15px] text-[#8fa4bf]">
+                Nenhuma obra em construção ou programa ativo no momento.
               </p>
             ) : (
-              <div className="flex flex-wrap gap-2 text-[15.5px] tabular-nums">
+              <div className="flex flex-wrap gap-2 text-[15px] tabular-nums">
                 {pendingWorks.map((w) => {
                   const pct = computeWorkProgressPct(w, hud.monthProgress);
                   return (
@@ -934,7 +1006,7 @@ export function EmergenciesModal({
                         key={b.id}
                         className="px-2.5 py-1 bg-[#1b263c] border border-[#334361] text-[#eef2f7]"
                       >
-                        Campanha: {b.label} · <strong className="text-[#4ade80]">{pct}%</strong> ·{' '}
+                        Programa: {b.label} · <strong className="text-[#4ade80]">{pct}%</strong> ·{' '}
                         <strong className="text-[#ffe066]">
                           {b.remainingMonths} {b.remainingMonths === 1 ? 'mês' : 'meses'}
                         </strong>
