@@ -6531,15 +6531,971 @@ function getTileSprite(
     case 'metro_station':
       return getMetroStationSprite(tile.level || 1, tile.variant || 0);
     case 'shopping':
-      return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy);
+      return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy, rotation);
+  }
+}
+
+/** Draw an asymmetric isometric box covering local tile span [u0..u1] × [v0..v1] at elevation [z0..z0+h] */
+function drawIsoSpanBox64(
+  ctx: CanvasRenderingContext2D,
+  pt: (u: number, v: number, z?: number) => [number, number],
+  u0: number,
+  u1: number,
+  v0: number,
+  v1: number,
+  z0: number,
+  h: number,
+  colors: {
+    top: string;
+    left: string;
+    right: string;
+    outline?: string;
+    parapetColor?: string;
+  }
+): void {
+  const z1 = z0 + h;
+  const p01_0 = pt(u0, v1, z0);
+  const p11_0 = pt(u1, v1, z0);
+  const p10_0 = pt(u1, v0, z0);
+  const p00_1 = pt(u0, v0, z1);
+  const p10_1 = pt(u1, v0, z1);
+  const p11_1 = pt(u1, v1, z1);
+  const p01_1 = pt(u0, v1, z1);
+  const strokeCol = colors.outline ?? '#1e293b';
+
+  // Left-front face (v = v1, u from u0 to u1)
+  ctx.beginPath();
+  ctx.moveTo(p01_1[0], p01_1[1]);
+  ctx.lineTo(p11_1[0], p11_1[1]);
+  ctx.lineTo(p11_0[0], p11_0[1]);
+  ctx.lineTo(p01_0[0], p01_0[1]);
+  ctx.closePath();
+  ctx.fillStyle = colors.left;
+  ctx.fill();
+  ctx.strokeStyle = strokeCol;
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+
+  // Right-front face (u = u1, v from v0 to v1)
+  ctx.beginPath();
+  ctx.moveTo(p11_1[0], p11_1[1]);
+  ctx.lineTo(p10_1[0], p10_1[1]);
+  ctx.lineTo(p10_0[0], p10_0[1]);
+  ctx.lineTo(p11_0[0], p11_0[1]);
+  ctx.closePath();
+  ctx.fillStyle = colors.right;
+  ctx.fill();
+  ctx.strokeStyle = strokeCol;
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+
+  // Top roof face (z = z1)
+  ctx.beginPath();
+  ctx.moveTo(p00_1[0], p00_1[1]);
+  ctx.lineTo(p10_1[0], p10_1[1]);
+  ctx.lineTo(p11_1[0], p11_1[1]);
+  ctx.lineTo(p01_1[0], p01_1[1]);
+  ctx.closePath();
+  ctx.fillStyle = colors.top;
+  ctx.fill();
+  ctx.strokeStyle = strokeCol;
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+
+  if (colors.parapetColor) {
+    const pad = 0.14;
+    if (u1 - u0 > pad * 2.4 && v1 - v0 > pad * 2.4) {
+      const i00 = pt(u0 + pad, v0 + pad, z1);
+      const i10 = pt(u1 - pad, v0 + pad, z1);
+      const i11 = pt(u1 - pad, v1 - pad, z1);
+      const i01 = pt(u0 + pad, v1 - pad, z1);
+      ctx.beginPath();
+      ctx.moveTo(i00[0], i00[1]);
+      ctx.lineTo(i10[0], i10[1]);
+      ctx.lineTo(i11[0], i11[1]);
+      ctx.lineTo(i01[0], i01[1]);
+      ctx.closePath();
+      ctx.fillStyle = colors.parapetColor;
+      ctx.fill();
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = 0.85;
+      ctx.stroke();
+    }
+  }
+}
+
+/** Draw an isometric flat quad on local plane z */
+function drawIsoQuad64(
+  ctx: CanvasRenderingContext2D,
+  pt: (u: number, v: number, z?: number) => [number, number],
+  u0: number,
+  u1: number,
+  v0: number,
+  v1: number,
+  z: number,
+  fill: string,
+  stroke?: string,
+  lineWidth: number = 0.9
+): void {
+  const p00 = pt(u0, v0, z);
+  const p10 = pt(u1, v0, z);
+  const p11 = pt(u1, v1, z);
+  const p01 = pt(u0, v1, z);
+  ctx.beginPath();
+  ctx.moveTo(p00[0], p00[1]);
+  ctx.lineTo(p10[0], p10[1]);
+  ctx.lineTo(p11[0], p11[1]);
+  ctx.lineTo(p01[0], p01[1]);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
+/** Draw a grid of blue curtain-wall glass panes on the left-front (v=v1) or right-front (u=u1) wall of an iso box */
+function drawIsoGlassGrid64(
+  ctx: CanvasRenderingContext2D,
+  pt: (u: number, v: number, z?: number) => [number, number],
+  face: 'left' | 'right',
+  u0: number,
+  u1: number,
+  v0: number,
+  v1: number,
+  z0: number,
+  h: number,
+  cols: number,
+  rows: number,
+  glassFill: string = '#58a6dc',
+  hiFill: string = '#8fd3fa',
+  frameColor: string = '#29425c'
+): void {
+  const padT = 0.08;
+  const padZ = Math.min(3.5, h * 0.12);
+  const zStart = z0 + padZ;
+  const zSpan = Math.max(4, h - padZ * 2);
+
+  for (let r = 0; r < rows; r++) {
+    const za = zStart + (r / rows) * zSpan + 0.7;
+    const zb = zStart + ((r + 1) / rows) * zSpan - 0.7;
+    for (let c = 0; c < cols; c++) {
+      const ta = padT + (c / cols) * (1 - padT * 2) + 0.015;
+      const tb = padT + ((c + 1) / cols) * (1 - padT * 2) - 0.015;
+      let pA0: [number, number];
+      let pB0: [number, number];
+      let pB1: [number, number];
+      let pA1: [number, number];
+      if (face === 'left') {
+        const ua = u0 + ta * (u1 - u0);
+        const ub = u0 + tb * (u1 - u0);
+        pA0 = pt(ua, v1, za);
+        pB0 = pt(ub, v1, za);
+        pB1 = pt(ub, v1, zb);
+        pA1 = pt(ua, v1, zb);
+      } else {
+        const va = v1 - ta * (v1 - v0);
+        const vb = v1 - tb * (v1 - v0);
+        pA0 = pt(u1, va, za);
+        pB0 = pt(u1, vb, za);
+        pB1 = pt(u1, vb, zb);
+        pA1 = pt(u1, va, zb);
+      }
+      ctx.beginPath();
+      ctx.moveTo(pA1[0], pA1[1]);
+      ctx.lineTo(pB1[0], pB1[1]);
+      ctx.lineTo(pB0[0], pB0[1]);
+      ctx.lineTo(pA0[0], pA0[1]);
+      ctx.closePath();
+      ctx.fillStyle = (r + c) % 3 === 0 ? hiFill : glassFill;
+      ctx.fill();
+      ctx.strokeStyle = frameColor;
+      ctx.lineWidth = 0.85;
+      ctx.stroke();
+
+      // Diagonal specular glass glint
+      drawLine64(
+        ctx,
+        pA1[0] + (pB1[0] - pA1[0]) * 0.2,
+        pA1[1] + 2,
+        pA0[0] + (pB0[0] - pA0[0]) * 0.55,
+        pA0[1] - 2,
+        'rgba(235, 250, 255, 0.55)',
+        0.9
+      );
+    }
+  }
+}
+
+/** Draw a rooftop HVAC air-conditioning unit with circular fan grill */
+function drawRooftopHvacUnit64(
+  ctx: CanvasRenderingContext2D,
+  pt: (u: number, v: number, z?: number) => [number, number],
+  u: number,
+  v: number,
+  z: number,
+  size: number = 0.42
+): void {
+  drawIsoSpanBox64(ctx, pt, u, u + size, v, v + size, z, 5.2, {
+    top: '#e2e8f0',
+    left: '#cbd5e1',
+    right: '#94a3b8',
+    outline: '#334155',
+  });
+  const topCenter = pt(u + size * 0.5, v + size * 0.5, z + 5.2);
+  ctx.fillStyle = '#475569';
+  ctx.beginPath();
+  ctx.ellipse(topCenter[0], topCenter[1], size * 11, size * 5.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 0.75;
+  ctx.stroke();
+}
+
+/** Draw a colorful isometric 3D parked car matching the reference illustration */
+function drawShoppingParkedCar64(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+  facing: 'ne' | 'nw' = 'ne',
+  scale: number = 1.0
+): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing === 'nw' ? -scale : scale, scale);
+
+  // Drop shadow
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.38)';
+  ctx.beginPath();
+  ctx.ellipse(0, 2.2, 6.6, 3.3, -0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lower body prism
+  drawPrism64(
+    ctx,
+    0,
+    1.5,
+    5.4,
+    2.8,
+    {
+      top: color,
+      left: color,
+      right: '#1e293b',
+    },
+    { outlineColor: '#0f172a' }
+  );
+  // Upper cabin & windshield
+  drawPrism64(
+    ctx,
+    -0.5,
+    -1.1,
+    3.4,
+    2.1,
+    {
+      top: '#f8fafc',
+      left: '#7dd3fc',
+      right: '#38bdf8',
+    },
+    { outlineColor: '#0f172a' }
+  );
+  // Wheels
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.arc(-2.6, 2.4, 1.25, 0, Math.PI * 2);
+  ctx.arc(2.4, 0.2, 1.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Draw skew-projected sign billboard text along a left-front (+u) or right-front (-v) wall */
+function drawIsoWallSign64(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  face: 'left' | 'right',
+  boardW: number,
+  boardH: number,
+  bgColor: string,
+  borderColor: string,
+  text: string,
+  textColor: string | string[],
+  fontSize: number = 9
+): void {
+  ctx.save();
+  ctx.translate(x, y);
+  const slope = face === 'left' ? 0.5 : -0.5;
+  ctx.transform(1, slope, 0, 1, 0, 0);
+
+  if (bgColor !== 'transparent') {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(-boardW / 2, -boardH / 2, boardW, boardH);
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(-boardW / 2, -boardH / 2, boardW, boardH);
+  }
+
+  ctx.font = `900 ${fontSize}px monospace`;
+  ctx.textBaseline = 'middle';
+  if (Array.isArray(textColor)) {
+    const totalW = ctx.measureText(text).width;
+    let curX = -totalW / 2;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const cw = ctx.measureText(ch).width;
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.2;
+      ctx.strokeText(ch, curX, 0.5);
+      ctx.fillStyle = textColor[i % textColor.length];
+      ctx.fillText(ch, curX, 0.5);
+      curX += cw;
+    }
+  } else {
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.lineWidth = 2.0;
+    ctx.strokeText(text, 0, 0.5);
+    ctx.fillStyle = textColor;
+    ctx.fillText(text, 0, 0.5);
+  }
+  ctx.restore();
+}
+
+/** Draw the complete multi-tile 64-bit Shopping Mall complex matching `/public/assets/aistudio/image_399eb79f.jpg` */
+function drawShoppingMallComplexScene64(
+  ctx: CanvasRenderingContext2D,
+  frontCx: number,
+  frontCy: number,
+  lv: number,
+  rotW: number,
+  rotH: number
+): void {
+  // Map normalized local coordinates u ∈ [0..W], v ∈ [0..H] onto the actual rotated footprint diamond
+  // Corner (0,0) = top-back, (W,0) = right-back, (0,H) = left-front, (W,H) = bottom-front (at frontCx, frontCy)
+  const W = lv === 1 ? 5 : lv === 2 ? 7 : 9;
+  const H = W;
+  const scaleU = rotW / W;
+  const scaleV = rotH / H;
+
+  const pt = (u: number, v: number, z: number = 0): [number, number] => {
+    const dRx = (u - W) * scaleU;
+    const dRy = (v - H) * scaleV;
+    return [
+      frontCx + (dRx - dRy) * TILE_HW,
+      frontCy + (dRx + dRy) * TILE_HH + TILE_HH - z,
+    ];
+  };
+
+  // ==========================================================================
+  // LEVEL 1 (5×5): "MALL" — Blue glass curtain-wall cube, 3 rooftop AC units,
+  // blue "MALL" sign, front canopy entrance, L-shaped parking lot & pines
+  // ==========================================================================
+  if (lv === 1) {
+    // 1. Base terrain: rear right green lawn strip + dark asphalt parking lot + grey sidewalk apron
+    drawIsoQuad64(ctx, pt, 0, 5, 0, 5, 0, '#475569', '#1e293b', 1.2);
+    // Green grass strip along right-back (v: 0..3.4, u: 3.45..5) & left-back corner
+    drawIsoQuad64(ctx, pt, 3.45, 4.92, 0.12, 3.55, 0.3, '#55a646', '#3b7a31', 0.9);
+    drawIsoQuad64(ctx, pt, 0.08, 0.72, 0.12, 3.45, 0.3, '#55a646', '#3b7a31', 0.9);
+    // Dark asphalt L-shaped parking lot (front row v: 3.45..4.92 + right-front row u: 3.35..4.92)
+    drawIsoQuad64(ctx, pt, 0.12, 4.88, 3.45, 4.88, 0.3, '#4b5563', '#334155', 0.9);
+    drawIsoQuad64(ctx, pt, 3.35, 4.88, 1.55, 4.88, 0.3, '#4b5563', '#334155', 0.9);
+    // Light concrete sidewalk apron around the building
+    drawIsoQuad64(ctx, pt, 0.55, 3.45, 0.25, 3.55, 0.7, '#cbd5e1', '#94a3b8', 0.9);
+
+    // Sidewalk paving grid lines in front of the entrance
+    for (let u = 0.8; u <= 3.2; u += 0.6) {
+      const a = pt(u, 2.85, 0.7);
+      const b = pt(u, 3.52, 0.7);
+      drawLine64(ctx, a[0], a[1], b[0], b[1], '#94a3b8', 0.75);
+    }
+
+    // White parking stall lines along front-left lot (v: 3.55..4.82)
+    for (let u = 0.55; u <= 3.15; u += 0.62) {
+      const p0 = pt(u, 3.62, 0.4);
+      const p1 = pt(u, 4.76, 0.4);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.2);
+    }
+    // White parking stall lines along front-right lot (u: 3.55..4.82)
+    for (let v = 2.05; v <= 4.55; v += 0.62) {
+      const p0 = pt(3.52, v, 0.4);
+      const p1 = pt(4.76, v, 0.4);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.2);
+    }
+
+    // 2. Main 2-Story Blue Glass Curtain-Wall Building (u: 0.72..3.25, v: 0.38..2.92)
+    const bH = 44;
+    drawIsoSpanBox64(ctx, pt, 0.72, 3.25, 0.38, 2.92, 0.8, bH, {
+      top: '#cbd5e1',
+      left: '#d8e2ee',
+      right: '#b0bfcf',
+      outline: '#1e293b',
+      parapetColor: '#94a3b8',
+    });
+
+    // Curtain-wall glass panes (4 cols × 2 stories on both visible faces)
+    drawIsoGlassGrid64(ctx, pt, 'left', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#5da9dd', '#8dd1f8', '#2c4763');
+    drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 3.25, 0.38, 2.92, 0.8, bH, 4, 2, '#4389be', '#6db6e8', '#233952');
+
+    // Horizontal middle floor spandrel band
+    const mL0 = pt(0.72, 2.92, 23);
+    const mL1 = pt(3.25, 2.92, 23);
+    const mR1 = pt(3.25, 0.38, 23);
+    drawLine64(ctx, mL0[0], mL0[1], mL1[0], mL1[1], '#cbd5e1', 3.0);
+    drawLine64(ctx, mL1[0], mL1[1], mR1[0], mR1[1], '#94a3b8', 3.0);
+
+    // 3. Projecting White Front Entrance Canopy & Sliding Glass Doors
+    drawIsoSpanBox64(ctx, pt, 1.48, 2.52, 2.75, 3.22, 0.8, 15, {
+      top: '#f8fafc',
+      left: '#e2e8f0',
+      right: '#94a3b8',
+      outline: '#1e293b',
+    });
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.56, 2.44, 2.75, 3.23, 0.8, 12.5, 2, 1, '#bae6fd', '#e0f2fe', '#1e3a5f');
+
+    // 4. Rooftop Equipment: 3 Rectangular AC Units with fans + small skylight vents
+    drawRooftopHvacUnit64(ctx, pt, 1.05, 0.72, bH + 0.8, 0.48);
+    drawRooftopHvacUnit64(ctx, pt, 1.72, 0.72, bH + 0.8, 0.48);
+    drawRooftopHvacUnit64(ctx, pt, 2.38, 0.72, bH + 0.8, 0.48);
+    drawIsoSpanBox64(ctx, pt, 1.15, 1.55, 1.65, 2.05, bH + 0.8, 2.8, {
+      top: '#f1f5f9',
+      left: '#cbd5e1',
+      right: '#94a3b8',
+    });
+
+    // 5. Blue "MALL" Roof Parapet Billboard Sign above the front-left facade
+    const signPos = pt(1.98, 2.92, bH + 5.5);
+    drawIsoWallSign64(ctx, signPos[0], signPos[1], 'left', 34, 13, '#3b6ea5', '#e2e8f0', 'MALL', '#ffffff', 9);
+
+    // 6. Trees on the green lawn & planters beside the entrance
+    for (const [tu, tv, sc] of [
+      [4.15, 1.15, 0.78],
+      [4.45, 2.05, 0.82],
+      [3.92, 2.75, 0.75],
+      [0.35, 2.35, 0.68],
+    ] as const) {
+      const tp = pt(tu, tv, 1);
+      drawTree64(ctx, tp[0], tp[1], 'emerald', sc);
+    }
+
+    // 7. Colorful Parked Cars in the L-shaped Parking Lot (matching the 5×5 reference)
+    const carsLv1: Array<[number, number, string, 'ne' | 'nw']> = [
+      [0.92, 4.18, '#f97316', 'ne'],
+      [1.54, 4.18, '#3b82f6', 'ne'],
+      [2.16, 4.18, '#22c55e', 'ne'],
+      [2.78, 4.18, '#a855f7', 'ne'],
+      [4.12, 4.18, '#ef4444', 'nw'],
+      [4.12, 3.52, '#38bdf8', 'nw'],
+      [4.12, 2.86, '#eab308', 'nw'],
+    ];
+    for (const [cu, cv, col, dir] of carsLv1) {
+      const cp = pt(cu, cv, 1);
+      drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 1.0);
+    }
+
+    // Pedestrians & potted shrubs along front sidewalk
+    for (const [pu, pv, pcol] of [
+      [1.35, 3.18, '#ef4444'],
+      [2.62, 3.22, '#3b82f6'],
+      [1.95, 3.38, '#f59e0b'],
+    ] as const) {
+      const pp = pt(pu, pv, 1);
+      ctx.fillStyle = pcol;
+      ctx.fillRect(pp[0] - 1.5, pp[1] - 4.5, 3, 4.5);
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(pp[0] - 1.2, pp[1] - 6.2, 2.4, 2.0);
+    }
+    return;
+  }
+
+  // ==========================================================================
+  // LEVEL 2 (7×7): "SHOPPING" — Tall dark-slate left anchor tower, stepped 2-story
+  // curved white/blue mall body, rainbow "SHOPPING" sign, blue disabled parking bays,
+  // palm-tree pedestrian plaza with benches, and right cargo loading dock with white box truck!
+  // ==========================================================================
+  if (lv === 2) {
+    // 1. Base Slab: Green lawn border, asphalt parking lot, tiled palm plaza & rear truck yard
+    drawIsoQuad64(ctx, pt, 0, 7, 0, 7, 0, '#475569', '#1e293b', 1.2);
+    // Left-front green lawn border with shade trees
+    drawIsoQuad64(ctx, pt, 0.1, 1.05, 3.1, 6.88, 0.3, '#55a646', '#3b7a31', 0.9);
+    // Main asphalt parking lot (u: 1.05..4.65, v: 3.55..6.88)
+    drawIsoQuad64(ctx, pt, 1.05, 4.65, 3.55, 6.88, 0.3, '#4b5563', '#334155', 0.9);
+    // Rear-right asphalt delivery yard (u: 4.55..6.88, v: 1.25..4.75)
+    drawIsoQuad64(ctx, pt, 4.55, 6.88, 1.25, 4.75, 0.3, '#4b5563', '#334155', 0.9);
+    // Front-right paved palm-tree pedestrian courtyard plaza (u: 3.85..6.75, v: 4.35..6.85)
+    drawIsoQuad64(ctx, pt, 3.85, 6.75, 4.35, 6.85, 0.6, '#cbd5e1', '#94a3b8', 1.0);
+    // Sidewalk apron along front of mall
+    drawIsoQuad64(ctx, pt, 0.85, 5.25, 2.75, 3.72, 0.6, '#cbd5e1', '#94a3b8', 0.9);
+
+    // Blue Accessible/Disabled Parking Stalls near main entrance (matching reference!)
+    drawIsoQuad64(ctx, pt, 1.85, 2.52, 3.72, 4.45, 0.45, '#2563eb', '#f8fafc', 1.0);
+    drawIsoQuad64(ctx, pt, 2.58, 3.25, 3.72, 4.45, 0.45, '#2563eb', '#f8fafc', 1.0);
+    for (const du of [2.18, 2.91]) {
+      const dp = pt(du, 4.08, 0.5);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(dp[0], dp[1], 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // White parking stall lines in the parking lot
+    for (let u = 1.25; u <= 4.25; u += 0.65) {
+      const p0 = pt(u, 4.75, 0.4);
+      const p1 = pt(u, 6.72, 0.4);
+      drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.1);
+    }
+
+    // 2. Main Rear 2-Story Mall Hall (u: 1.55..5.35, v: 0.35..3.05)
+    const hallH = 44;
+    drawIsoSpanBox64(ctx, pt, 1.55, 5.35, 0.35, 3.05, 0.8, hallH, {
+      top: '#94a3b8',
+      left: '#d8e2ee',
+      right: '#9fb0c4',
+      outline: '#1e293b',
+      parapetColor: '#64748b',
+    });
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.65, 5.25, 0.35, 3.05, 22, 20, 5, 1, '#58a6dc', '#8dd1f8', '#263f59');
+    drawIsoGlassGrid64(ctx, pt, 'right', 1.55, 5.35, 0.45, 2.95, 22, 20, 4, 1, '#4287bc', '#6cb5e8', '#22384f');
+
+    // 3. Tall Dark-Slate Left Anchor Tower with vertical picture window (u: 0.42..1.88, v: 0.82..2.85)
+    const towerH = 56;
+    drawIsoSpanBox64(ctx, pt, 0.42, 1.88, 0.82, 2.85, 0.8, towerH, {
+      top: '#64748b',
+      left: '#6d8299',
+      right: '#4d6075',
+      outline: '#1e293b',
+      parapetColor: '#475569',
+    });
+    drawIsoGlassGrid64(ctx, pt, 'left', 0.58, 1.72, 0.82, 2.85, 7, towerH - 13, 2, 3, '#63b3ed', '#90cdf4', '#1e293b');
+
+    // 4. Stepped Lower Front Podium Terrace & Entrance Facade (u: 1.82..4.95, v: 1.85..3.52)
+    const podH = 23;
+    drawIsoSpanBox64(ctx, pt, 1.82, 4.95, 1.85, 3.52, 0.8, podH, {
+      top: '#e2e8f0',
+      left: '#f1f5f9',
+      right: '#cbd5e1',
+      outline: '#1e293b',
+    });
+    drawIsoGlassGrid64(ctx, pt, 'left', 1.92, 4.85, 1.85, 3.52, 0.8, podH - 3, 4, 1, '#58a6dc', '#bae6fd', '#29425c');
+    drawIsoGlassGrid64(ctx, pt, 'right', 1.82, 4.95, 1.92, 3.45, 0.8, podH - 3, 3, 1, '#3b82b6', '#7dd3fc', '#233952');
+
+    // 5. Right-Side Cargo Loading Dock Annex, Open Roll-Up Doors, Cardboard Crates & White Delivery Truck!
+    drawIsoSpanBox64(ctx, pt, 5.15, 6.62, 0.65, 2.35, 0.8, 22, {
+      top: '#cbd5e1',
+      left: '#94a3b8',
+      right: '#cbd5e1',
+      outline: '#1e293b',
+    });
+    // Dark roll-up cargo bay openings + brown pallet boxes
+    drawIsoGlassGrid64(ctx, pt, 'left', 5.25, 6.45, 0.65, 2.35, 0.8, 13, 2, 1, '#1e293b', '#0f172a', '#475569');
+    for (const [bu, bv] of [
+      [5.05, 2.48],
+      [5.55, 2.52],
+      [6.12, 2.48],
+    ] as const) {
+      drawIsoSpanBox64(ctx, pt, bu, bu + 0.32, bv, bv + 0.32, 0.8, 4.5, {
+        top: '#eab308',
+        left: '#ca8a04',
+        right: '#a16207',
+        outline: '#422006',
+      });
+    }
+    // White Box Delivery Truck parked in front of loading dock (u: 5.55, v: 3.35)
+    const truckP = pt(5.65, 3.45, 1);
+    drawPrism64(
+      ctx,
+      truckP[0],
+      truckP[1],
+      9.2,
+      8.5,
+      {
+        top: '#ffffff',
+        left: '#f8fafc',
+        right: '#cbd5e1',
+      },
+      { outlineColor: '#1e293b', castShadow: true }
+    );
+    drawPrism64(
+      ctx,
+      truckP[0] - 7.5,
+      truckP[1] + 3.5,
+      5.2,
+      5.8,
+      {
+        top: '#f1f5f9',
+        left: '#38bdf8',
+        right: '#94a3b8',
+      },
+      { outlineColor: '#1e293b' }
+    );
+
+    // 6. Rooftop HVAC Units on main hall
+    drawRooftopHvacUnit64(ctx, pt, 2.45, 0.72, hallH + 0.8, 0.52);
+    drawRooftopHvacUnit64(ctx, pt, 3.85, 0.78, hallH + 0.8, 0.52);
+    drawRooftopHvacUnit64(ctx, pt, 4.48, 0.78, hallH + 0.8, 0.52);
+
+    // 7. Colorful Rainbow 3D "SHOPPING" Sign atop the stepped terrace roof!
+    const shopSignP = pt(3.38, 3.02, hallH - 2);
+    drawIsoWallSign64(
+      ctx,
+      shopSignP[0],
+      shopSignP[1],
+      'left',
+      78,
+      16,
+      'transparent',
+      'transparent',
+      'SHOPPING',
+      ['#ef4444', '#f97316', '#facc15', '#4ade80', '#22d3ee', '#3b82f6', '#a855f7', '#ec4899'],
+      12
+    );
+
+    // 8. Front-Right Palm-Tree Courtyard Plaza with Wooden Benches & Planters (matching 8×7 reference)
+    for (const [pu, pv] of [
+      [4.55, 4.65],
+      [5.75, 4.85],
+      [4.45, 5.95],
+      [5.65, 6.05],
+    ] as const) {
+      const pp = pt(pu, pv, 0.8);
+      drawIsoQuad64(ctx, pt, pu - 0.28, pu + 0.28, pv - 0.28, pv + 0.28, 0.8, '#55a646', '#78350f', 1.1);
+      drawSpeciesTree64(ctx, pp[0], pp[1], 'palm', 0.95, Math.round(pu * 10 + pv));
+    }
+    // Wooden benches in the plaza
+    for (const [bu, bv] of [
+      [5.15, 5.25],
+      [5.05, 6.35],
+    ] as const) {
+      drawIsoSpanBox64(ctx, pt, bu, bu + 0.45, bv, bv + 0.22, 0.8, 2.6, {
+        top: '#d97706',
+        left: '#b45309',
+        right: '#78350f',
+      });
+    }
+
+    // Pine & shade trees along the left green border
+    for (const [tu, tv] of [
+      [0.65, 3.55],
+      [0.55, 4.65],
+      [0.65, 5.85],
+      [1.35, 3.18],
+    ] as const) {
+      const tp = pt(tu, tv, 0.8);
+      drawTree64(ctx, tp[0], tp[1], 'emerald', 0.78);
+    }
+
+    // 9. Parked Cars in the Parking Lot
+    const carsLv2: Array<[number, number, string, 'ne' | 'nw']> = [
+      [1.45, 4.15, '#eab308', 'ne'],
+      [1.45, 5.25, '#3b82f6', 'ne'],
+      [2.12, 5.35, '#facc15', 'ne'],
+      [2.78, 5.35, '#22c55e', 'ne'],
+      [3.42, 5.35, '#ef4444', 'ne'],
+      [3.65, 6.18, '#a855f7', 'nw'],
+      [4.15, 5.75, '#f97316', 'nw'],
+      [3.15, 6.45, '#4ade80', 'nw'],
+    ];
+    for (const [cu, cv, col, dir] of carsLv2) {
+      const cp = pt(cu, cv, 1);
+      drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 0.98);
+    }
+    return;
+  }
+
+  // ==========================================================================
+  // LEVEL 3 (9×9): "SHOPPING CENTER" — Lush Green Eco-Roof with Central Glass Dome
+  // & Skylights, "SHOPPING CENTER" Blue Sign, Central Circular Fountain Plaza with
+  // Flags & Palms, Multi-Level Parking Garage on Right, Bus Stop + Yellow Bus,
+  // and Large Front Parking Lot with Crosswalks & Islands!
+  // ==========================================================================
+  // 1. Base Slab: Full 9×9 Dark Asphalt Roadways & Parking Lots + Central Stone Fountain Plaza
+  drawIsoQuad64(ctx, pt, 0, 9, 0, 9, 0, '#4b5563', '#1e293b', 1.2);
+  // Outer green lawn strips along front-left and front-bottom borders
+  drawIsoQuad64(ctx, pt, 0.08, 0.65, 3.6, 8.88, 0.3, '#55a646', '#3b7a31', 0.8);
+  drawIsoQuad64(ctx, pt, 0.65, 5.8, 8.38, 8.92, 0.3, '#55a646', '#3b7a31', 0.8);
+  // Central tiled stone pedestrian plaza & fountain courtyard (u: 2.35..6.85, v: 3.15..5.65)
+  drawIsoQuad64(ctx, pt, 2.35, 6.85, 3.15, 5.65, 0.6, '#cbd5e1', '#94a3b8', 1.0);
+  // Front-left sidewalk promenade (u: 0.85..2.45, v: 3.15..4.15)
+  drawIsoQuad64(ctx, pt, 0.85, 2.45, 3.15, 4.15, 0.6, '#cbd5e1', '#94a3b8', 0.9);
+
+  // Landscaped green median island dividing the main front parking lot
+  drawIsoQuad64(ctx, pt, 0.85, 3.55, 6.45, 6.92, 0.5, '#55a646', '#cbd5e1', 1.0);
+
+  // White Zebra Crosswalks across the internal driveway (matching 9×9 reference!)
+  for (let s = 0; s < 4; s++) {
+    const off = s * 0.16;
+    drawIsoQuad64(ctx, pt, 2.65 + off, 2.74 + off, 5.72, 6.32, 0.35, '#f8fafc');
+    drawIsoQuad64(ctx, pt, 3.72 + off, 3.81 + off, 6.52, 7.12, 0.35, '#f8fafc');
+    drawIsoQuad64(ctx, pt, 5.65 + off, 5.74 + off, 5.82, 6.42, 0.35, '#f8fafc');
+  }
+
+  // Yellow dashed road lane markings along the internal avenue
+  for (let u = 1.4; u <= 6.2; u += 0.9) {
+    const a = pt(u, 5.95, 0.35);
+    const b = pt(u + 0.42, 5.95, 0.35);
+    drawLine64(ctx, a[0], a[1], b[0], b[1], '#facc15', 1.2);
+  }
+
+  // White parking bay lines in the 3 front parking sections
+  for (let u = 0.85; u <= 2.45; u += 0.52) {
+    const p0 = pt(u, 4.45, 0.35);
+    const p1 = pt(u, 5.45, 0.35);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+  }
+  for (let u = 1.05; u <= 3.35; u += 0.55) {
+    const p0 = pt(u, 7.12, 0.35);
+    const p1 = pt(u, 8.22, 0.35);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+  }
+  for (let u = 3.95; u <= 6.25; u += 0.55) {
+    const p0 = pt(u, 7.12, 0.35);
+    const p1 = pt(u, 8.22, 0.35);
+    drawLine64(ctx, p0[0], p0[1], p1[0], p1[1], '#f8fafc', 1.0);
+  }
+
+  // 2. Main U-Shaped Mall Building with Lush Green Eco-Roof (Garden Roof!)
+  const mainH = 42;
+  const wingH = 31;
+
+  // Rear-Central Main Grand Concourse (u: 1.45..7.15, v: 0.28..2.95)
+  drawIsoSpanBox64(ctx, pt, 1.45, 7.15, 0.28, 2.95, 0.8, mainH, {
+    top: '#cbd5e1',
+    left: '#e2e8f0',
+    right: '#b0bfcf',
+    outline: '#1e293b',
+    parapetColor: '#6ab04c', // Lush Green Eco-Roof!
+  });
+  drawIsoGlassGrid64(ctx, pt, 'left', 2.45, 5.85, 0.28, 2.95, 0.8, mainH - 5, 5, 2, '#58a6dc', '#8fd3fa', '#263f59');
+  drawIsoGlassGrid64(ctx, pt, 'right', 1.45, 7.15, 0.42, 2.85, 0.8, mainH - 5, 4, 2, '#4287bc', '#6cb5e8', '#22384f');
+
+  // Projecting Left Retail Wing with Green Roof & Skylight (u: 0.72..2.58, v: 1.55..3.55)
+  drawIsoSpanBox64(ctx, pt, 0.72, 2.58, 1.55, 3.55, 0.8, wingH, {
+    top: '#cbd5e1',
+    left: '#e2e8f0',
+    right: '#b0bfcf',
+    outline: '#1e293b',
+    parapetColor: '#6ab04c',
+  });
+  drawIsoGlassGrid64(ctx, pt, 'left', 0.82, 2.48, 1.55, 3.55, 0.8, wingH - 4, 3, 2, '#58a6dc', '#8fd3fa', '#263f59');
+  drawIsoGlassGrid64(ctx, pt, 'right', 0.72, 2.58, 1.68, 3.45, 0.8, wingH - 4, 2, 2, '#4287bc', '#6cb5e8', '#22384f');
+
+  // Projecting Right Retail Wing before Parking Garage (u: 5.75..7.25, v: 1.55..3.55)
+  drawIsoSpanBox64(ctx, pt, 5.75, 7.25, 1.55, 3.55, 0.8, wingH, {
+    top: '#cbd5e1',
+    left: '#e2e8f0',
+    right: '#b0bfcf',
+    outline: '#1e293b',
+    parapetColor: '#6ab04c',
+  });
+  drawIsoGlassGrid64(ctx, pt, 'left', 5.85, 7.15, 1.55, 3.55, 0.8, wingH - 4, 2, 2, '#58a6dc', '#8fd3fa', '#263f59');
+  // White billboard poster on the right retail wing wall (matching reference!)
+  const posterP = pt(6.5, 3.56, 17);
+  drawIsoWallSign64(ctx, posterP[0], posterP[1], 'left', 24, 12, '#f8fafc', '#64748b', '', '#000', 6);
+
+  // 3. Multi-Level Concrete Parking Garage on the Far Right (u: 6.95..8.82, v: 2.25..4.88)
+  const garH = 32;
+  drawIsoSpanBox64(ctx, pt, 6.95, 8.82, 2.25, 4.88, 0.8, garH, {
+    top: '#4b5563',
+    left: '#cbd5e1',
+    right: '#94a3b8',
+    outline: '#1e293b',
+  });
+  // Open dark parking deck levels (2 horizontal open slots on left & right walls with parked cars peeking inside)
+  drawIsoGlassGrid64(ctx, pt, 'left', 7.05, 8.72, 2.25, 4.88, 2, garH - 6, 2, 3, '#1e293b', '#334155', '#94a3b8');
+  drawIsoGlassGrid64(ctx, pt, 'right', 6.95, 8.82, 2.35, 4.78, 2, garH - 6, 3, 3, '#1e293b', '#334155', '#94a3b8');
+  // Rooftop parking stall lines & cars parked on the top deck of the garage!
+  for (let v = 2.65; v <= 4.45; v += 0.45) {
+    const g0 = pt(7.15, v, garH + 1);
+    const g1 = pt(7.85, v, garH + 1);
+    drawLine64(ctx, g0[0], g0[1], g1[0], g1[1], '#f8fafc', 0.9);
+  }
+  const garCar1 = pt(7.55, 3.05, garH + 1);
+  const garCar2 = pt(7.55, 3.95, garH + 1);
+  drawShoppingParkedCar64(ctx, garCar1[0], garCar1[1], '#f59e0b', 'nw', 0.85);
+  drawShoppingParkedCar64(ctx, garCar2[0], garCar2[1], '#22c55e', 'nw', 0.85);
+
+  // 4. Rooftop Features on the Green Eco-Roof: Central Geodesic Glass Dome, 3 Glass Skylights & HVAC Units!
+  // Rectangular Glass Skylights
+  drawIsoQuad64(ctx, pt, 3.05, 3.95, 0.65, 1.35, mainH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
+  drawIsoQuad64(ctx, pt, 5.75, 6.65, 1.85, 2.55, wingH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
+  drawIsoQuad64(ctx, pt, 1.15, 2.05, 2.05, 2.75, wingH + 1.0, '#7dd3fc', '#f8fafc', 1.2);
+  // Mechanical penthouse box behind the dome
+  drawIsoSpanBox64(ctx, pt, 4.75, 5.75, 0.65, 1.35, mainH + 0.8, 8.5, {
+    top: '#cbd5e1',
+    left: '#e2e8f0',
+    right: '#94a3b8',
+    outline: '#334155',
+  });
+  // Rooftop HVAC pairs
+  drawRooftopHvacUnit64(ctx, pt, 2.05, 1.15, mainH + 0.8, 0.42);
+  drawRooftopHvacUnit64(ctx, pt, 2.55, 1.15, mainH + 0.8, 0.42);
+  drawRooftopHvacUnit64(ctx, pt, 4.85, 2.05, mainH + 0.8, 0.42);
+  drawRooftopHvacUnit64(ctx, pt, 5.35, 2.05, mainH + 0.8, 0.42);
+
+  // Iconic Central Hemispherical Glass Dome on the Green Roof (u: 4.15, v: 1.65)
+  const domeP = pt(4.15, 1.65, mainH + 1.2);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.beginPath();
+  ctx.ellipse(domeP[0], domeP[1], 19, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+
+  const domeGrad = ctx.createRadialGradient(domeP[0] - 5, domeP[1] - 10, 2, domeP[0], domeP[1] - 4, 18);
+  domeGrad.addColorStop(0, '#e0f2fe');
+  domeGrad.addColorStop(0.55, '#7dd3fc');
+  domeGrad.addColorStop(1, '#0284c7');
+  ctx.fillStyle = domeGrad;
+  ctx.beginPath();
+  ctx.ellipse(domeP[0], domeP[1] - 1, 17, 8.5, 0, 0, Math.PI, false);
+  ctx.arc(domeP[0], domeP[1] - 1, 17, Math.PI, 0, false);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#1e3a5f';
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
+  // Geodesic glass ribs on the dome
+  for (const rx of [-10, -4, 4, 10]) {
+    ctx.beginPath();
+    ctx.moveTo(domeP[0] + rx, domeP[1] + 5);
+    ctx.quadraticCurveTo(domeP[0] + rx * 0.4, domeP[1] - 17, domeP[0], domeP[1] - 17);
+    ctx.strokeStyle = 'rgba(240, 249, 255, 0.75)';
+    ctx.lineWidth = 0.85;
+    ctx.stroke();
+  }
+
+  // 5. Large Blue "SHOPPING CENTER" Sign Board above the Central Atrium Entrance!
+  const centerSignP = pt(4.15, 2.96, mainH + 3.5);
+  drawIsoWallSign64(
+    ctx,
+    centerSignP[0],
+    centerSignP[1],
+    'left',
+    86,
+    15,
+    '#3b6ea5',
+    '#e2e8f0',
+    'SHOPPING CENTER',
+    '#ffffff',
+    8.5
+  );
+
+  // 6. Central Multi-Tier Circular Blue Water Fountain in the Front Courtyard Plaza (u: 4.25, v: 4.35)
+  const ftnP = pt(4.25, 4.35, 1.0);
+  // Outer stone basin
+  ctx.fillStyle = '#cbd5e1';
+  ctx.beginPath();
+  ctx.ellipse(ftnP[0], ftnP[1], 16, 8.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+  // Sparkling turquoise pool water
+  ctx.fillStyle = '#38bdf8';
+  ctx.beginPath();
+  ctx.ellipse(ftnP[0], ftnP[1] - 0.8, 13.5, 6.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Middle tier bowl & water jet
+  ctx.fillStyle = '#e2e8f0';
+  ctx.beginPath();
+  ctx.ellipse(ftnP[0], ftnP[1] - 5, 7.5, 3.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#bae6fd';
+  ctx.beginPath();
+  ctx.ellipse(ftnP[0], ftnP[1] - 5.5, 6.0, 2.9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#e0f2fe';
+  ctx.beginPath();
+  ctx.arc(ftnP[0], ftnP[1] - 10, 3.0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Palm trees & 3 Flagpoles around the Fountain Courtyard
+  for (const [pu, pv] of [
+    [3.25, 3.55],
+    [5.35, 3.65],
+    [5.55, 5.15],
+  ] as const) {
+    const pp = pt(pu, pv, 0.8);
+    drawSpeciesTree64(ctx, pp[0], pp[1], 'palm', 0.95, Math.round(pu * 7 + pv));
+  }
+  for (const [fu, fv, fcol] of [
+    [3.35, 4.55, '#ef4444'],
+    [3.65, 4.25, '#facc15'],
+    [4.95, 4.75, '#22c55e'],
+  ] as const) {
+    const fp = pt(fu, fv, 0.8);
+    drawLine64(ctx, fp[0], fp[1], fp[0], fp[1] - 14, '#e2e8f0', 1.2);
+    ctx.fillStyle = fcol;
+    ctx.fillRect(fp[0], fp[1] - 14, 5.5, 3.5);
+  }
+
+  // 7. Glass Bus Shelter & Yellow Municipal Bus on the Right Driveway (u: 5.85..6.85, v: 5.55)
+  drawIsoSpanBox64(ctx, pt, 5.35, 5.95, 5.15, 5.48, 0.8, 9.5, {
+    top: '#94a3b8',
+    left: '#bae6fd',
+    right: '#7dd3fc',
+    outline: '#334155',
+  });
+  const busP = pt(6.55, 5.65, 1.0);
+  drawParkedMiniVehicle64(ctx, busP[0], busP[1], 'schoolbus', false);
+
+  // 8. Colorful Parked Cars across all Parking Sections & Taxis on the Avenue (matching 9×9 reference!)
+  const carsLv3: Array<[number, number, string, 'ne' | 'nw']> = [
+    // Upper-left parking rows
+    [0.95, 4.85, '#a855f7', 'ne'],
+    [1.48, 4.85, '#22c55e', 'ne'],
+    [2.02, 4.85, '#3b82f6', 'ne'],
+    [0.95, 5.85, '#ef4444', 'ne'],
+    [1.48, 5.85, '#f97316', 'ne'],
+    [2.02, 5.85, '#38bdf8', 'ne'],
+    // Middle-left parking rows
+    [1.25, 7.65, '#3b82f6', 'ne'],
+    [1.82, 7.65, '#ef4444', 'ne'],
+    [2.38, 7.65, '#22c55e', 'ne'],
+    [2.95, 7.65, '#facc15', 'ne'],
+    // Front-bottom parking rows
+    [4.15, 7.45, '#22c55e', 'ne'],
+    [4.68, 7.45, '#facc15', 'ne'],
+    [5.22, 7.45, '#ef4444', 'ne'],
+    [5.75, 7.45, '#a855f7', 'ne'],
+    [4.35, 8.25, '#eab308', 'nw'],
+    [4.95, 8.25, '#f97316', 'nw'],
+    [5.55, 8.25, '#38bdf8', 'nw'],
+    // Cruising cars & yellow taxis along the central avenue
+    [2.55, 5.25, '#ef4444', 'nw'],
+    [3.35, 5.65, '#facc15', 'nw'],
+    [4.55, 6.25, '#3b82f6', 'nw'],
+    [5.25, 6.45, '#facc15', 'nw'],
+    [6.15, 6.85, '#ef4444', 'nw'],
+  ];
+  for (const [cu, cv, col, dir] of carsLv3) {
+    const cp = pt(cu, cv, 0.8);
+    drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 0.92);
+  }
+
+  // Green perimeter trees along the parking islands
+  for (const [tu, tv] of [
+    [0.42, 4.55],
+    [0.42, 6.25],
+    [1.45, 6.68],
+    [2.45, 6.68],
+    [3.45, 6.68],
+    [3.65, 8.55],
+    [4.85, 8.65],
+  ] as const) {
+    const tp = pt(tu, tv, 0.8);
+    drawTree64(ctx, tp[0], tp[1], 'emerald', 0.68);
   }
 }
 
 /**
- * 64-Bit Architectural Shopping Mall Complex Sprite (3 Modern Evolutionary Designs: 5×5, 7×7, 9×9):
- * - Level 1 (Shopping Pequeno · 5×5): Arquitetura moderna em vidro safira e titânio, estacionamento frontal com vagas e carros, e parte alta panorâmica com claraboia.
- * - Level 2 (Shopping Médio · 7×7): Shopping Metropolitano moderno com amplo estacionamento, parte alta elevada de múltiplos andares, cúpula em cruz e multiplex.
- * - Level 3 (Shopping Grande · 9×9): Grand Lifestyle Megamall moderno com estacionamento completo, parte alta monumental + torres, domo geodésico de cristal, sky-garden e heliponto VIP.
+ * 64-Bit Architectural Shopping Mall Complex Sprite (3 Modern Evolutionary Designs: 5×5, 7×7, 9×9)
+ * strictly matching the user's reference artwork (`/public/assets/aistudio/image_399eb79f.jpg`):
+ * - Level 1 (5×5 · "MALL"): 2-story blue curtain-wall glass mall, 3 rooftop AC units, blue "MALL" sign, L-shaped parking lot with colorful cars & pine trees.
+ * - Level 2 (7×7 · "SHOPPING"): Tall dark-slate left tower, stepped 2-story glass mall, rainbow "SHOPPING" sign, accessible parking bays, palm-tree plaza & right loading dock with white delivery truck.
+ * - Level 3 (9×9 · "SHOPPING CENTER"): U-shaped grand megamall with green eco-roof, central glass geodesic dome & skylights, "SHOPPING CENTER" sign, central circular fountain plaza, multi-story parking garage, bus stop & large multi-island parking lot.
  */
 function getShoppingMallSprite(
   level: number,
@@ -6547,388 +7503,64 @@ function getShoppingMallSprite(
   lotW: number = 1,
   lotH: number = 1,
   lotDx: number = 0,
-  lotDy: number = 0
+  lotDy: number = 0,
+  rotation: CameraRotation = 0
 ): CachedSprite {
   const lv = Math.max(1, Math.min(3, level || 1));
   const v = variant % 4;
 
-  // Compact Diorama Sprite (used in Obras 64-bit preview card & 1×1 fallback)
-  // Always shows: 1) Front Estacionamento with parked cars, 2) Modern Glass Podium, 3) Elevated "Parte Alta" + Skylight Dome!
+  // Compact Scaled Diorama Sprite (used in Obras 64-bit preview card & 1×1 fallback)
   if (lotW <= 1 || lotH <= 1) {
-    return getOrCreateSprite(`shopping64_single_lv${lv}_v${v}`, 96, 114, 48, 80, (ctx, cx, cy) => {
-      // 1. Modern Plaza & Front Estacionamento Slab
-      fillDiamond64(ctx, cx, cy, TILE_HW + 1, TILE_HH + 0.5, '#cbd5e1');
-      fillDiamond64(ctx, cx, cy, 29, 14.5, '#1e293b');
-      // White parking bay stripes in front foreground
-      drawLine64(ctx, cx - 14, cy + 4, cx - 5, cy, '#f8fafc', 1.0);
-      drawLine64(ctx, cx - 6, cy + 8, cx + 3, cy + 4, '#f8fafc', 1.0);
-      drawLine64(ctx, cx + 4, cy + 8, cx + 13, cy + 4, '#f8fafc', 1.0);
-
-      // 2. Lower Modern Curtain-Wall Glass Podium (recessed slightly back so front parking lot is visible)
-      const podiumH = lv === 3 ? 16 : lv === 2 ? 14 : 11;
-      drawPrism64(
-        ctx,
-        cx,
-        cy - 2,
-        23,
-        podiumH,
-        {
-          top: '#f8fafc',
-          left: lv === 3 ? '#1e1b4b' : lv === 2 ? '#0f172a' : '#1e293b',
-          right: lv === 3 ? '#0f172a' : '#020617',
-        },
-        { rimColor: '#ffffff', outlineColor: '#e2e8f0' }
-      );
-      // Modern glowing curtain-wall glass bands on podium
-      const ledCol = lv === 3 ? '#f472b6' : lv === 2 ? '#fbbf24' : '#38bdf8';
-      drawLine64(ctx, cx - 22, cy - 2 - podiumH + 4, cx, cy - 2 - podiumH + 15, ledCol, 1.8);
-      drawLine64(ctx, cx, cy - 2 - podiumH + 15, cx + 22, cy - 2 - podiumH + 4, '#38bdf8', 1.8);
-
-      // 3. Elevated "Parte Alta" (Stepped Upper Modern Glass Volume & Skylight Crown)
-      const upperH = lv === 3 ? 15 : lv === 2 ? 12 : 9;
-      const upperW = lv === 3 ? 16 : lv === 2 ? 15 : 13.5;
-      drawPrism64(
-        ctx,
-        cx,
-        cy - 4 - podiumH,
-        upperW,
-        upperH,
-        {
-          top: '#e0f2fe',
-          left: '#0284c7',
-          right: '#0369a1',
-        },
-        { rimColor: '#ffffff', outlineColor: '#bae6fd' }
-      );
-      drawLine64(
-        ctx,
-        cx - upperW,
-        cy - 4 - podiumH - upperH * 0.5,
-        cx,
-        cy - 4 - podiumH - upperH * 0.5 + upperW * 0.5,
-        '#fef08a',
-        1.5
-      );
-      drawLine64(
-        ctx,
-        cx,
-        cy - 4 - podiumH - upperH * 0.5 + upperW * 0.5,
-        cx + upperW,
-        cy - 4 - podiumH - upperH * 0.5,
-        '#e0f2fe',
-        1.5
-      );
-
-      // Crystal Skylight Dome atop the Parte Alta
-      drawPrism64(ctx, cx, cy - 4 - podiumH - upperH, lv === 3 ? 10 : 8, lv === 3 ? 7 : 4.5, {
-        top: lv === 3 ? '#fef08a' : '#bae6fd',
-        left: '#38bdf8',
-        right: '#0284c7',
-      });
-      drawGlow64(
-        ctx,
-        cx,
-        cy - 6 - podiumH - upperH,
-        lv === 3 ? 15 : 11,
-        lv === 3 ? 'rgba(244, 114, 182, 0.65)' : 'rgba(56, 189, 248, 0.6)'
-      );
-
-      // 4. Parked 3D Cars in the Front Estacionamento
-      drawPrism64(ctx, cx - 8, cy + 5, 4.5, 2.6, {
-        top: '#ef4444',
-        left: '#0f172a',
-        right: '#1e293b',
-      });
-      drawPrism64(ctx, cx + 7, cy + 5, 4.5, 2.6, {
-        top: '#38bdf8',
-        left: '#0f172a',
-        right: '#1e293b',
-      });
+    const targetDim = lv === 1 ? 5 : lv === 2 ? 7 : 9;
+    return getOrCreateSprite(`shopping64_single_ref_lv${lv}_v${v}`, 152, 132, 76, 98, (ctx, cx, cy) => {
+      const fullHero = getShoppingMallSprite(lv, v, targetDim, targetDim, targetDim - 1, targetDim - 1, 0);
+      const scale = lv === 1 ? 0.42 : lv === 2 ? 0.31 : 0.245;
+      const dw = fullHero.canvas.width * scale;
+      const dh = fullHero.canvas.height * scale;
+      const ax = fullHero.anchorX * scale;
+      const ay = fullHero.anchorY * scale;
+      ctx.drawImage(fullHero.canvas, cx - ax, cy - ay + 12, dw, dh);
     });
   }
 
-  // Multi-Tile Shopping Mall Compound (5×5 Lv.1, 7×7 Lv.2, 9×9 Lv.3)
-  return getOrCreateSprite(
-    `shopping64_compound_${lotW}x${lotH}_lv${lv}_v${v}_${lotDx}_${lotDy}`,
-    88,
-    132,
-    44,
-    92,
-    (ctx, cx, cy) => {
-      const midX = (lotW - 1) * 0.5;
-      const midY = (lotH - 1) * 0.5;
-      const distCenter = Math.max(Math.abs(lotDx - midX), Math.abs(lotDy - midY));
-      const isPerimeter =
-        lotDx === 0 || lotDy === 0 || lotDx === lotW - 1 || lotDy === lotH - 1;
-      const isMainEntrance =
-        (lotDy === lotH - 1 && Math.abs(lotDx - midX) <= 0.75) ||
-        (lotDx === 0 && Math.abs(lotDy - midY) <= 0.75);
-      // Front/Side Estacionamento Zone: front row(s) and west approach bays
-      const isParkingZone =
-        !isMainEntrance &&
-        (lotDy === lotH - 1 ||
-          (lotW >= 7 && lotDy === lotH - 2 && (lotDx <= 1 || lotDx >= lotW - 2)) ||
-          (lotDx === 0 && lotDy >= Math.ceil(midY)));
-      const isAtriumCore = distCenter <= (lv === 3 ? 1.55 : lv === 2 ? 1.15 : 0.75);
-      // "Parte Alta": Elevated multi-story upper architectural volume on the rear/central-north half of the mall
-      const isUpperSection =
-        !isPerimeter &&
-        !isParkingZone &&
-        (lotDy <= Math.floor(midY) || isAtriumCore);
-      const isCrossSkylight =
-        !isPerimeter && (Math.abs(lotDx - midX) <= 0.6 || Math.abs(lotDy - midY) <= 0.6);
-      const isRearTowerAnchor =
-        !isPerimeter &&
-        lotDy === 1 &&
-        (lotDx === 1 || lotDx === lotW - 2);
-
-      // 1. Modern Brushed Granite & Titanium Promenade Base
-      const plazaColor = (lotDx + lotDy) % 2 === 0 ? '#e2e8f0' : '#cbd5e1';
-      fillDiamond64(ctx, cx, cy, TILE_HW + 0.6, TILE_HH + 0.4, plazaColor);
-
-      // 2. ESTACIONAMENTO DO SHOPPING (Asphalt Parking Bays, White Markings, Parked 3D Cars & LED Lamps)
-      if (isParkingZone) {
-        fillDiamond64(ctx, cx, cy, 28.5, 14.2, '#0f172a');
-        fillDiamond64(ctx, cx, cy, 26.5, 13.2, '#1e293b');
-        // White parking stall lines & yellow wheel stops
-        drawLine64(ctx, cx - 15, cy - 2, cx - 3, cy - 8, '#f8fafc', 1.1);
-        drawLine64(ctx, cx - 5, cy + 3, cx + 7, cy - 3, '#f8fafc', 1.1);
-        drawLine64(ctx, cx + 4, cy + 7.5, cx + 16, cy + 1.5, '#f8fafc', 1.1);
-        drawLine64(ctx, cx - 10, cy - 5, cx + 10, cy + 5, '#facc15', 0.9);
-
-        const carPalette = ['#ef4444', '#38bdf8', '#facc15', '#e2e8f0', '#22c55e', '#f97316', '#a855f7'];
-        const carCol1 = carPalette[(lotDx * 3 + lotDy + v) % carPalette.length];
-        const carCol2 = carPalette[(lotDx + lotDy * 5 + v + 2) % carPalette.length];
-        drawPrism64(ctx, cx - 6, cy - 1, 5.6, 3.3, {
-          top: carCol1,
-          left: '#0f172a',
-          right: '#334155',
-        });
-        ctx.fillStyle = '#bae6fd';
-        ctx.fillRect(cx - 5, cy - 3.2, 2.4, 1.3);
-
-        drawPrism64(ctx, cx + 6, cy + 3, 5.6, 3.3, {
-          top: carCol2,
-          left: '#0f172a',
-          right: '#334155',
-        });
-        ctx.fillStyle = '#bae6fd';
-        ctx.fillRect(cx + 7, cy + 0.8, 2.4, 1.3);
-
-        if ((lotDx + lotDy) % 2 === 0) {
-          drawStreetProp64(ctx, cx - 18, cy + 3, 'lamp');
-        } else {
-          drawTree64(ctx, cx - 18, cy + 3, 'emerald', 0.62);
-        }
-        return;
-      }
-
-      // 3. Perimeter Modern Glass Promenade & Grand Entrance Canopy
-      if (isPerimeter) {
-        if (isMainEntrance) {
-          // Cantilevered Modern Glass Entrance Atrium & Illuminated Drop-Off Plaza
-          fillDiamond64(ctx, cx, cy, 26, 13, '#1e293b');
-          fillDiamond64(ctx, cx, cy, 20, 10, lv === 3 ? '#f472b6' : '#38bdf8');
-          drawPrism64(
-            ctx,
-            cx,
-            cy - 1,
-            15,
-            11 + lv * 2,
-            {
-              top: '#f8fafc',
-              left: '#38bdf8',
-              right: '#0284c7',
-            },
-            { rimColor: '#ffffff', outlineColor: '#e0f2fe', castShadow: true }
-          );
-          drawGlow64(ctx, cx, cy - 8, 12, 'rgba(56, 189, 248, 0.78)');
-        } else {
-          // Sleek Modern Perimeter Curtain-Wall Storefronts with Brushed Aluminum Fins
-          fillDiamond64(ctx, cx, cy, 25, 12.5, '#64748b');
-          const perimH = 12 + lv * 2;
-          drawPrism64(
-            ctx,
-            cx,
-            cy,
-            21,
-            perimH,
-            {
-              top: '#f8fafc',
-              left: '#1e293b',
-              right: '#0f172a',
-            },
-            { rimColor: '#ffffff', outlineColor: '#cbd5e1', castShadow: true, parapet: true }
-          );
-          drawWindows64(ctx, cx, cy, 21, perimH - 2, 2, 3, {
-            litColor: '#e0f2fe',
-            glassLeft: '#38bdf8',
-            glassRight: '#0284c7',
-            seed: lotDx + lotDy + v,
-            curtainWall: true,
-          });
-          const ledBand = lv === 3 ? '#f472b6' : lv === 2 ? '#fbbf24' : '#38bdf8';
-          drawLine64(ctx, cx - 20, cy - perimH + 3, cx, cy - perimH + 13, ledBand, 1.8);
-          drawLine64(ctx, cx, cy - perimH + 13, cx + 20, cy - perimH + 3, '#38bdf8', 1.8);
-        }
-        return;
-      }
-
-      // 4. Central Skylight Atrium Dome Core (Parte Alta Central + Cúpula de Vidro)
-      if (isAtriumCore) {
-        const baseH = lv === 3 ? 24 : lv === 2 ? 20 : 16;
-        const upperCoreH = lv === 3 ? 14 : lv === 2 ? 11 : 8;
-        drawPrism64(
+  // Multi-Tile Shopping Mall Compound (5×5 Lv.1, 7×7 Lv.2, 9×9 Lv.3):
+  // Non-front tiles render a clean paved/asphalt base slab; the front-most rotated corner tile
+  // (`isFrontCorner`) renders the seamless multi-tile architectural complex hero sprite.
+  const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
+  if (!rotLot.isFrontCorner) {
+    return getOrCreateSprite(
+      `shopping64_ref_base_lv${lv}_w${rotLot.rotW}h${rotLot.rotH}_x${rotLot.rDx}y${rotLot.rDy}`,
+      84,
+      64,
+      42,
+      36,
+      (ctx, cx, cy) => {
+        const isFrontHalf = rotLot.rDy >= Math.floor(rotLot.rotH * 0.55);
+        fillDiamond64(
           ctx,
           cx,
           cy,
-          28,
-          baseH,
-          {
-            top: '#f8fafc',
-            left: '#0f172a',
-            right: '#020617',
-          },
-          { rimColor: '#ffffff', outlineColor: '#e2e8f0' }
+          TILE_HW + 0.6,
+          TILE_HH + 0.4,
+          isFrontHalf ? '#4b5563' : '#cbd5e1'
         );
-        // Elevated Parte Alta Glass Drum
-        drawPrism64(
-          ctx,
-          cx,
-          cy - baseH,
-          24,
-          upperCoreH,
-          {
-            top: '#e0f2fe',
-            left: '#0284c7',
-            right: '#0369a1',
-          },
-          { rimColor: '#ffffff', outlineColor: '#bae6fd' }
-        );
-
-        // Stepped Crystal Skylight Dome above the Parte Alta
-        const domeH = lv === 3 ? 14 : lv === 2 ? 10 : 7;
-        drawPrism64(ctx, cx, cy - baseH - upperCoreH, 19, domeH, {
-          top: '#bae6fd',
-          left: '#38bdf8',
-          right: '#0284c7',
-        });
-        drawLine64(
-          ctx,
-          cx - 18,
-          cy - baseH - upperCoreH - domeH,
-          cx + 18,
-          cy - baseH - upperCoreH - domeH,
-          '#ffffff',
-          1.4
-        );
-        drawLine64(
-          ctx,
-          cx,
-          cy - baseH - upperCoreH - domeH - 9,
-          cx,
-          cy - baseH - upperCoreH - domeH + 9,
-          '#ffffff',
-          1.4
-        );
-        if (lv >= 2) {
-          drawPrism64(ctx, cx, cy - baseH - upperCoreH - domeH, 11, lv === 3 ? 8 : 5, {
-            top: lv === 3 ? '#fef08a' : '#e0f2fe',
-            left: lv === 3 ? '#f472b6' : '#7dd3fc',
-            right: lv === 3 ? '#db2777' : '#0284c7',
-          });
-          drawGlow64(
-            ctx,
-            cx,
-            cy - baseH - upperCoreH - domeH - 5,
-            lv === 3 ? 18 : 13,
-            lv === 3 ? 'rgba(244, 114, 182, 0.72)' : 'rgba(56, 189, 248, 0.68)'
-          );
-        }
-        return;
       }
+    );
+  }
 
-      // 5. Modern Interior Mall Podium + Stepped "PARTE ALTA" (Elevated Upper Section & Commercial Towers)
-      const podiumH = lv === 3 ? 22 : lv === 2 ? 18 : 14;
-      drawPrism64(
-        ctx,
-        cx,
-        cy,
-        27.5,
-        podiumH,
-        {
-          top: isCrossSkylight ? '#bae6fd' : '#f8fafc',
-          left: '#1e293b',
-          right: '#0f172a',
-        },
-        { rimColor: '#ffffff', outlineColor: '#cbd5e1', parapet: true }
-      );
-      drawWindows64(ctx, cx, cy, 27.5, podiumH - 2, Math.max(2, lv + 1), 4, {
-        litColor: '#e0f2fe',
-        glassLeft: '#38bdf8',
-        glassRight: '#0284c7',
-        seed: lotDx * 3 + lotDy + v,
-        curtainWall: true,
-      });
+  const spanW = (rotLot.rotW + rotLot.rotH) * TILE_HW + 48;
+  const spanH = (rotLot.rotW + rotLot.rotH) * TILE_HH + 116;
+  const anchorX = Math.round(spanW * 0.5);
+  const anchorY = spanH - 28;
 
-      // Continuous modern LED horizon strips along the podium
-      const accentLed = lv === 3 ? '#f472b6' : lv === 2 ? '#fbbf24' : '#38bdf8';
-      drawLine64(ctx, cx - 26, cy - podiumH + 4, cx, cy - podiumH + 17, accentLed, 1.6);
-      drawLine64(ctx, cx, cy - podiumH + 17, cx + 26, cy - podiumH + 4, '#38bdf8', 1.6);
-
-      // PARTE ALTA: Elevated Second/Third Story Modern Architectural Volume on the upper/rear zone
-      if (isUpperSection) {
-        const upperH = (lv === 3 ? 16 : lv === 2 ? 13 : 10) + (isRearTowerAnchor ? 7 : 0);
-        drawPrism64(
-          ctx,
-          cx,
-          cy - podiumH,
-          23.5,
-          upperH,
-          {
-            top: '#f8fafc',
-            topHi: '#ffffff',
-            left: lv === 3 ? '#1e3a8a' : '#0284c7',
-            right: lv === 3 ? '#172554' : '#0369a1',
-          },
-          { rimColor: '#ffffff', outlineColor: '#e0f2fe', castShadow: true, parapet: true }
-        );
-        drawWindows64(ctx, cx, cy - podiumH, 23.5, upperH - 2, Math.max(2, lv), 3, {
-          litColor: '#fef08a',
-          glassLeft: '#7dd3fc',
-          glassRight: '#0284c7',
-          seed: lotDx + lotDy * 7 + v,
-          curtainWall: true,
-        });
-
-        const topY = cy - podiumH - upperH;
-        if (lv === 3 && lotDx === lotW - 2 && lotDy === 1) {
-          // Level 3 VIP Rooftop Helipad ("H") atop the Parte Alta North-East Tower
-          fillDiamond64(ctx, cx, topY, 16, 8, '#334155');
-          fillDiamond64(ctx, cx, topY, 12, 6, '#1e293b');
-          drawLine64(ctx, cx - 3, topY - 3, cx - 3, topY + 3, '#facc15', 1.6);
-          drawLine64(ctx, cx + 3, topY - 3, cx + 3, topY + 3, '#facc15', 1.6);
-          drawLine64(ctx, cx - 3, topY, cx + 3, topY, '#facc15', 1.6);
-        } else if (lotDx === 1 && lotDy === 1) {
-          // Rooftop Sky-Garden Terrace atop the Parte Alta North-West Wing
-          fillDiamond64(ctx, cx, topY, 18, 9, '#22c55e');
-          drawTree64(ctx, cx - 5, topY, 'emerald', 0.55);
-          drawTree64(ctx, cx + 5, topY + 1, 'emerald', 0.55);
-        } else if (isCrossSkylight) {
-          drawPrism64(ctx, cx, topY, 15, 4.5, {
-            top: '#e0f2fe',
-            left: '#38bdf8',
-            right: '#0284c7',
-          });
-        }
-      } else if (isCrossSkylight) {
-        // Glass concourse skylight ridge on lower front podium wings
-        drawPrism64(ctx, cx, cy - podiumH, 16, 4.5, {
-          top: '#e0f2fe',
-          left: '#38bdf8',
-          right: '#0284c7',
-        });
-      }
+  return getOrCreateSprite(
+    `shopping64_ref_hero_lv${lv}_v${v}_w${rotLot.rotW}h${rotLot.rotH}`,
+    spanW,
+    spanH,
+    anchorX,
+    anchorY,
+    (ctx, cx, cy) => {
+      drawShoppingMallComplexScene64(ctx, cx, cy, lv, rotLot.rotW, rotLot.rotH);
     }
   );
 }
@@ -10484,103 +11116,49 @@ export function renderLandmarkArtworkCanvas(
     const dh = Math.round(metroSprite.canvas.height * scale);
     ctx.drawImage(metroSprite.canvas, w - dw - 6, (h - dh) / 2 + 4, dw, dh);
   } else if (kind === 'shopping') {
-    // 64-Bit Scenic Modern Shopping Mall Illustration (Lv.1 5×5, Lv.2 7×7, Lv.3 9×9)
-    // Clearly shows: 1) Lower Modern Glass Podium, 2) Stepped "Parte Alta" Upper Floor + Dome, 3) Front Estacionamento with Cars
-    const sky = ctx.createLinearGradient(0, 0, 0, h * 0.58);
-    sky.addColorStop(0, lv === 3 ? '#1e1038' : lv === 2 ? '#0f172a' : '#1e293b');
-    sky.addColorStop(1, lv === 3 ? '#581c87' : lv === 2 ? '#1d4ed8' : '#0284c7');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, h * 0.58);
+    // 64-Bit Reference-Sheet Shopping Mall Diorama Preview (Lv.1 5×5 "MALL", Lv.2 7×7 "SHOPPING", Lv.3 9×9 "SHOPPING CENTER")
+    // Matching `/public/assets/aistudio/image_399eb79f.jpg`: green lawn backdrop + full isometric complex + size badge!
+    const lawnGrad = ctx.createLinearGradient(0, 0, 0, h);
+    lawnGrad.addColorStop(0, '#4f9e3e');
+    lawnGrad.addColorStop(1, '#3c7d2e');
+    ctx.fillStyle = lawnGrad;
+    ctx.fillRect(0, 0, w, h);
 
-    const plazaY = Math.floor(h * 0.58);
-    // Front Asphalt Estacionamento surface
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, plazaY, w, h - plazaY);
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, plazaY, w, 12);
-
-    // Scenic Architectural Mall Elevation on the left side
-    const mallW = lv === 3 ? 116 : lv === 2 ? 106 : 94;
-    const podiumH = lv === 3 ? 20 : lv === 2 ? 17 : 14;
-    const upperH = lv === 3 ? 15 : lv === 2 ? 12 : 9;
-    const mallX = 8;
-    const podiumY = plazaY - podiumH;
-    const upperW = Math.round(mallW * 0.72);
-    const upperX = mallX + Math.round((mallW - upperW) * 0.5);
-    const upperY = podiumY - upperH;
-
-    // 1. Elevated "Parte Alta" (Upper Modern Glass Volume)
-    ctx.fillStyle = '#0284c7';
-    ctx.fillRect(upperX, upperY, upperW, upperH);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(upperX, upperY, upperW, 2);
-    for (let ux = upperX + 4; ux < upperX + upperW - 6; ux += 10) {
-      ctx.fillStyle = blink && ux % 20 === 4 ? '#fef08a' : '#bae6fd';
-      ctx.fillRect(ux, upperY + 3, 6, upperH - 5);
+    // Subtle pixel-art grass texture dots on the green backdrop
+    ctx.fillStyle = 'rgba(30, 64, 22, 0.22)';
+    for (let gx = 10; gx < w - 10; gx += 18) {
+      for (let gy = 8; gy < h - 8; gy += 14) {
+        ctx.fillRect(gx + ((gy * 3) % 7), gy, 2, 2);
+      }
     }
 
-    // 2. Lower Modern Glass & Titanium Podium
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(mallX, podiumY, mallW, podiumH);
-    ctx.fillStyle = lv === 3 ? '#f472b6' : lv === 2 ? '#fbbf24' : '#38bdf8';
-    ctx.fillRect(mallX, podiumY, mallW, 2.5);
-    for (let wx = mallX + 5; wx < mallX + mallW - 8; wx += 11) {
-      ctx.fillStyle = blink && wx % 22 === 5 ? '#e0f2fe' : '#38bdf8';
-      ctx.fillRect(wx, podiumY + 4, 7, podiumH - 6);
-    }
+    // Draw the full multi-tile isometric Shopping Mall hero sprite centered in the preview card
+    const targetDim = lv === 1 ? 5 : lv === 2 ? 7 : 9;
+    const heroSprite = getShoppingMallSprite(lv, 0, targetDim, targetDim, targetDim - 1, targetDim - 1, 0);
+    const fitScale = Math.min((w - 16) / heroSprite.canvas.width, (h - 6) / heroSprite.canvas.height) * 1.06;
+    const dw = Math.round(heroSprite.canvas.width * fitScale);
+    const dh = Math.round(heroSprite.canvas.height * fitScale);
+    const dx = Math.round((w - dw) * 0.56);
+    const dy = Math.round((h - dh) * 0.48);
 
-    // 3. Central Skylight Atrium Dome atop the Parte Alta (scales across 5×5 -> 7×7 -> 9×9!)
-    const domeCenterX = mallX + mallW * 0.5;
-    const domeRadius = lv === 3 ? 22 : lv === 2 ? 16 : 12;
-    ctx.fillStyle = lv === 3 ? 'rgba(244, 114, 182, 0.48)' : 'rgba(56, 189, 248, 0.48)';
-    ctx.beginPath();
-    ctx.arc(domeCenterX, upperY, domeRadius, Math.PI, 0);
-    ctx.fill();
-    ctx.strokeStyle = lv === 3 ? '#fef08a' : '#e0f2fe';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.arc(domeCenterX, upperY, domeRadius, Math.PI, 0);
-    ctx.stroke();
+    // Isometric earth slab thickness under the diorama diamond (matching reference illustration)
+    ctx.drawImage(heroSprite.canvas, dx, dy, dw, dh);
 
-    // 4. Front Estacionamento Bays & Parked Cars in foreground
-    ctx.strokeStyle = '#f8fafc';
-    ctx.lineWidth = 1;
-    for (let px = 14; px <= 108; px += 18) {
-      ctx.beginPath();
-      ctx.moveTo(px, plazaY + 2);
-      ctx.lineTo(px - 5, plazaY + 10);
-      ctx.stroke();
-    }
-    const parkedColors = ['#ef4444', '#38bdf8', '#facc15', '#22c55e'];
-    for (let c = 0; c < 4; c++) {
-      const carX = 18 + c * 22;
-      ctx.fillStyle = parkedColors[c % parkedColors.length];
-      ctx.fillRect(carX, plazaY + 3, 10, 5);
-      ctx.fillStyle = '#bae6fd';
-      ctx.fillRect(carX + 6, plazaY + 4, 3, 3);
-    }
-
-    // Size & Design badge on the scenic plaza
+    // Bold pixel-art dimension & title badge in bottom-left corner
     ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
-    ctx.fillRect(8, plazaY + 12, 118, 18);
-    ctx.strokeStyle = lv === 3 ? '#f472b6' : lv === 2 ? '#38bdf8' : '#fbbf24';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(8.5, plazaY + 12.5, 117, 17);
-    ctx.fillStyle = '#ffe066';
-    ctx.font = 'bold 8px monospace';
-    const sizeText =
+    ctx.fillRect(6, h - 24, 114, 18);
+    ctx.strokeStyle = lv === 3 ? '#4ade80' : lv === 2 ? '#f472b6' : '#38bdf8';
+    ctx.lineWidth = 1.1;
+    ctx.strokeRect(6.5, h - 23.5, 113, 17);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8.5px monospace';
+    const badgeLabel =
       lv === 3
-        ? 'GRANDE 9×9 (81 LOTES)'
+        ? '9×9 SHOPPING CENTER'
         : lv === 2
-          ? 'MÉDIO 7×7 (49 LOTES)'
-          : 'PEQUENO 5×5 (25 LOTES)';
-    ctx.fillText(sizeText, 12, plazaY + 24);
-
-    const shoppingSprite = getShoppingMallSprite(lv, 0);
-    const scale = 0.85;
-    const dw = Math.round(shoppingSprite.canvas.width * scale);
-    const dh = Math.round(shoppingSprite.canvas.height * scale);
-    ctx.drawImage(shoppingSprite.canvas, w - dw - 6, (h - dh) / 2 + 2, dw, dh);
+          ? '7×7 SHOPPING'
+          : '5×5 MALL';
+    ctx.fillText(badgeLabel, 11, h - 12);
   }
 
   // Subtle lock overlay indicator if not unlocked yet (keeps 64-bit art crystal clear!)
