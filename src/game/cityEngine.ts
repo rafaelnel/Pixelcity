@@ -44,6 +44,7 @@ import {
 } from './simulationConfig';
 import type {
   ActiveCityEvent,
+  BoatBehavior,
   BoatEntity,
   BoatKind,
   BudgetAreaKey,
@@ -236,6 +237,11 @@ export function getZoneDisplayLabel(tile: Tile): string {
         ? 'Arranha-Céu Corporativo 2×2 (Com Heliporto)'
         : 'Arranha-Céu Corporativo 2×2';
     }
+    if ((tile.lotWidth ?? 1) === 2 && (tile.lotHeight ?? 1) === 2) {
+      return (tile.level || 1) >= 3
+        ? 'Centro Comercial & Mercado 2×2'
+        : 'Mercado & Supermercado 2×2';
+    }
     const scale =
       (tile.lotWidth ?? 1) > 1 || (tile.lotHeight ?? 1) > 1
         ? ` · Complexo ${tile.lotWidth ?? 1}×${tile.lotHeight ?? 1}`
@@ -264,8 +270,8 @@ export function getZoneDisplayLabel(tile: Tile): string {
     return `Estádio de Futebol${scale}`;
   }
   if (tile.type === 'shopping') {
-    const lw = tile.lotWidth ?? 6;
-    const lh = tile.lotHeight ?? 6;
+    const lw = tile.lotWidth ?? 5;
+    const lh = tile.lotHeight ?? 5;
     const lv = tile.level || 1;
     if (lv >= 3) {
       return `Shopping Grande ${lw}×${lh} (Grand Megamall · Nv. 3)`;
@@ -273,7 +279,7 @@ export function getZoneDisplayLabel(tile: Tile): string {
     if (lv === 2) {
       return `Shopping Médio ${lw}×${lh} (Metropolitano · Nv. 2)`;
     }
-    return `Shopping Pequeno ${lw}×${lh} (Galleria Regional · Nv. 1)`;
+    return `Shopping Pequeno ${lw}×${lh} (Moderno · Nv. 1)`;
   }
   if (tile.type === 'port') {
     const lw = tile.lotWidth ?? 1;
@@ -398,7 +404,8 @@ function tryPickOrganicEstablishment(
     if (spec.id === 'soccer_stadium' || spec.id === 'sports_court') continue; // Built strictly when unlocked and ordered by the player in Obras
     const levelMatches =
       spec.hostLevel === hostLevel ||
-      (hostLevel === 1 && spec.hostLevel === 2 && (spec.minPopulation ?? 0) <= 1000);
+      (hostLevel === 1 && spec.hostLevel === 2 && (spec.minPopulation ?? 0) <= 1000) ||
+      (spec.id === 'municipal_market' && (hostLevel === 1 || hostLevel === 2));
     if (spec.hostTileType !== hostTileType || !levelMatches) continue;
     if (state.totalPopulation < (spec.minPopulation ?? 0)) continue;
     if (!canPlaceEstablishmentAt(state, spec.id, x, y, ignoreTile)) continue;
@@ -409,12 +416,14 @@ function tryPickOrganicEstablishment(
 
     const covPct = state.stats.coverage[spec.driverArea]?.coveragePct ?? 80;
     const covBoost = Math.max(0.5, Math.min(1.8, covPct / 85));
-    // Give shoreline Marina and neighborhood services high priority when a valid spaced slot opens
+    // Give shoreline Marina, 2x2 neighborhood Markets, and central services high priority when a valid spaced slot opens
     const baseWeight = spec.requiresWaterAdjacent
       ? 3.2
-      : spec.prefersCentralDense
-        ? 1.9
-        : 1.4;
+      : spec.id === 'municipal_market'
+        ? 2.5
+        : spec.prefersCentralDense
+          ? 1.9
+          : 1.4;
     candidates.push({ spec, weight: baseWeight * covBoost });
   }
 
@@ -3897,8 +3906,8 @@ export function placeOrExpandShoppingComplex(
     clampedLevel === 3
       ? 'Shopping Grande 9×9 (Grand Megamall · Nv. 3)'
       : clampedLevel === 2
-        ? 'Shopping Médio 8×8 (Metropolitano · Nv. 2)'
-        : 'Shopping Pequeno 6×6 (Galleria Regional · Nv. 1)';
+        ? 'Shopping Médio 7×7 (Metropolitano · Nv. 2)'
+        : 'Shopping Pequeno 5×5 (Moderno · Nv. 1)';
 
   state.pendingSounds.push({ type: 'milestone' });
   pushNews(
@@ -5782,6 +5791,8 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
     });
   }
 
+  const structuralOffers: Array<{ offer: EmergencyOfferView; alreadyBuiltOneOff: boolean }> = [];
+
   for (const line of EMERGENCY_LINES) {
     const curTier = Math.max(1, Math.min(line.tiers.length, state.workTiers[line.id] ?? 1));
     const spec = line.tiers[curTier - 1];
@@ -5793,35 +5804,58 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
     const inProgress = Boolean(activeWork);
     const unlocked = !alreadyBuiltToll && !inProgress && state.totalPopulation >= minPop;
 
-    offers.push({
-      id: line.id,
-      tier: activeWork ? activeWork.tier : curTier,
-      tierLabel: alreadyBuiltToll ? 'Construído' : inProgress ? 'Em Obra' : spec.tierLabel,
-      title: activeWork ? activeWork.title : spec.title,
-      summary: spec.summary,
-      effectHint: spec.effectHint,
-      nextEvolutionHint: alreadyBuiltToll
-        ? 'Praça de Pedágio ativa na rodovia externa — ajuste a tarifa em Finanças ou clicando no pedágio.'
-        : nextSpec
-          ? `Próxima evolução: ${nextSpec.tierLabel} — ${nextSpec.title}`
-          : line.id === 'toll_plaza_project'
-            ? 'Obra única na rodovia de entrada · Tarifa ajustável (Baixa / Média / Alta)'
-            : 'Nível máximo atingido (obra repetível de alto impacto)',
-      cost,
-      durationMonths: activeWork ? activeWork.totalMonths : spec.durationMonths,
-      accentColor: line.accentColor,
-      unlocked,
-      inProgress,
-      remainingMonths: activeWork?.remainingMonths,
-      totalMonths: activeWork?.totalMonths,
-      lockReason: alreadyBuiltToll
-        ? 'Pedágio já construído (ajuste a tarifa em Finanças)'
-        : activeWork
-          ? `Obra em andamento (${activeWork.remainingMonths} ${activeWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'})`
-          : unlocked
-            ? undefined
-            : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
+    structuralOffers.push({
+      alreadyBuiltOneOff: alreadyBuiltToll,
+      offer: {
+        id: line.id,
+        tier: activeWork ? activeWork.tier : curTier,
+        tierLabel: alreadyBuiltToll ? 'Construído' : inProgress ? 'Em Obra' : spec.tierLabel,
+        title: activeWork ? activeWork.title : spec.title,
+        summary: spec.summary,
+        effectHint: spec.effectHint,
+        nextEvolutionHint: alreadyBuiltToll
+          ? 'Praça de Pedágio ativa na rodovia externa — ajuste a tarifa em Finanças ou clicando no pedágio.'
+          : nextSpec
+            ? `Próxima evolução: ${nextSpec.tierLabel} — ${nextSpec.title}`
+            : line.id === 'toll_plaza_project'
+              ? 'Obra única na rodovia de entrada · Tarifa ajustável (Baixa / Média / Alta)'
+              : 'Nível máximo atingido (obra repetível de alto impacto)',
+        cost,
+        durationMonths: activeWork ? activeWork.totalMonths : spec.durationMonths,
+        accentColor: line.accentColor,
+        unlocked,
+        minPopulation: minPop,
+        inProgress,
+        remainingMonths: activeWork?.remainingMonths,
+        totalMonths: activeWork?.totalMonths,
+        lockReason: alreadyBuiltToll
+          ? 'Pedágio já construído (ajuste a tarifa em Finanças)'
+          : activeWork
+            ? `Obra em andamento (${activeWork.remainingMonths} ${activeWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'})`
+            : unlocked
+              ? undefined
+              : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
+      },
     });
+  }
+
+  // Sort structural works & milestones by First Necessity ("ordem de primeira necessidade"):
+  // 1) Active works in progress or ready/upcoming works ordered by lowest population requirement (minPopulation ascending), then lowest cost
+  // 2) Already-completed one-off works (e.g. built Toll Plaza) at the very end
+  structuralOffers.sort((a, b) => {
+    if (a.alreadyBuiltOneOff !== b.alreadyBuiltOneOff) {
+      return a.alreadyBuiltOneOff ? 1 : -1;
+    }
+    if (Boolean(a.offer.inProgress) !== Boolean(b.offer.inProgress)) {
+      return a.offer.inProgress ? -1 : 1;
+    }
+    const popDiff = (a.offer.minPopulation ?? 0) - (b.offer.minPopulation ?? 0);
+    if (popDiff !== 0) return popDiff;
+    return a.offer.cost - b.offer.cost;
+  });
+
+  for (const item of structuralOffers) {
+    offers.push(item.offer);
   }
 
   return offers;
@@ -7721,8 +7755,8 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       targetShopLv === 3
         ? 'Shopping Grande 9×9 (Grand Megamall · Nv. 3)'
         : targetShopLv === 2
-          ? 'Shopping Médio 8×8 (Metropolitano · Nv. 2)'
-          : 'Shopping Pequeno 6×6 (Galleria Regional · Nv. 1)';
+          ? 'Shopping Médio 7×7 (Metropolitano · Nv. 2)'
+          : 'Shopping Pequeno 5×5 (Moderno · Nv. 1)';
     pushNews(
       state,
       `${sizeLabel} concluído e inaugurado com conexão viária e praça comercial!`,
@@ -9257,8 +9291,28 @@ export function stepCityTick(state: CityState): void {
             !classifyPlannedRoadCell(state, cand.x, cand.y).isPlanned
         );
 
-      if (canUse(east) && canUse(south) && canUse(se) && nextRandom(state) < 0.42) {
-        assignCompoundLot(state, tile.x, tile.y, 2, 2, chosen, 1, chosenVariant, 0.9);
+      if (canUse(east) && canUse(south) && canUse(se) && nextRandom(state) < 0.48) {
+        const marketEstId =
+          chosen === 'commercial' &&
+          state.totalPopulation >= (ESTABLISHMENT_MAP.municipal_market?.minPopulation ?? 400) &&
+          canPlaceEstablishmentAt(state, 'municipal_market', tile.x, tile.y, tile)
+            ? ('municipal_market' as EstablishmentId)
+            : undefined;
+        const marketVar = marketEstId
+          ? pickEstablishmentVariation(state, 'municipal_market')
+          : chosenVariant;
+        assignCompoundLot(
+          state,
+          tile.x,
+          tile.y,
+          2,
+          2,
+          chosen,
+          1,
+          marketVar,
+          0.9,
+          marketEstId
+        );
         formedCompound = true;
       } else if (canUse(east)) {
         assignCompoundLot(state, tile.x, tile.y, 2, 1, chosen, 1, chosenVariant, 0.85);
@@ -9805,16 +9859,17 @@ export function stepCityTick(state: CityState): void {
           }
         }
 
-        // Gradually consolidate single-lot non-establishment buildings into 2x1 / 1x2 compounds in high-value blocks
+        // Gradually consolidate single-lot non-establishment buildings into 2x2 markets or 2x1 / 1x2 compounds in high-value blocks
         if (
           !evolvedEstId &&
           (tile.type === 'residential' || tile.type === 'commercial' || tile.type === 'industrial') &&
           (tile.lotWidth ?? 1) === 1 &&
           (tile.lotHeight ?? 1) === 1 &&
-          nextRandom(state) < 0.30
+          nextRandom(state) < 0.34
         ) {
           const east = getTile(state, tile.x + 1, tile.y);
           const south = getTile(state, tile.x, tile.y + 1);
+          const se = getTile(state, tile.x + 1, tile.y + 1);
           const canAbsorbNeighbor = (nb: Tile | null) => {
             if (!nb || nb.construction || nb.establishmentId) return false;
             if (classifyPlannedRoadCell(state, nb.x, nb.y).isPlanned) return false;
@@ -9833,7 +9888,33 @@ export function stepCityTick(state: CityState): void {
             return false;
           };
 
-          if (canAbsorbNeighbor(east)) {
+          if (
+            tile.type === 'commercial' &&
+            canAbsorbNeighbor(east) &&
+            canAbsorbNeighbor(south) &&
+            canAbsorbNeighbor(se)
+          ) {
+            const marketEstId =
+              state.totalPopulation >= (ESTABLISHMENT_MAP.municipal_market?.minPopulation ?? 400) &&
+              canPlaceEstablishmentAt(state, 'municipal_market', tile.x, tile.y, tile)
+                ? ('municipal_market' as EstablishmentId)
+                : undefined;
+            const marketVar = marketEstId
+              ? pickEstablishmentVariation(state, 'municipal_market')
+              : tile.variant;
+            assignCompoundLot(
+              state,
+              tile.x,
+              tile.y,
+              2,
+              2,
+              tile.type,
+              targetLevel,
+              marketVar,
+              1.35,
+              marketEstId
+            );
+          } else if (canAbsorbNeighbor(east)) {
             assignCompoundLot(
               state,
               tile.x,
@@ -11563,29 +11644,104 @@ export function updateBoatsAndPlanes(
   const moveDt = dt * Math.max(0.4, speedScale);
   const gw = state.gridWidth;
 
-  // 1. River Navigation Boats: small boats, medium boats, luxury yachts, cargo ships & bridge-free Cruise Liners!
+  // 1. River Navigation Boats: calmer, intentional traffic (bank-to-bank ferries, fishing boats, anchored leisure yachts, downstream/upstream river travellers, cargo & bridge-free Cruise Liners)
   const cruiseNav = getCruisePortNavigationInfo(state);
   const hasBridgeFreeCruisePort =
     cruiseNav.targetPortAnchor !== null && cruiseNav.navigableWater.size >= 4;
 
+  const gh = state.gridHeight;
   const desiredBoats = Math.min(
     GROWTH_CONFIG.maxBoats,
-    Math.max(4, 3 + state.stats.portCount * 3 + state.stats.bridgeCount * 2)
+    Math.max(3, 3 + Math.min(2, state.stats.portCount) + (hasBridgeFreeCruisePort ? 1 : 0))
   );
 
-  if (boats.length < desiredBoats) {
-    const waterTiles: Tile[] = [];
-    const cruiseWaterTiles: Tile[] = [];
-    for (let i = 0; i < state.tiles.length; i++) {
-      const t = state.tiles[i];
-      if (isNavigableWater(t.type)) waterTiles.push(t);
-      if (hasBridgeFreeCruisePort && t.type === 'water' && cruiseNav.navigableWater.has(i)) {
-        cruiseWaterTiles.push(t);
-      }
+  if (boats.length > desiredBoats) {
+    boats.length = desiredBoats;
+  }
+
+  const isEdgeRiverMouthTile = (t: Tile): boolean =>
+    t.x === 0 || t.y === 0 || t.x === gw - 1 || t.y === gh - 1;
+
+  const isShoreWaterTile = (t: Tile): boolean => {
+    const neigh = getOrthoNeighbors(state, t.x, t.y);
+    return neigh.some((n) => !isNavigableWater(n.type));
+  };
+
+  const pickBehaviorForBoat = (kind: BoatKind): BoatBehavior => {
+    if (kind === 'cruise' || kind === 'cargo') return 'port_shuttle';
+    if (kind === 'yacht') {
+      return Math.random() < 0.65 ? 'yacht_party' : 'river_through';
     }
+    if (kind === 'small') {
+      const r = Math.random();
+      return r < 0.45 ? 'fishing' : r < 0.78 ? 'cross_shore' : 'river_through';
+    }
+    // medium
+    const r = Math.random();
+    return r < 0.46 ? 'cross_shore' : r < 0.80 ? 'river_through' : 'fishing';
+  };
+
+  const pickTargetForBehavior = (
+    behavior: BoatBehavior,
+    fromX: number,
+    fromY: number,
+    waterPool: Tile[],
+    mouthPool: Tile[],
+    shorePool: Tile[]
+  ): { x: number; y: number } => {
+    if (behavior === 'river_through' && mouthPool.length > 0) {
+      // Pick the furthest river mouth edge tile so the boat travels all the way out of the city
+      const sorted = [...mouthPool].sort(
+        (a, b) =>
+          Math.hypot(b.x - fromX, b.y - fromY) - Math.hypot(a.x - fromX, a.y - fromY)
+      );
+      const topPool = sorted.slice(0, Math.min(3, sorted.length));
+      const pick = topPool[Math.floor(Math.random() * topPool.length)];
+      return { x: pick.x, y: pick.y };
+    }
+    if (behavior === 'cross_shore' && shorePool.length > 0) {
+      // Pick a shore water tile on the opposite bank (close along one axis, across the channel on the other)
+      const candidates = shorePool.filter((t) => {
+        const dist = Math.abs(t.x - fromX) + Math.abs(t.y - fromY);
+        return dist >= 2 && dist <= 10;
+      });
+      const pool = candidates.length > 0 ? candidates : shorePool;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      return { x: pick.x, y: pick.y };
+    }
+    if (waterPool.length > 0) {
+      const midCandidates = waterPool.filter(
+        (t) =>
+          !isEdgeRiverMouthTile(t) &&
+          t.type === 'water' &&
+          Math.abs(t.x - fromX) + Math.abs(t.y - fromY) >= 2
+      );
+      const pool = midCandidates.length > 0 ? midCandidates : waterPool;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      return { x: pick.x, y: pick.y };
+    }
+    return { x: fromX, y: fromY };
+  };
+
+  const waterTiles: Tile[] = [];
+  const cruiseWaterTiles: Tile[] = [];
+  const mouthWaterTiles: Tile[] = [];
+  const shoreWaterTiles: Tile[] = [];
+  for (let i = 0; i < state.tiles.length; i++) {
+    const t = state.tiles[i];
+    if (isNavigableWater(t.type)) {
+      waterTiles.push(t);
+      if (isEdgeRiverMouthTile(t)) mouthWaterTiles.push(t);
+      if (t.type === 'water' && isShoreWaterTile(t)) shoreWaterTiles.push(t);
+    }
+    if (hasBridgeFreeCruisePort && t.type === 'water' && cruiseNav.navigableWater.has(i)) {
+      cruiseWaterTiles.push(t);
+    }
+  }
+
+  if (boats.length < desiredBoats && waterTiles.length >= 2) {
     const baseKinds: BoatKind[] = ['small', 'medium', 'yacht'];
-    while (boats.length < desiredBoats && waterTiles.length >= 2) {
-      // Ensure small boats, medium boats, yachts, and bridge-free Cruise Liners are represented
+    while (boats.length < desiredBoats) {
       const missingKind = baseKinds.find((k) => !boats.some((b) => b.kind === k));
       let kind: BoatKind;
       if (hasBridgeFreeCruisePort && !boats.some((b) => b.kind === 'cruise')) {
@@ -11594,13 +11750,13 @@ export function updateBoatsAndPlanes(
         kind = missingKind;
       } else {
         const roll = Math.random();
-        if (hasBridgeFreeCruisePort && roll < 0.22) {
+        if (hasBridgeFreeCruisePort && roll < 0.20) {
           kind = 'cruise';
-        } else if (state.stats.portCount > 0 && roll < 0.42) {
+        } else if (state.stats.portCount > 0 && roll < 0.36) {
           kind = 'cargo';
-        } else if (roll < 0.66) {
+        } else if (roll < 0.62) {
           kind = 'small';
-        } else if (roll < 0.86) {
+        } else if (roll < 0.82) {
           kind = 'medium';
         } else {
           kind = 'yacht';
@@ -11610,12 +11766,14 @@ export function updateBoatsAndPlanes(
       let start: Tile;
       let next: Tile;
       let cruisePhase: 'to_port' | 'to_mouth' | undefined;
+      let behavior: BoatBehavior = pickBehaviorForBoat(kind);
+      let pauseTimer = 0;
 
       if (kind === 'cruise') {
         if (!hasBridgeFreeCruisePort || cruiseWaterTiles.length < 2) {
           kind = state.stats.portCount > 0 ? 'cargo' : 'yacht';
+          behavior = pickBehaviorForBoat(kind);
         } else {
-          // Prefer spawning Cruise Liners near the open river mouth so they glide cleanly toward the bridge-free port
           const mouthCandidates = cruiseWaterTiles.filter(
             (t) => (cruiseNav.distToMouth.get(t.y * gw + t.x) ?? 999) <= 3
           );
@@ -11632,28 +11790,53 @@ export function updateBoatsAndPlanes(
           );
           next = cruiseNeighbors[0];
           cruisePhase = 'to_port';
+          behavior = 'port_shuttle';
         }
       }
 
       if (kind !== 'cruise') {
-        start = waterTiles[Math.floor(Math.random() * waterTiles.length)];
+        if (behavior === 'river_through' && mouthWaterTiles.length > 0) {
+          start = mouthWaterTiles[Math.floor(Math.random() * mouthWaterTiles.length)];
+        } else if (behavior === 'cross_shore' && shoreWaterTiles.length > 0) {
+          start = shoreWaterTiles[Math.floor(Math.random() * shoreWaterTiles.length)];
+        } else {
+          const calmPool = waterTiles.filter((t) => t.type === 'water' && !isEdgeRiverMouthTile(t));
+          const pool = calmPool.length > 0 ? calmPool : waterTiles;
+          start = pool[Math.floor(Math.random() * pool.length)];
+        }
         const waterNeighbors = getOrthoNeighbors(state, start.x, start.y).filter((n) =>
           isNavigableWater(n.type)
         );
         if (waterNeighbors.length === 0) break;
         next = waterNeighbors[Math.floor(Math.random() * waterNeighbors.length)];
+
+        // Start some fishing boats and party yachts already anchored enjoying the river
+        if (behavior === 'yacht_party' && start.type === 'water') {
+          pauseTimer = 4.5 + Math.random() * 5.0;
+        } else if (behavior === 'fishing' && start.type === 'water') {
+          pauseTimer = 3.5 + Math.random() * 4.5;
+        }
       }
+
+      const target = pickTargetForBehavior(
+        behavior,
+        start!.x,
+        start!.y,
+        waterTiles,
+        mouthWaterTiles,
+        shoreWaterTiles
+      );
 
       const speedByKind =
         kind === 'small'
-          ? 1.15 + Math.random() * 0.45
+          ? 0.72 + Math.random() * 0.28
           : kind === 'yacht'
-            ? 1.0 + Math.random() * 0.35
+            ? 0.62 + Math.random() * 0.24
             : kind === 'medium'
-              ? 0.82 + Math.random() * 0.32
+              ? 0.58 + Math.random() * 0.22
               : kind === 'cruise'
-                ? 0.56 + Math.random() * 0.20
-                : 0.68 + Math.random() * 0.28;
+                ? 0.48 + Math.random() * 0.16
+                : 0.54 + Math.random() * 0.20;
 
       const hullByKind =
         kind === 'cruise'
@@ -11673,7 +11856,7 @@ export function updateBoatsAndPlanes(
         fromY: start!.y,
         toX: next!.x,
         toY: next!.y,
-        progress: Math.random(),
+        progress: pauseTimer > 0 ? 0.35 : Math.random(),
         speed: speedByKind,
         hullColor: hullByKind,
         cargoColor:
@@ -11681,6 +11864,10 @@ export function updateBoatsAndPlanes(
             ? ['#0284c7', '#e11d48', '#f59e0b'][Math.floor(Math.random() * 3)]
             : BOAT_CARGO[Math.floor(Math.random() * BOAT_CARGO.length)],
         kind,
+        behavior,
+        pauseTimer,
+        targetX: target.x,
+        targetY: target.y,
         ...(cruisePhase ? { cruisePhase } : {}),
       });
     }
@@ -11690,6 +11877,9 @@ export function updateBoatsAndPlanes(
     const boat = boats[i];
     if (!boat.kind) {
       boat.kind = i % 3 === 0 ? 'small' : i % 3 === 1 ? 'medium' : 'yacht';
+    }
+    if (!boat.behavior) {
+      boat.behavior = pickBehaviorForBoat(boat.kind);
     }
     const isCruise = boat.kind === 'cruise';
 
@@ -11704,6 +11894,28 @@ export function updateBoatsAndPlanes(
         boats.splice(i, 1);
         continue;
       }
+    }
+
+    // Handle stationary/anchored boats (fishing boats & luxury yachts hanging out on the water, or brief dock pause after shore crossing)
+    if ((boat.pauseTimer ?? 0) > 0) {
+      boat.pauseTimer = Math.max(0, (boat.pauseTimer ?? 0) - moveDt);
+      boat.x = boat.fromX + 0.5 + (boat.toX - boat.fromX) * boat.progress;
+      boat.y = boat.fromY + 0.5 + (boat.toY - boat.fromY) * boat.progress;
+      if (Math.random() < dt * 1.4) {
+        spawnParticle(
+          particles,
+          particleCursor,
+          boat.x,
+          boat.y,
+          0,
+          0,
+          0.85,
+          boat.kind === 'yacht' ? 1.8 : 1.3,
+          '#b8f0ff',
+          'wake'
+        );
+      }
+      continue;
     }
 
     boat.progress += boat.speed * moveDt;
@@ -11765,6 +11977,98 @@ export function updateBoatsAndPlanes(
           continue;
         }
 
+        // 1) Boats travelling along the river to leave the city despawn cleanly upon reaching the river mouth edge
+        if (
+          boat.behavior === 'river_through' &&
+          isEdgeRiverMouthTile(curTile) &&
+          (boat.fromX !== prevX || boat.fromY !== prevY)
+        ) {
+          const distToTarget =
+            typeof boat.targetX === 'number' && typeof boat.targetY === 'number'
+              ? Math.abs(curTile.x - boat.targetX) + Math.abs(curTile.y - boat.targetY)
+              : 0;
+          if (distToTarget <= 3) {
+            boats.splice(i, 1);
+            continue;
+          }
+        }
+
+        // 2) Check if the boat reached its intentional target (fishing spot, yacht hangout spot, or opposite shore)
+        const reachedTarget =
+          typeof boat.targetX === 'number' &&
+          typeof boat.targetY === 'number' &&
+          Math.abs(curTile.x - boat.targetX) + Math.abs(curTile.y - boat.targetY) <= 1;
+
+        if (curTile.type === 'water') {
+          if (
+            boat.behavior === 'yacht_party' &&
+            !isEdgeRiverMouthTile(curTile) &&
+            (reachedTarget || Math.random() < 0.42)
+          ) {
+            boat.pauseTimer = 5.5 + Math.random() * 6.0;
+            const nextT = pickTargetForBehavior(
+              'yacht_party',
+              curTile.x,
+              curTile.y,
+              waterTiles,
+              mouthWaterTiles,
+              shoreWaterTiles
+            );
+            boat.targetX = nextT.x;
+            boat.targetY = nextT.y;
+          } else if (
+            boat.behavior === 'fishing' &&
+            !isEdgeRiverMouthTile(curTile) &&
+            (reachedTarget || Math.random() < 0.45)
+          ) {
+            boat.pauseTimer = 4.5 + Math.random() * 5.5;
+            const nextT = pickTargetForBehavior(
+              'fishing',
+              curTile.x,
+              curTile.y,
+              waterTiles,
+              mouthWaterTiles,
+              shoreWaterTiles
+            );
+            boat.targetX = nextT.x;
+            boat.targetY = nextT.y;
+          } else if (
+            boat.behavior === 'cross_shore' &&
+            isShoreWaterTile(curTile) &&
+            (reachedTarget || Math.random() < 0.35)
+          ) {
+            // Brief dock/Embark pause at the riverbank, then cross back to the opposite bank
+            boat.pauseTimer = 1.6 + Math.random() * 2.0;
+            const nextT = pickTargetForBehavior(
+              'cross_shore',
+              curTile.x,
+              curTile.y,
+              waterTiles,
+              mouthWaterTiles,
+              shoreWaterTiles
+            );
+            boat.targetX = nextT.x;
+            boat.targetY = nextT.y;
+          }
+        }
+
+        if (
+          typeof boat.targetX !== 'number' ||
+          typeof boat.targetY !== 'number' ||
+          (curTile.x === boat.targetX && curTile.y === boat.targetY)
+        ) {
+          const nextT = pickTargetForBehavior(
+            boat.behavior,
+            curTile.x,
+            curTile.y,
+            waterTiles,
+            mouthWaterTiles,
+            shoreWaterTiles
+          );
+          boat.targetX = nextT.x;
+          boat.targetY = nextT.y;
+        }
+
         const neighbors = getOrthoNeighbors(state, boat.fromX, boat.fromY).filter((n) =>
           isNavigableWater(n.type)
         );
@@ -11774,17 +12078,18 @@ export function updateBoatsAndPlanes(
         }
         const forward = neighbors.filter((n) => n.x !== prevX || n.y !== prevY);
         const pool = forward.length > 0 ? forward : neighbors;
-        // Prefer continuing straight along the river channel and passing under bridges
-        const bridgeAhead = pool.find((n) => n.type === 'bridge');
-        const straight = pool.find(
-          (n) => n.x - boat.fromX === dirX && n.y - boat.fromY === dirY
-        );
-        const next =
-          bridgeAhead && Math.random() < 0.72
-            ? bridgeAhead
-            : straight && Math.random() < 0.74
-              ? straight
-              : pool[Math.floor(Math.random() * pool.length)];
+
+        // Steer intentionally toward boat.targetX / boat.targetY while keeping smooth movement
+        const tx = boat.targetX ?? boat.fromX + dirX * 4;
+        const ty = boat.targetY ?? boat.fromY + dirY * 4;
+        pool.sort((a, b) => {
+          const da = Math.hypot(a.x - tx, a.y - ty);
+          const db = Math.hypot(b.x - tx, b.y - ty);
+          const straightA = a.x - boat.fromX === dirX && a.y - boat.fromY === dirY ? -0.35 : 0;
+          const straightB = b.x - boat.fromX === dirX && b.y - boat.fromY === dirY ? -0.35 : 0;
+          return da + straightA - (db + straightB);
+        });
+        const next = pool[0];
         boat.toX = next.x;
         boat.toY = next.y;
       }
@@ -11793,7 +12098,7 @@ export function updateBoatsAndPlanes(
     boat.x = boat.fromX + 0.5 + (boat.toX - boat.fromX) * boat.progress;
     boat.y = boat.fromY + 0.5 + (boat.toY - boat.fromY) * boat.progress;
 
-    if (Math.random() < dt * 4.5) {
+    if (Math.random() < dt * 3.5) {
       spawnParticle(
         particles,
         particleCursor,

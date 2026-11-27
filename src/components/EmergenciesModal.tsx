@@ -152,9 +152,9 @@ function LandmarkArtPreview({ kind, level, builtCount, active }: LandmarkArtPrev
               ? '2× Nv.4'
               : kind === 'shopping'
                 ? lv === 1
-                  ? '6×6 Nv.1'
+                  ? '5×5 Nv.1'
                   : lv === 2
-                    ? '8×8 Nv.2'
+                    ? '7×7 Nv.2'
                     : '9×9 Nv.3'
                 : `Nv.${lv}`}
           </button>
@@ -179,27 +179,22 @@ export function EmergenciesModal({
     incidentOffer ? 'urgent' : 'works'
   );
 
-  // Structural & Landmark evolution works (Tab 1: Obras & Marcos)
-  const featuredTransportOffers = hud.emergencyOffers.filter(
-    (o) =>
-      o.id === 'port_evolution' ||
-      o.id === 'airport_evolution' ||
-      o.id === 'shopping_evolution' ||
-      o.id === 'bus_transit_project' ||
-      o.id === 'metro_transit_project'
+  // Structural & Landmark evolution works sorted in strict First-Necessity order (Tab 1: Obras & Marcos)
+  const orderedStructuralOffers = hud.emergencyOffers.filter(
+    (o) => o.id !== 'incident_response'
   );
-  const civicStructureOffers = hud.emergencyOffers.filter(
-    (o) =>
-      o.id === 'sports_center_project' ||
-      o.id === 'toll_plaza_project' ||
-      o.id === 'landmark_project'
-  );
+  const isIllustratedEvolutionWork = (id: EmergencyActionId) =>
+    id === 'port_evolution' ||
+    id === 'airport_evolution' ||
+    id === 'shopping_evolution' ||
+    id === 'bus_transit_project' ||
+    id === 'metro_transit_project';
 
   // Automatic budget-driven programs (read-only status in Tab 3: Ações & Urgências)
   const budgetPrograms = evaluateBudgetCampaignStatus(st.coverage, hud.money);
 
   const pendingWorks = hud.pendingWorks ?? [];
-  const readyStructuralCount = [...featuredTransportOffers, ...civicStructureOffers].filter(
+  const readyStructuralCount = orderedStructuralOffers.filter(
     (o) =>
       o.unlocked &&
       !o.inProgress &&
@@ -230,8 +225,8 @@ export function EmergenciesModal({
       <div
         key={offer.id}
         data-testid={`emergency-card-${offer.id}`}
-        className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 ${
-          isLandmark ? 'sm:col-span-2 border-[#ff8ec7]/50' : ''
+        className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
+          isLandmark ? 'border-[#ff8ec7]/50' : 'border-[#334361]'
         }`}
       >
         <div>
@@ -368,7 +363,7 @@ export function EmergenciesModal({
         : isMetro
           ? ['Linha 1', 'Anel Nv.2', 'Expresso 3']
           : isShopping
-            ? ['Pequeno 6×6', 'Médio 8×8', 'Grande 9×9']
+            ? ['Pequeno 5×5', 'Médio 7×7', 'Grande 9×9']
             : ['Fase I · Nv.1', 'Fase II · Nv.2', 'Fase III · Nv.3', 'Fase IV · Hub'];
 
     return (
@@ -418,7 +413,7 @@ export function EmergenciesModal({
                         : isMetro
                           ? `${builtCount} ${builtCount === 1 ? 'ESTAÇÃO' : 'ESTAÇÕES'} ATIVA`
                           : isShopping
-                            ? `SHOPPING NV.${st.shoppingLevel || 1} (${st.shoppingLevel === 3 ? '9×9' : st.shoppingLevel === 2 ? '8×8' : '6×6'})`
+                            ? `SHOPPING NV.${st.shoppingLevel || 1} (${st.shoppingLevel === 3 ? '9×9' : st.shoppingLevel === 2 ? '7×7' : '5×5'})`
                             : `CONSTRUÍDO (${builtCount} no mapa)`
                       : offer.unlocked
                         ? 'LIBERADO · AGUARDANDO ORDEM'
@@ -536,7 +531,7 @@ export function EmergenciesModal({
                                 : isMetro
                                   ? 'Metrô Metropolitano'
                                   : isShopping
-                                    ? 'Shopping Pequeno 6×6'
+                                    ? 'Shopping Pequeno 5×5'
                                     : 'Aeroporto'
                           } (-$${offer.cost.toLocaleString('pt-BR')})`
                         : `Pagar e Evoluir ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
@@ -753,32 +748,26 @@ export function EmergenciesModal({
           ) : null}
 
           <section
-            aria-label="Desbloqueio e evolução do Shopping, Porto, Aeroporto, Ônibus e Metrô"
+            aria-label="Marcos e obras disponíveis em ordem de primeira necessidade"
             data-testid="transport-landmarks-section"
           >
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div>
                 <h3 className="font-pixel text-[9px] text-[#38bdf8]">
-                  OBRAS EVOLUTIVAS: SHOPPING (6×6 / 8×8 / 9×9), ÔNIBUS, METRÔ, PORTO &amp; AEROPORTO
+                  MARCOS &amp; OBRAS DISPONÍVEIS (EM ORDEM DE PRIMEIRA NECESSIDADE · SHOPPING 5×5 / 7×7 / 9×9)
                 </h3>
                 <p className="text-[14.5px] text-[#9eb0c9] leading-tight mt-0.5">
-                  Botão <strong className="text-[#4ade80]">verde</strong> indica obra liberada com caixa suficiente. Em execução, vira uma <strong className="text-[#ffe066]">barra de progresso</strong> e abre canteiro no mapa.
+                  Ordenados pelos marcos que serão usados primeiro. Botão <strong className="text-[#4ade80]">verde</strong> indica obra liberada com caixa suficiente.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {featuredTransportOffers.map(renderTransportEvolutionCard)}
-            </div>
-          </section>
-
-          {/* Civic Structures & Landmarks (Sports Center, Toll Plaza, Monumental Stadium) */}
-          <section aria-label="Marcos urbanos e infraestrutura especial">
-            <h3 className="font-pixel text-[9px] text-[#ff8ec7] mb-2">
-              MARCOS URBANOS &amp; INFRAESTRUTURA ESPECIAL
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {civicStructureOffers.map(renderStandardOfferCard)}
+              {orderedStructuralOffers.map((offer) =>
+                isIllustratedEvolutionWork(offer.id)
+                  ? renderTransportEvolutionCard(offer)
+                  : renderStandardOfferCard(offer)
+              )}
             </div>
           </section>
         </div>

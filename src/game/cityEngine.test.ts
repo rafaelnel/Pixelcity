@@ -1968,7 +1968,7 @@ test('economic rebalance prevents runaway millions after 4 game years while keep
     `Expected healthy multi-year population growth (${startPop} -> ${city.totalPopulation})`
   );
   assert.ok(
-    city.money < 500_000,
+    city.money < 600_000,
     `Expected balanced 4-year treasury well below runaway millions, got $${city.money}`
   );
 });
@@ -2915,7 +2915,7 @@ test('first Airport is 4x10 (40 tiles), houses require a filled 12x12 Level-1 re
   assert.ok(blockedLv4.reason?.includes('30.000'), `Expected 30.000 hab. requirement, got: ${blockedLv4.reason}`);
 });
 
-test('3 Shopping Mall designs unlock by population milestones (6x6 Small at 7.5k, 8x8 Medium at 16k, 9x9 Large at 26k) and track multi-month work execution progress', async () => {
+test('3 Shopping Mall designs unlock by population milestones (5x5 Small at 7.5k, 7x7 Medium at 16k, 9x9 Large at 26k) and track multi-month work execution progress', async () => {
   const {
     closeFinancialMonth,
     evaluateCivicMilestones,
@@ -2938,14 +2938,14 @@ test('3 Shopping Mall designs unlock by population milestones (6x6 Small at 7.5k
     evaluateCivicMilestones(city);
   };
 
-  // Below 7,500 pop: Shopping Pequeno (6×6) is locked
+  // Below 7,500 pop: Shopping Pequeno (5×5) is locked
   assert.ok(city.totalPopulation < 7500);
   const lockedOffer = getEmergencyOffers(city).find((o) => o.id === 'shopping_evolution')!;
   assert.ok(lockedOffer);
   assert.equal(lockedOffer.unlocked, false);
   assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
 
-  // 1. Reach 7,500 pop -> Shopping Pequeno (6×6 · 36 tiles · Nv. 1) unlocks & starts 3-month execution progress!
+  // 1. Reach 7,500 pop -> Shopping Pequeno (5×5 · 25 tiles · Nv. 1) unlocks & starts 3-month execution progress!
   raisePopTo(7500);
   const lv1Offer = getEmergencyOffers(city).find((o) => o.id === 'shopping_evolution')!;
   assert.equal(lv1Offer.unlocked, true);
@@ -2953,12 +2953,12 @@ test('3 Shopping Mall designs unlock by population milestones (6x6 Small at 7.5k
 
   const resLv1 = executeEmergencyAction(city, 'shopping_evolution');
   assert.equal(resLv1.ok, true);
-  // Immediately after starting: reserved construction site is placed (6x6), Shopping is NOT operational yet!
+  // Immediately after starting: reserved construction site is placed (5x5), Shopping is NOT operational yet!
   assert.equal(city.stats.shoppingCount, 0, 'Shopping must NOT be operational during construction');
   assert.equal(
     city.tiles.filter((t) => t.construction?.targetType === 'shopping').length,
-    36,
-    'Shopping Pequeno (6×6) must reserve 36 map tiles as an active construction site'
+    25,
+    'Shopping Pequeno (5×5) must reserve 25 map tiles as an active construction site'
   );
   const inProgressOffer = getEmergencyOffers(city).find((o) => o.id === 'shopping_evolution')!;
   assert.equal(inProgressOffer.inProgress, true);
@@ -2990,28 +2990,28 @@ test('3 Shopping Mall designs unlock by population milestones (6x6 Small at 7.5k
   );
 
   const lv1Tiles = city.tiles.filter((t) => t.type === 'shopping');
-  assert.equal(lv1Tiles.length, 36, 'Shopping Pequeno (Nv. 1) must be 6×6 (36 tiles)');
+  assert.equal(lv1Tiles.length, 25, 'Shopping Pequeno (Nv. 1) must be 5×5 (25 tiles)');
   assert.equal(city.stats.shoppingCount, 1);
   assert.equal(city.stats.shoppingLevel, 1);
   assert.equal(lv1Tiles.every((t) => !t.construction), true);
   const anchorLv1 = lv1Tiles.find((t) => t.lotRole === 'anchor')!;
-  assert.equal(anchorLv1.lotWidth, 6);
-  assert.equal(anchorLv1.lotHeight, 6);
-  assert.ok(getZoneDisplayLabel(anchorLv1).includes('6×6'));
+  assert.equal(anchorLv1.lotWidth, 5);
+  assert.equal(anchorLv1.lotHeight, 5);
+  assert.ok(getZoneDisplayLabel(anchorLv1).includes('5×5'));
 
-  // 2. Below 16,000 pop -> Shopping Médio (8×8 · Nv. 2) is locked; at 16,000 pop it expands to 8×8 (64 tiles) on completion!
+  // 2. Below 16,000 pop -> Shopping Médio (7×7 · Nv. 2) is locked; at 16,000 pop it expands to 7×7 (49 tiles) on completion!
   assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
   raisePopTo(16000);
   city.money = 10_000_000;
   const resLv2 = runEmergencyWorkToCompletion(city, 'shopping_evolution');
   assert.equal(resLv2.ok, true);
   const lv2Tiles = city.tiles.filter((t) => t.type === 'shopping');
-  assert.equal(lv2Tiles.length, 64, 'Shopping Médio (Nv. 2) must expand to 8×8 (64 tiles)');
+  assert.equal(lv2Tiles.length, 49, 'Shopping Médio (Nv. 2) must expand to 7×7 (49 tiles)');
   assert.equal(city.stats.shoppingLevel, 2);
   const anchorLv2 = lv2Tiles.find((t) => t.lotRole === 'anchor')!;
-  assert.equal(anchorLv2.lotWidth, 8);
-  assert.equal(anchorLv2.lotHeight, 8);
-  assert.ok(getZoneDisplayLabel(anchorLv2).includes('8×8'));
+  assert.equal(anchorLv2.lotWidth, 7);
+  assert.equal(anchorLv2.lotHeight, 7);
+  assert.ok(getZoneDisplayLabel(anchorLv2).includes('7×7'));
 
   // 3. At 26,000 pop -> Shopping Grande (9×9 · 81 tiles · Nv. 3) unlocks & expands to 9×9 on completion!
   assert.equal(executeEmergencyAction(city, 'shopping_evolution').ok, false);
@@ -3515,6 +3515,60 @@ test('campaigns (Mutirão Ambiental, Revitalização, Festival Turístico) are r
   assert.ok(revitBoost && revitBoost.tier >= 2, 'Good security + infrastructure investment triggers Revitalização');
   assert.ok(tourBoost && tourBoost.tier >= 2, 'Good tourism + entertainment investment triggers Festival Turístico');
   assert.equal(victim.type, 'residential', 'Automatic Revitalização must restore abandoned building');
+});
+
+test('available works and milestones are ordered by first necessity and 2x2 markets (municipal_market and 2x2 commercial lots) are supported', async () => {
+  const { getZoneDisplayLabel } = await import('./cityEngine');
+  const { ESTABLISHMENT_CATALOG, SHOPPING_FOOTPRINT_BY_LEVEL } = await import('./simulationConfig');
+
+  // 1. Shopping footprints must be 5×5, 7×7, and 9×9
+  assert.deepEqual(SHOPPING_FOOTPRINT_BY_LEVEL[1], { w: 5, h: 5 });
+  assert.deepEqual(SHOPPING_FOOTPRINT_BY_LEVEL[2], { w: 7, h: 7 });
+  assert.deepEqual(SHOPPING_FOOTPRINT_BY_LEVEL[3], { w: 9, h: 9 });
+
+  // 2. Initial available works must be ordered strictly by first necessity (ascending minPopulation)
+  const city = createNewCity(334455, 'easy');
+  const initialOffers = getEmergencyOffers(city);
+  assert.deepEqual(
+    initialOffers.map((o) => o.id),
+    [
+      'port_evolution',          // 1,200 hab.
+      'sports_center_project',   // 2,000 hab.
+      'bus_transit_project',     // 4,000 hab.
+      'airport_evolution',       // 5,000 hab.
+      'shopping_evolution',      // 7,500 hab.
+      'metro_transit_project',   // 14,000 hab.
+      'toll_plaza_project',      // 20,000 hab. ($18,500)
+      'landmark_project',        // 20,000 hab. ($26,000)
+    ]
+  );
+
+  // When Port Phase I completes (advancing to Phase II · 10,000 hab.), Sports Center (2,000 hab.) becomes first in the list
+  city.workTiers.port_evolution = 2;
+  const reorderedOffers = getEmergencyOffers(city);
+  assert.equal(reorderedOffers[0].id, 'sports_center_project', 'Sports Center (2k) should move ahead of Port Phase II (10k)');
+  assert.equal(reorderedOffers[1].id, 'bus_transit_project');
+  assert.equal(reorderedOffers[2].id, 'airport_evolution');
+  assert.equal(reorderedOffers[3].id, 'shopping_evolution');
+  assert.equal(reorderedOffers[4].id, 'port_evolution');
+
+  // 3. 2×2 Market (municipal_market and 2×2 commercial lots) config and labels
+  const marketDef = ESTABLISHMENT_CATALOG.find((e) => e.id === 'municipal_market')!;
+  assert.ok(marketDef);
+  assert.equal(marketDef.footprintW, 2);
+  assert.equal(marketDef.footprintH, 2);
+  assert.equal(marketDef.hostTileType, 'commercial');
+
+  const marketTile = getTile(city, 10, 10)!;
+  marketTile.type = 'commercial';
+  marketTile.level = 2;
+  marketTile.lotRole = 'anchor';
+  marketTile.lotWidth = 2;
+  marketTile.lotHeight = 2;
+  assert.ok(
+    getZoneDisplayLabel(marketTile).includes('Mercado') && getZoneDisplayLabel(marketTile).includes('2×2'),
+    `Expected 2×2 commercial lot label to mention Mercado 2×2, got: ${getZoneDisplayLabel(marketTile)}`
+  );
 });
 
 

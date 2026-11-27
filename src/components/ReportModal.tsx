@@ -186,6 +186,14 @@ export function ReportModal({
   const readyMilestonesCount = milestones.filter(
     (m) => m.unlocked && !m.built && m.actionId
   ).length;
+  // Order milestones by First Necessity: ready-to-build unlocked first, then next upcoming by lowest populationTarget, then already completed
+  const sortedMilestones = [...milestones].sort((a, b) => {
+    const rank = (m: (typeof milestones)[number]) =>
+      m.unlocked && !m.built ? 0 : !m.unlocked ? 1 : 2;
+    const rankDiff = rank(a) - rank(b);
+    if (rankDiff !== 0) return rankDiff;
+    return a.populationTarget - b.populationTarget;
+  });
   const criticalOrWarningNeedsCount = hud.needs.filter(
     (n) => n.severity !== 'info'
   ).length;
@@ -558,7 +566,7 @@ export function ReportModal({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {milestones.map((m) => (
+              {sortedMilestones.map((m) => (
                 <div
                   key={m.id}
                   data-testid={`civic-milestone-${m.id}`}

@@ -370,6 +370,7 @@ export interface EmergencyOfferView {
   durationMonths: number;
   accentColor: string;
   unlocked: boolean;
+  minPopulation?: number;
   lockReason?: string;
   inProgress?: boolean;
   remainingMonths?: number;
@@ -518,6 +519,13 @@ export interface CarEntity {
 
 export type BoatKind = 'small' | 'medium' | 'yacht' | 'cargo' | 'cruise';
 
+export type BoatBehavior =
+  | 'river_through'
+  | 'cross_shore'
+  | 'fishing'
+  | 'yacht_party'
+  | 'port_shuttle';
+
 export interface BoatEntity {
   x: number;
   y: number;
@@ -531,6 +539,13 @@ export interface BoatEntity {
   cargoColor: string;
   kind?: BoatKind;
   cruisePhase?: 'to_port' | 'to_mouth';
+  /** Intentional river activity: crossing shores, leaving downstream/upstream, fishing pause, or anchored yacht leisure */
+  behavior?: BoatBehavior;
+  /** Remaining seconds anchored/paused on the river (fishing or yacht party) before moving again */
+  pauseTimer?: number;
+  /** Intentional target tile coordinates for river transit or bank-to-bank crossing */
+  targetX?: number;
+  targetY?: number;
 }
 
 export type PlaneFlightPhase =
