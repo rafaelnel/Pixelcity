@@ -4477,3 +4477,119 @@ test('railway routes around the outer perimeter of the city and keeps >=1-block 
     }
   }
 });
+
+test('expanded city with packed core and 0% residential tax actively expands roads across perimeter rail and grows population', () => {
+  const city = createNewCity(889922, 'medium');
+  city.money = 12_000_000;
+
+  // Develop initial core organically, then fill road-adjacent core slots so outward expansion is needed
+  setTaxRate(city, 'residential', 4);
+  setTaxRate(city, 'commercial', 4);
+  setTaxRate(city, 'industrial', 4);
+  for (let m = 0; m < 18; m++) {
+    for (let t = 0; t < 12; t++) {
+      stepCityTick(city);
+    }
+    closeFinancialMonth(city);
+  }
+  for (const t of city.tiles) {
+    if (
+      (t.type === 'grass' || t.type === 'forest') &&
+      t.x >= 4 &&
+      t.x <= city.gridWidth - 5 &&
+      t.y >= 4 &&
+      t.y <= city.gridHeight - 5
+    ) {
+      const hasAdjRoad = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ].some(([dx, dy]) => {
+        const nb = getTile(city, t.x + dx, t.y + dy);
+        return nb && (nb.type === 'road' || nb.type === 'bridge');
+      });
+      if (hasAdjRoad) {
+        t.type = (t.x + t.y) % 5 === 0 ? 'commercial' : (t.x + t.y) % 7 === 0 ? 'industrial' : 'residential';
+        t.level = 1;
+      }
+    }
+  }
+  recomputeFieldsAndStats(city);
+
+  // Expand borders on all 4 sides like a late-game expanded metropolis
+  for (const dir of ['norte', 'sul', 'leste', 'oeste'] as const) {
+    const exp = expandCityLand(city, dir);
+    assert.equal(exp.ok, true, `Expected expandCityLand(${dir}) to succeed: ${exp.reason ?? ''}`);
+  }
+  assert.ok(city.gridWidth > 36 && city.gridHeight > 36, 'Expected expanded grid beyond 36x36');
+
+  const savedPop = city.totalPopulation;
+  city.totalPopulation = Math.max(city.totalPopulation, 40_000);
+  const railBuild = runEmergencyWorkToCompletion(city, 'rail_freight_project');
+  assert.equal(railBuild.ok, true, `Expected rail_freight_project to complete: ${railBuild.reason ?? ''}`);
+  city.totalPopulation = savedPop;
+
+  for (const k of ['infrastructure', 'education', 'security', 'wellbeing', 'entertainment', 'tourism'] as const) {
+    setCityBudgetTargetPct(city, k, 100);
+  }
+  setTaxRate(city, 'residential', 0);
+  setTaxRate(city, 'commercial', 8);
+  setTaxRate(city, 'industrial', 8);
+  recomputeFieldsAndStats(city);
+
+  const popBefore = city.totalPopulation;
+  const resBefore = city.tiles.filter((t) => t.type === 'residential').length;
+  const roadBefore = city.tiles.filter((t) => t.type === 'road' || t.type === 'bridge').length;
+
+  for (let m = 0; m < 12; m++) {
+    for (let t = 0; t < 12; t++) {
+      stepCityTick(city);
+    }
+    closeFinancialMonth(city);
+  }
+
+  const popDelta = city.totalPopulation - popBefore;
+  const resDelta = city.tiles.filter((t) => t.type === 'residential').length - resBefore;
+  const roadDelta = city.tiles.filter((t) => t.type === 'road' || t.type === 'bridge').length - roadBefore;
+
+  assert.ok(
+    popDelta >= 1200,
+    `Expected strong 12-month population growth at 0% residential tax on expanded map, got +${popDelta}`
+  );
+  assert.ok(
+    resDelta >= 25,
+    `Expected >=25 net new residential tiles on expanded map at 0% tax with perimeter rail, got +${resDelta}`
+  );
+  assert.ok(
+    roadDelta >= 25,
+    `Expected >=25 outward road tiles across expanded borders and rail crossings, got +${roadDelta}`
+  );
+
+  // Verify permanent >=1-block setback between rail_track and non-rail buildings
+  const isNonRailBuilding = (type: string) =>
+    type !== 'grass' &&
+    type !== 'forest' &&
+    type !== 'water' &&
+    type !== 'road' &&
+    type !== 'bridge' &&
+    type !== 'rail_track' &&
+    type !== 'rail_terminal';
+
+  for (const rt of city.tiles) {
+    if (rt.type !== 'rail_track') continue;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nb = getTile(city, rt.x + dx, rt.y + dy);
+        if (!nb) continue;
+        assert.equal(
+          isNonRailBuilding(nb.type),
+          false,
+          `rail_track at (${rt.x},${rt.y}) has adjacent building '${nb.type}' at (${nb.x},${nb.y})`
+        );
+      }
+    }
+  }
+});
+

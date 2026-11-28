@@ -2186,7 +2186,7 @@ export function getNeighborhoodMaturity(
       const nt = getTile(state, x + dx, y + dy);
       if (!nt || nt.type === 'water' || isRoadLike(nt.type)) continue;
       if (nt.type === 'grass' || nt.type === 'forest') {
-        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned) {
+        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned && !isNearRailCorridor(state, nt.x, nt.y, 1)) {
           totalLots++;
           emptyLots++;
         }
@@ -2232,7 +2232,7 @@ export function getNeighborhoodMaturity(
       const nt = getTile(state, x + dx, y + dy);
       if (!nt || nt.type === 'water' || isRoadLike(nt.type)) continue;
       if (nt.type === 'grass' || nt.type === 'forest') {
-        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned) {
+        if (!classifyPlannedRoadCell(state, nt.x, nt.y).isPlanned && !isNearRailCorridor(state, nt.x, nt.y, 1)) {
           region12TotalLots++;
           region12EmptyLots++;
         }
@@ -10803,7 +10803,8 @@ export function stepCityTick(state: CityState): void {
             target.x - (typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2),
             target.y - (typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2)
           );
-          const coreFocusMult = coreDist <= 9 ? 1.45 : coreDist > 13 ? 0.72 : 1.0;
+          const isExpandedMap = state.gridWidth > 36 || state.gridHeight > 36;
+          const coreFocusMult = coreDist <= 9 ? 1.4 : !isExpandedMap && coreDist > 13 ? 0.72 : 1.0;
 
           roadFrontier.push({
             road: t,
@@ -10812,6 +10813,29 @@ export function stepCityTick(state: CityState): void {
             weight: weight * coreFocusMult,
             corridorLevel: targetPlan.corridorLevel,
           });
+        } else if (
+          target.type === 'rail_track' &&
+          !target.construction &&
+          target.x > 0 &&
+          target.y > 0 &&
+          target.x < state.gridWidth - 1 &&
+          target.y < state.gridHeight - 1 &&
+          !wouldCreateRoadBlob(state, target.x, target.y)
+        ) {
+          // Allow planned streets/avenues to cross a perimeter railway perpendicularly as grade crossings
+          // so the outer railway never walls off urban expansion onto newly purchased land!
+          const targetPlan = classifyPlannedRoadCell(state, target.x, target.y);
+          const rc = state.railCorridor;
+          const isPerpendicular = !rc || (rc.axis === 'ns' ? dir[0] !== 0 : dir[1] !== 0);
+          if (targetPlan.isPlanned && isPerpendicular) {
+            roadFrontier.push({
+              road: t,
+              dir,
+              target,
+              weight: targetPlan.onHighwayAxis ? 2.1 : targetPlan.onAvenueAxis ? 1.85 : 1.35,
+              corridorLevel: targetPlan.corridorLevel,
+            });
+          }
         } else if (
           !target.construction &&
           (target.type === 'abandoned' ||
@@ -10909,13 +10933,60 @@ export function stepCityTick(state: CityState): void {
   }
   scoredBuildableSlots.sort((a, b) => b.infillScore - a.infillScore);
 
+  const rci = state.stats.rciDemand ?? createDefaultRciDemand();
+  const resDemand = rci.residential.demand;
+  const comDemand = rci.commercial.demand;
+  const indDemand = rci.industrial.demand;
+  const maxPosDemand = Math.max(0, resDemand, comDemand, indDemand);
+
+  // Very low taxes on high-demand sectors create an authentic migration/investment boom!
+  const resLowTaxBoom =
+    resDemand >= 45 && state.taxes.residential < fairTax
+      ? Math.max(0, (fairTax - state.taxes.residential) / Math.max(4, fairTax)) * (resDemand / 100) * 0.65
+      : 0;
+  const comLowTaxBoom =
+    comDemand >= 45 && state.taxes.commercial < fairTax + 0.5
+      ? Math.max(0, (fairTax + 0.5 - state.taxes.commercial) / Math.max(4, fairTax)) * (comDemand / 100) * 0.50
+      : 0;
+  const indLowTaxBoom =
+    indDemand >= 45 && state.taxes.industrial < fairTax + 1.0
+      ? Math.max(0, (fairTax + 1.0 - state.taxes.industrial) / Math.max(4, fairTax)) * (indDemand / 100) * 0.50
+      : 0;
+  const maxTaxBoom = Math.max(resLowTaxBoom, comLowTaxBoom, indLowTaxBoom);
+  const isExpandedOrLargeCity =
+    state.gridWidth > 36 ||
+    state.gridHeight > 36 ||
+    buildings.length >= 200;
+  const isLowTaxWave = maxTaxBoom >= 0.28;
+  const unlockBriskGrowth = isExpandedOrLargeCity || isLowTaxWave;
+
   // 1. Planned Urban Road Network Expansion (Estradas, Avenidas, Ruas, Trevos & Arterial River Bridges)
-  // Throttle outer road sprawl whenever many interior block lots are still empty grass gaps!
-  const shouldThrottleSprawl = internalGapCount >= 8 && roadBoostTier === 0;
+  // On starter towns, throttle outer road sprawl whenever >=8 inner block gaps remain;
+  // on expanded/large maps or strong low-tax immigration waves, scale threshold & keep extending outward!
+  const gapThrottleThreshold = unlockBriskGrowth
+    ? Math.max(12, Math.floor(buildings.length * 0.14))
+    : 8;
+  const needsMoreRoadCapacity =
+    unlockBriskGrowth &&
+    maxPosDemand >= 55 &&
+    buildableEmptyTiles.length < Math.max(24, Math.floor(buildings.length * 0.18));
+  const shouldThrottleSprawl =
+    internalGapCount >= gapThrottleThreshold &&
+    !needsMoreRoadCapacity &&
+    roadBoostTier === 0;
   let roadsChanged = false;
+  const roadDemandMult =
+    unlockBriskGrowth && maxPosDemand >= 55
+      ? 1 + Math.min(0.65, (maxPosDemand - 40) * 0.01)
+      : 1.0;
   const roadAttempts = shouldThrottleSprawl
-    ? 1
-    : Math.min(4, Math.max(1, Math.floor(roadFrontier.length / 12) + 1));
+    ? unlockBriskGrowth && roadFrontier.length >= 36
+      ? 2
+      : 1
+    : Math.min(
+        unlockBriskGrowth && maxPosDemand >= 60 ? 6 : 4,
+        Math.max(1, Math.floor(roadFrontier.length / (unlockBriskGrowth ? 10 : 12)) + 1)
+      );
   for (let a = 0; a < roadAttempts; a++) {
     if (roadFrontier.length === 0) break;
     // Weighted pick favoring arterials, ring highways, and completing Trevos cleanly
@@ -10957,16 +11028,22 @@ export function stepCityTick(state: CityState): void {
     if (
       target.type === 'grass' ||
       target.type === 'forest' ||
+      target.type === 'rail_track' ||
       target.type === 'abandoned' ||
       ((target.type === 'rural' || target.type === 'residential' || target.type === 'commercial') &&
         target.level <= 1 &&
         !target.establishmentId)
     ) {
       if (wouldCreateRoadBlob(state, target.x, target.y)) continue;
-      const sprawlBrake = shouldThrottleSprawl ? 0.28 : 1.0;
+      const sprawlBrake = shouldThrottleSprawl
+        ? unlockBriskGrowth && buildings.length >= 120
+          ? 0.58
+          : 0.28
+        : 1.0;
       const expandChance =
         (GROWTH_CONFIG.baseRoadExpandChance + infraCov * GROWTH_CONFIG.infraRoadBonus) *
         Math.min(2.1, weight) *
+        roadDemandMult *
         tm.roadExpandMultiplier *
         roadBoostMult *
         eventMods.growthMult *
@@ -11034,10 +11111,6 @@ export function stepCityTick(state: CityState): void {
 
   // 2. Cohesive Neighborhood Zoning & Compact Infill driven by Live RCI Demand & Sector Tax Rates:
   // Low taxes strongly attract that sector; high taxes / negative demand stop new arrivals for that sector!
-  const rci = state.stats.rciDemand ?? createDefaultRciDemand();
-  const resDemand = rci.residential.demand;
-  const comDemand = rci.commercial.demand;
-  const indDemand = rci.industrial.demand;
   const resTaxFactor =
     resDemand <= 0
       ? 0
@@ -11050,21 +11123,40 @@ export function stepCityTick(state: CityState): void {
     indDemand <= 0
       ? 0
       : Math.max(0.18, (0.28 + (indDemand / 100) * 2.2) * Math.max(0.35, 1 - (state.taxes.industrial - (fairTax + 1.0)) * 0.13));
-  const maxPosDemand = Math.max(0, resDemand, comDemand, indDemand);
+
   const demandPace =
     maxPosDemand <= 0
       ? 0
-      : Math.min(1.45, Math.max(0.25, 0.32 + (maxPosDemand / 100) * 0.92));
+      : unlockBriskGrowth
+        ? Math.min(2.2, Math.max(0.25, 0.34 + (maxPosDemand / 100) * 1.15 + maxTaxBoom))
+        : Math.min(1.45, Math.max(0.25, 0.32 + (maxPosDemand / 100) * 0.92));
   const growthSpeed =
     (GROWTH_CONFIG.baseZoneChance + (infraCov + wellCov + entCov) * 0.011) *
     demandPace *
     eventMods.growthMult;
 
   const isEarlyHorizontalTown = state.totalPopulation < 1500;
-  const highDemandBonusAttempts = maxPosDemand >= 78 ? 2 : maxPosDemand >= 62 ? 1 : 0;
+  const highDemandBonusAttempts = unlockBriskGrowth
+    ? maxPosDemand >= 85
+      ? 3
+      : maxPosDemand >= 65
+        ? 2
+        : maxPosDemand >= 45
+          ? 1
+          : 0
+    : maxPosDemand >= 78
+      ? 2
+      : maxPosDemand >= 62
+        ? 1
+        : 0;
+  const mapScaleExtraAttempts =
+    unlockBriskGrowth && scoredBuildableSlots.length >= 16
+      ? Math.min(5, Math.floor(scoredBuildableSlots.length / 18) + (isLowTaxWave ? 1 : 0))
+      : 0;
   const zoneAttempts = Math.min(
     (isEarlyHorizontalTown ? GROWTH_CONFIG.evaluationsPerTick + 2 : GROWTH_CONFIG.evaluationsPerTick) +
-      highDemandBonusAttempts,
+      highDemandBonusAttempts +
+      mapScaleExtraAttempts,
     scoredBuildableSlots.length
   );
   const topPoolCap = Math.max(1, Math.min(scoredBuildableSlots.length, Math.max(8, Math.ceil(scoredBuildableSlots.length * 0.30))));
@@ -11078,6 +11170,7 @@ export function stepCityTick(state: CityState): void {
     if (!tile || (tile.type !== 'grass' && tile.type !== 'forest')) continue;
 
     // Prioritize closing interior block gaps so 12×12 Level-1 neighborhoods consolidate briskly while keeping multi-year economy balanced
+    const frontierBoost = unlockBriskGrowth && (maxPosDemand >= 75 || isLowTaxWave) ? 0.72 : 0.44;
     const infillBoost = isEarlyHorizontalTown
       ? slot.blockBuiltLots >= 2
         ? 1.72
@@ -11085,10 +11178,14 @@ export function stepCityTick(state: CityState): void {
           ? 1.42
           : 0.72
       : slot.blockBuiltLots >= 2
-        ? 1.15
+        ? unlockBriskGrowth
+          ? 1.28
+          : 1.15
         : slot.blockBuiltLots === 1 || slot.adjBuildings >= 2
-          ? 0.96
-          : 0.44;
+          ? unlockBriskGrowth
+            ? 1.05
+            : 0.96
+          : frontierBoost;
     if (nextRandom(state) > Math.min(0.92, growthSpeed * infillBoost)) continue;
 
     const adj = countAdjacentTypes(state, tile.x, tile.y);
@@ -11261,7 +11358,8 @@ export function stepCityTick(state: CityState): void {
           cand &&
             !cand.construction &&
             (cand.type === 'grass' || cand.type === 'forest') &&
-            !classifyPlannedRoadCell(state, cand.x, cand.y).isPlanned
+            !classifyPlannedRoadCell(state, cand.x, cand.y).isPlanned &&
+            !isNearRailCorridor(state, cand.x, cand.y, 1)
         );
 
       if (
@@ -11863,6 +11961,7 @@ export function stepCityTick(state: CityState): void {
           const canAbsorbNeighbor = (nb: Tile | null) => {
             if (!nb || nb.construction || nb.establishmentId) return false;
             if (classifyPlannedRoadCell(state, nb.x, nb.y).isPlanned) return false;
+            if (isNearRailCorridor(state, nb.x, nb.y, 1)) return false;
             if ((nb.lotWidth ?? 1) !== 1 || (nb.lotHeight ?? 1) !== 1) return false;
             if (nb.type === tile.type) return true;
             if (nb.type === 'abandoned' || nb.type === 'rural') return true;
@@ -12255,6 +12354,7 @@ export function closeFinancialMonth(state: CityState): void {
         !t.construction &&
         t.pollution < maxPol &&
         !classifyPlannedRoadCell(state, t.x, t.y).isPlanned &&
+        !isNearRailCorridor(state, t.x, t.y, 1) &&
         getOrthoNeighbors(state, t.x, t.y).some((nt) => nt.type === 'road')
       ) {
         slots.push(t);
@@ -12308,12 +12408,15 @@ export function closeFinancialMonth(state: CityState): void {
         (s) => getNeighborhoodDistrict(state, s.x, s.y) === sc.zone
       );
       const pool = preferredSlots.length > 0 ? preferredSlots : openSlots;
+      const scaleBonus = Math.min(6, Math.floor(state.totalPopulation / 7500));
       const arrivalCap =
-        sc.rate <= 4 && sc.demand >= 65
-          ? 3
-          : sc.rate <= 6 && sc.demand >= 52
-            ? 2
-            : 1;
+        sc.rate <= 2 && sc.demand >= 80
+          ? 4 + scaleBonus
+          : sc.rate <= 4 && sc.demand >= 65
+            ? 3 + Math.floor(scaleBonus * 0.65)
+            : sc.rate <= 6 && sc.demand >= 52
+              ? 2 + Math.floor(scaleBonus * 0.35)
+              : 1;
       const arrivals = Math.min(arrivalCap, pool.length);
       for (let i = 0; i < arrivals; i++) {
         const idx = Math.floor(nextRandom(state) * pool.length);
