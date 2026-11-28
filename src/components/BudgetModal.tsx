@@ -321,6 +321,20 @@ export function BudgetModal({
                 </span>
               </div>
 
+              <div className="flex items-center justify-between gap-2 text-[12px] tabular-nums leading-tight">
+                <span className="text-[#cfd9e8]">
+                  Fundo p/ obras:{' '}
+                  <strong className="text-[#66d98c]">
+                    ${Math.round(hud.investmentFunds?.[areaKey] ?? 0).toLocaleString('pt-BR')}
+                  </strong>
+                </span>
+                <span className={cov.coveragePct >= 100 ? 'text-[#66d98c]' : 'text-[#ff7b8a]'}>
+                  {cov.coveragePct >= 100
+                    ? '≥100%: financia obras aprovadas'
+                    : '<100%: obras desta área pausadas'}
+                </span>
+              </div>
+
               <div className="w-full h-2 bg-[#090d16] border border-[#2a3854] overflow-hidden relative">
                 <div
                   className="h-full"

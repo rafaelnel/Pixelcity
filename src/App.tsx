@@ -21,6 +21,7 @@ import { EmergenciesModal } from './components/EmergenciesModal';
 import { FinancesModal } from './components/FinancesModal';
 import { NavMenu, type NavBadgeSpec } from './components/NavMenu';
 import { NewsTicker } from './components/NewsTicker';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { PauseModal } from './components/PauseModal';
 import { ReportModal } from './components/ReportModal';
 import { ReturnMenuModal } from './components/ReturnMenuModal';
@@ -785,13 +786,9 @@ export default function App() {
         flushSounds(cityRef.current);
         if (actionId === 'incident_response') {
           setEmergencyFeedback(`${res.executedTitle ?? 'Intervenção'} concluída! Cidade estabilizada.`);
-        } else if (actionId === 'toll_plaza_project') {
-          setEmergencyFeedback(
-            `${res.executedTitle ?? 'Praça de Pedágio'} inaugurada na rodovia externa! Ajuste a tarifa em Finanças ou clicando no pedágio.`
-          );
         } else {
           setEmergencyFeedback(
-            `${res.executedTitle ?? 'Obra'} executada! Linha evoluída para Fase ${res.evolvedToTier ?? 2}.`
+            `${res.executedTitle ?? 'Evolução'} aprovada! O orçamento mensal da área foi ajustado e o jogo construirá automaticamente conforme os investimentos.`
           );
         }
         syncHud();
@@ -1555,9 +1552,10 @@ export default function App() {
   };
 
   const zoomPercent = Math.round(zoomUi * 100);
-  const criticalNeedsCount = hud.needs.filter((n) => n.severity === 'critical').length;
+  const rawCriticalNeeds = hud.needs.filter((n) => n.severity === 'critical');
+  const rawCriticalNeedsCount = rawCriticalNeeds.length;
 
-  const financesBadge: NavBadgeSpec | null =
+  const rawFinancesBadge: NavBadgeSpec | null =
     hud.financials.netBalance < 0
       ? {
           text: '!',
@@ -1579,9 +1577,8 @@ export default function App() {
   const readyMilestoneWorksCount = hud.emergencyOffers.filter(
     (o) =>
       o.id !== 'incident_response' &&
+      !o.fullyApproved &&
       o.unlocked &&
-      !o.inProgress &&
-      o.tier === 1 &&
       hud.money >= o.cost
   ).length;
   const claimableMissionsCount = (hud.mandateMissions ?? []).filter(
@@ -1589,7 +1586,7 @@ export default function App() {
   ).length;
   const totalReadyWorksOrMissions = readyMilestoneWorksCount + claimableMissionsCount;
 
-  const worksBadge: NavBadgeSpec | null = hud.activeUrbanIncident
+  const rawWorksBadge: NavBadgeSpec | null = hud.activeUrbanIncident
     ? {
         text: '!',
         ariaLabel: 'Imprevisto urbano ativo',
@@ -1611,6 +1608,78 @@ export default function App() {
             tone: 'ready',
           }
         : null;
+
+  // Auto-clear HUD badges, floating event strips, and milestone banners once seen on screen (no click required)
+  const [seenFinancesSig, setSeenFinancesSig] = useState<string>('');
+  const [seenWorksSig, setSeenWorksSig] = useState<string>('');
+  const [seenReportSig, setSeenReportSig] = useState<string>('');
+  const [seenUrbanEventId, setSeenUrbanEventId] = useState<string | null>(null);
+  const [seenEconEventId, setSeenEconEventId] = useState<string | null>(null);
+
+  const curFinancesSig = rawFinancesBadge
+    ? `${rawFinancesBadge.tone}:${rawFinancesBadge.ariaLabel}`
+    : '';
+  const curWorksSig = rawWorksBadge
+    ? `${rawWorksBadge.tone}:${rawWorksBadge.text}:${hud.recentMilestoneBanner?.id ?? ''}`
+    : '';
+  const curReportSig =
+    rawCriticalNeedsCount > 0
+      ? rawCriticalNeeds.map((n) => n.id).join(',')
+      : '';
+
+  useEffect(() => {
+    if (screenState !== 'playing' || !curFinancesSig || curFinancesSig === seenFinancesSig) return;
+    const t = window.setTimeout(() => setSeenFinancesSig(curFinancesSig), 5500);
+    return () => window.clearTimeout(t);
+  }, [screenState, curFinancesSig, seenFinancesSig]);
+
+  useEffect(() => {
+    if (screenState !== 'playing' || !curWorksSig || curWorksSig === seenWorksSig) return;
+    const t = window.setTimeout(() => setSeenWorksSig(curWorksSig), 5500);
+    return () => window.clearTimeout(t);
+  }, [screenState, curWorksSig, seenWorksSig]);
+
+  useEffect(() => {
+    if (screenState !== 'playing' || !curReportSig || curReportSig === seenReportSig) return;
+    const t = window.setTimeout(() => setSeenReportSig(curReportSig), 5500);
+    return () => window.clearTimeout(t);
+  }, [screenState, curReportSig, seenReportSig]);
+
+  useEffect(() => {
+    if (screenState !== 'playing' || activeModal !== null || !hud.recentMilestoneBanner) return;
+    const t = window.setTimeout(() => {
+      handleDismissMilestone();
+    }, 4500);
+    return () => window.clearTimeout(t);
+  }, [screenState, activeModal, hud.recentMilestoneBanner, handleDismissMilestone]);
+
+  const activeUrbanId = hud.activeUrbanIncident?.id ?? null;
+  const activeEconId = hud.activeEconomicEvent?.id ?? null;
+  useEffect(() => {
+    if (!activeUrbanId && seenUrbanEventId) setSeenUrbanEventId(null);
+  }, [activeUrbanId, seenUrbanEventId]);
+  useEffect(() => {
+    if (!activeEconId && seenEconEventId) setSeenEconEventId(null);
+  }, [activeEconId, seenEconEventId]);
+  useEffect(() => {
+    if (screenState !== 'playing' || activeModal !== null || !activeUrbanId || activeUrbanId === seenUrbanEventId) return;
+    const t = window.setTimeout(() => setSeenUrbanEventId(activeUrbanId), 6000);
+    return () => window.clearTimeout(t);
+  }, [screenState, activeModal, activeUrbanId, seenUrbanEventId]);
+  useEffect(() => {
+    if (screenState !== 'playing' || activeModal !== null || !activeEconId || activeEconId === seenEconEventId) return;
+    const t = window.setTimeout(() => setSeenEconEventId(activeEconId), 6000);
+    return () => window.clearTimeout(t);
+  }, [screenState, activeModal, activeEconId, seenEconEventId]);
+
+  const criticalNeedsCount =
+    curReportSig && curReportSig !== seenReportSig ? rawCriticalNeedsCount : 0;
+  const financesBadge =
+    curFinancesSig && curFinancesSig !== seenFinancesSig ? rawFinancesBadge : null;
+  const worksBadge =
+    curWorksSig && curWorksSig !== seenWorksSig ? rawWorksBadge : null;
+  const showUrbanStrip = Boolean(hud.activeUrbanIncident && activeUrbanId !== seenUrbanEventId);
+  const showEconStrip = Boolean(hud.activeEconomicEvent && activeEconId !== seenEconEventId);
 
   const initialOverlay = getAtmosphericGradientOverlay(
     timeOfDay,
@@ -1745,7 +1814,7 @@ export default function App() {
       ) : null}
 
       {/* Floating Active Random Events Strip (Economic Cycles & Urban Incidents) */}
-      {(hud.activeEconomicEvent || hud.activeUrbanIncident) &&
+      {(showUrbanStrip || showEconStrip) &&
       screenState === 'playing' &&
       activeModal === null ? (
         <div
@@ -1756,7 +1825,7 @@ export default function App() {
               : 'top-[82px] sm:top-[56px]'
           }`}
         >
-          {hud.activeUrbanIncident ? (
+          {showUrbanStrip && hud.activeUrbanIncident ? (
             <button
               type="button"
               data-testid="active-incident-badge"
@@ -1773,7 +1842,7 @@ export default function App() {
             </button>
           ) : null}
 
-          {hud.activeEconomicEvent ? (
+          {showEconStrip && hud.activeEconomicEvent ? (
             <button
               type="button"
               data-testid="active-economic-badge"
@@ -2437,6 +2506,8 @@ export default function App() {
           onCancel={() => setReturnMenuOpen(false)}
         />
       ) : null}
+
+      <OfflineIndicator />
     </div>
   );
 }

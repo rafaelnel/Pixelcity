@@ -15,6 +15,7 @@ import {
 } from '../game/cityEngine';
 import { DIFFICULTY_CONFIGS, DIFFICULTY_ORDER } from '../game/simulationConfig';
 import type { CityTrait, DifficultyLevel } from '../game/types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 type TitleView = 'menu' | 'new_game' | 'load_game';
 
@@ -157,6 +158,8 @@ export function TitleOverlay({
                   <span>Carregar Jogo ({savedGames.length})</span>
                 </button>
               ) : null}
+
+              <PWAInstallButton />
             </div>
           </>
         ) : null}

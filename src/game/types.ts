@@ -428,7 +428,7 @@ export interface CityBoost {
 
 export interface EmergencyOfferView {
   id: EmergencyActionId;
-  tier: number; // 1..4+
+  tier: number; // 1..4+ (next tier to approve, or maxTier when fully approved)
   tierLabel: string; // Fase I, Fase II, ...
   title: string;
   summary: string;
@@ -443,6 +443,22 @@ export interface EmergencyOfferView {
   inProgress?: boolean;
   remainingMonths?: number;
   totalMonths?: number;
+  /** Highest evolution tier already approved by the mayor (0 = none approved yet) */
+  approvedTier?: number;
+  /** Maximum evolution tiers in this line */
+  maxTier?: number;
+  /** True once all evolution tiers in this line have been approved (cannot be re-purchased) */
+  fullyApproved?: boolean;
+  /** Linked Budget/Investment area that funds automatic unit construction & scales monthly cost */
+  investmentArea?: BudgetAreaKey;
+  /** Monthly investment requirement increase added when this tier is approved */
+  monthlyNeedIncrease?: number;
+  /** Investment reserve cost deducted each time the city constructs a unit from this line */
+  unitInvestmentCost?: number;
+  /** Current accumulated balance in the linked investment fund */
+  investmentFundBalance?: number;
+  /** Current coverage percentage of the linked investment area (must be >= 100% to build) */
+  investmentCoveragePct?: number;
 }
 
 export interface LandExpansionStatus {
@@ -782,8 +798,12 @@ export interface CityState {
   breakthroughCharge: Record<BudgetAreaKey, number>;
   /** Total breakthroughs achieved per budget system */
   breakthroughCount: Record<BudgetAreaKey, number>;
-  /** Current evolutionary tier (1..4) of each emergency/work line */
+  /** Current evolutionary tier (1..4) of each emergency/work line physically built/next to construct */
   workTiers: Record<EmergencyActionId, number>;
+  /** Highest evolution tier approved once per line by the mayor (0 = none approved yet) */
+  approvedTiers?: Record<EmergencyActionId, number>;
+  /** Accumulated capital investment funds per budget segment used to auto-construct approved units */
+  investmentFunds?: Record<BudgetAreaKey, number>;
   stats: CityStats;
   trait: CityTrait;
   difficulty: DifficultyLevel;
@@ -857,6 +877,8 @@ export interface HudSnapshot {
   difficulty: DifficultyLevel;
   budgets: CityBudgets;
   budgetTargetsPct: Record<BudgetAreaKey, number>;
+  investmentFunds?: Record<BudgetAreaKey, number>;
+  approvedTiers?: Record<EmergencyActionId, number>;
   stats: CityStats;
   emergencyOffers: EmergencyOfferView[];
   landExpansions: LandExpansionStatus[];

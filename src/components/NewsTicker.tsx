@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { NewsItem } from '../game/types';
 
 interface NewsTickerProps {
@@ -8,6 +8,27 @@ interface NewsTickerProps {
 
 export function NewsTicker({ news }: NewsTickerProps) {
   const [offset, setOffset] = useState(0);
+  const [dismissedTopId, setDismissedTopId] = useState<number | null>(null);
+  const latestId = news[0]?.id ?? null;
+
+  useEffect(() => {
+    if (latestId !== null && latestId !== dismissedTopId) {
+      setOffset(0);
+    }
+  }, [latestId, dismissedTopId]);
+
+  useEffect(() => {
+    if (latestId === null || latestId === dismissedTopId || offset > 0) return;
+    const timer = window.setTimeout(() => {
+      setDismissedTopId(latestId);
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [latestId, dismissedTopId, offset]);
+
+  if (!latestId || (latestId === dismissedTopId && offset === 0)) {
+    return null;
+  }
+
   const safeIdx = news.length > 0 ? Math.min(offset, news.length - 1) : 0;
   const current = news[safeIdx];
 

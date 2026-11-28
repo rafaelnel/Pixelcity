@@ -1132,6 +1132,29 @@ function createInitialWorkTiers(): Record<EmergencyActionId, number> {
   };
 }
 
+function createInitialApprovedTiers(): Record<EmergencyActionId, number> {
+  return {
+    sports_center_project: 0,
+    clean_energy_project: 0,
+    bus_transit_project: 0,
+    hospital_project: 0,
+    metro_transit_project: 0,
+    port_evolution: 0,
+    airport_evolution: 0,
+    tech_university_project: 0,
+    shopping_evolution: 0,
+    amusement_park_project: 0,
+    rail_freight_project: 0,
+    toll_plaza_project: 0,
+    environmental_cleanup: 0,
+    revitalization: 0,
+    tourism_festival: 0,
+    emergency_roadworks: 0,
+    landmark_project: 0,
+    incident_response: 0,
+  };
+}
+
 function createInitialTollPlaza(): TollPlazaState {
   return {
     built: false,
@@ -1435,6 +1458,26 @@ export function isRailCorridorTile(state: CityState, tx: number, ty: number): bo
   const rc = state.railCorridor;
   if (!rc) return false;
   return rc.axis === 'ns' ? tx === rc.lineCoord : ty === rc.lineCoord;
+}
+
+/**
+ * Check if `(tx, ty)` lies within `margin` blocks (Chebyshev distance, default 1) of the active
+ * cross-map railway corridor outside the Train Station itself, enforcing a >=1-block buffer
+ * between railway tracks and all other buildings.
+ */
+export function isNearRailCorridor(
+  state: CityState,
+  tx: number,
+  ty: number,
+  margin: number = 1
+): boolean {
+  const rc = state.railCorridor;
+  if (!rc) return false;
+  const crossDist = rc.axis === 'ns' ? Math.abs(tx - rc.lineCoord) : Math.abs(ty - rc.lineCoord);
+  if (crossDist > margin) return false;
+  const tile = getTile(state, tx, ty);
+  if (tile?.type === 'rail_terminal') return false;
+  return true;
 }
 
 /**
@@ -1813,6 +1856,8 @@ export function createNewCity(
     breakthroughCharge: createZeroAreaRecord(),
     breakthroughCount: createZeroAreaRecord(),
     workTiers: createInitialWorkTiers(),
+    approvedTiers: createInitialApprovedTiers(),
+    investmentFunds: createZeroAreaRecord(),
     stats: createEmptyCityStats(budgets),
     trait,
     difficulty,
@@ -2678,13 +2723,15 @@ export function ensureTileConnectedToMainRoad(
       const stepCost =
         nb.type === 'road' || nb.type === 'bridge'
           ? 0.2
-          : nb.type === 'grass' || nb.type === 'forest'
-            ? 1.0
-            : nb.type === 'abandoned'
-              ? 1.5
-              : (nb.level || 1) <= 1 && !nb.establishmentId
-                ? 4.0
-                : 18.0;
+          : nb.type === 'rail_track' || isRailCorridorTile(state, nb.x, nb.y)
+            ? 6.5
+            : nb.type === 'grass' || nb.type === 'forest'
+              ? 1.0
+              : nb.type === 'abandoned'
+                ? 1.5
+                : (nb.level || 1) <= 1 && !nb.establishmentId
+                  ? 4.0
+                  : 18.0;
       if (stepCost < dist[nIdx]) {
         dist[nIdx] = stepCost;
         parent[nIdx] = -2; // seed adjacent to targetTiles
@@ -2728,6 +2775,8 @@ export function ensureTileConnectedToMainRoad(
       let stepCost = 1.0;
       if (mainSet.has(nIdx) || isRoadLike(nt.type)) {
         stepCost = 0.2;
+      } else if (nt.type === 'rail_track' || isRailCorridorTile(state, nx, ny)) {
+        stepCost = 6.5;
       } else if (nt.type === 'grass' || nt.type === 'forest') {
         const plan = classifyPlannedRoadCell(state, nx, ny);
         stepCost = plan.isPlanned ? 0.65 : 1.15;
@@ -3556,7 +3605,7 @@ export function tryPlaceEstablishmentFootprint(
               qt.type === 'water' ||
               qt.type === 'bridge' ||
               qt.type === 'rail_track' ||
-              isRailCorridorTile(state, qt.x, qt.y) ||
+              isNearRailCorridor(state, qt.x, qt.y, 1) ||
               isLandmarkType(qt.type)
             ) {
               valid = false;
@@ -4350,6 +4399,8 @@ export function placeLandmarkOnBestSlot(
                 qt.construction ||
                 qt.type === 'water' ||
                 qt.type === 'bridge' ||
+                qt.type === 'rail_track' ||
+                isNearRailCorridor(state, qt.x, qt.y, 1) ||
                 isLandmarkType(qt.type) ||
                 qt.establishmentId
               ) {
@@ -4897,30 +4948,65 @@ export function recomputeFieldsAndStats(
   // - Difícil (needMult 1.22, taxRev 0.86): 100% across all 6 segments runs a deficit, requiring trade-offs
   const econUnit = (resBaseTax + comBaseTax + indBaseTax) * 0.1;
 
+  // Approved structural evolutions permanently increase monthly investment need of their linked area
+  const approvedNeedSurcharge = createZeroAreaRecord();
+  for (const line of EMERGENCY_LINES) {
+    const approvedTier = state.approvedTiers?.[line.id] ?? 0;
+    if (approvedTier <= 0) continue;
+    for (const tierSpec of line.tiers) {
+      if (tierSpec.tier <= approvedTier) {
+        approvedNeedSurcharge[line.investmentArea] += tierSpec.monthlyNeedIncrease;
+      }
+    }
+  }
+
   const computeNeeded = (avgPolEstimate: number): Record<BudgetAreaKey, number> => ({
     infrastructure: roundTo10(
-      (50 + (roads + bridges * 3) * 4 + lv3 * 70 + (ports + airports) * 110 + econUnit * 1.50) *
+      (50 +
+        (roads + bridges * 3) * 4 +
+        lv3 * 70 +
+        (ports + airports) * 110 +
+        econUnit * 1.50 +
+        approvedNeedSurcharge.infrastructure) *
         needMult,
       Math.max(80, Math.round(140 * needMult))
     ),
     education: roundTo10(
-      (50 + pop * 0.16 + econUnit * 1.56) * needMult,
+      (50 + pop * 0.16 + econUnit * 1.56 + approvedNeedSurcharge.education) * needMult,
       Math.max(80, Math.round(140 * needMult))
     ),
     security: roundTo10(
-      (50 + pop * 0.14 + abn * 150 + econUnit * 1.50) * needMult,
+      (50 + pop * 0.14 + abn * 150 + econUnit * 1.50 + approvedNeedSurcharge.security) * needMult,
       Math.max(80, Math.round(140 * needMult))
     ),
     wellbeing: roundTo10(
-      (50 + pop * 0.15 + ind * 75 + avgPolEstimate * 10 + econUnit * 1.52) * needMult,
+      (50 +
+        pop * 0.15 +
+        ind * 75 +
+        avgPolEstimate * 10 +
+        econUnit * 1.52 +
+        approvedNeedSurcharge.wellbeing) *
+        needMult,
       Math.max(80, Math.round(140 * needMult))
     ),
     entertainment: roundTo10(
-      (45 + pop * 0.11 + com * 28 + stadiums * 85 + econUnit * 1.30) * needMult,
+      (45 +
+        pop * 0.11 +
+        com * 28 +
+        stadiums * 85 +
+        econUnit * 1.30 +
+        approvedNeedSurcharge.entertainment) *
+        needMult,
       Math.max(70, Math.round(120 * needMult))
     ),
     tourism: roundTo10(
-      (40 + com * 22 + park * 22 + totalLandmarks * 65 + econUnit * 1.12) * needMult,
+      (40 +
+        com * 22 +
+        park * 22 +
+        totalLandmarks * 65 +
+        econUnit * 1.12 +
+        approvedNeedSurcharge.tourism) *
+        needMult,
       Math.max(60, Math.round(100 * needMult))
     ),
   });
@@ -6378,52 +6464,45 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
     });
   }
 
-  const structuralOffers: Array<{ offer: EmergencyOfferView; alreadyBuiltOneOff: boolean }> = [];
+  const structuralOffers: Array<{ offer: EmergencyOfferView; fullyApproved: boolean }> = [];
 
   for (const line of EMERGENCY_LINES) {
-    const curTier = Math.max(1, Math.min(line.tiers.length, state.workTiers[line.id] ?? 1));
-    const spec = line.tiers[curTier - 1];
-    const nextSpec = line.tiers[curTier];
+    const maxTier = line.tiers.length;
+    const approvedTier = Math.max(0, Math.min(maxTier, state.approvedTiers?.[line.id] ?? 0));
+    const fullyApproved = approvedTier >= maxTier;
+    const offerTier = fullyApproved ? maxTier : approvedTier + 1;
+    const spec = line.tiers[offerTier - 1];
+    const nextSpec = line.tiers[offerTier];
     const cost = roundTo10((spec.baseCost + rev * spec.revScalePct) * costMult, 100);
-    // Stadium rule: 1 stadium per 100,000 inhabitants (1st stadium unlocks at 20k for the initial 0..100k bracket;
-    // each subsequent stadium at Tier 3 requires state.stats.stadiumCount * 100,000 inhabitants!)
-    const isRepeatableStadiumTier = line.id === 'landmark_project' && curTier >= 3;
-    const minPop = isRepeatableStadiumTier
-      ? Math.max(
-          STADIUM_POPULATION_INTERVAL,
-          state.stats.stadiumCount * STADIUM_POPULATION_INTERVAL
-        )
-      : (spec.minPopulation ?? 0);
-    const alreadyBuiltToll = line.id === 'toll_plaza_project' && Boolean(state.tollPlaza?.built);
+    const minPop = spec.minPopulation ?? 0;
     const activeWork = (state.pendingWorks ?? []).find((w) => w.actionId === line.id);
     const inProgress = Boolean(activeWork);
-    const stadiumQuotaReached =
-      isRepeatableStadiumTier &&
-      state.stats.stadiumCount >= getMaxStadiumsForPopulation(state.totalPopulation);
-    const unlocked =
-      !alreadyBuiltToll &&
-      !inProgress &&
-      !stadiumQuotaReached &&
-      state.totalPopulation >= minPop;
+    const area = line.investmentArea;
+    const covArea = state.stats.coverage[area];
+    const fundBal = Math.round(state.investmentFunds?.[area] ?? 0);
+    const covPct = covArea?.coveragePct ?? 100;
+    const unlocked = !fullyApproved && state.totalPopulation >= minPop;
+
+    const areaLabel = BUDGET_AREA_META[area].label;
+    const needInc = spec.monthlyNeedIncrease;
+    const unitInvCost = spec.unitInvestmentCost;
 
     structuralOffers.push({
-      alreadyBuiltOneOff: alreadyBuiltToll,
+      fullyApproved,
       offer: {
         id: line.id,
-        tier: activeWork ? activeWork.tier : curTier,
-        tierLabel: alreadyBuiltToll ? 'Construído' : inProgress ? 'Em Obra' : spec.tierLabel,
-        title: activeWork ? activeWork.title : spec.title,
+        tier: offerTier,
+        tierLabel: fullyApproved ? `Aprovado (${maxTier}/${maxTier})` : spec.tierLabel,
+        title: spec.title,
         summary: spec.summary,
         effectHint: spec.effectHint,
-        nextEvolutionHint: alreadyBuiltToll
-          ? 'Praça de Pedágio ativa na rodovia externa — ajuste a tarifa em Finanças ou clicando no pedágio.'
+        nextEvolutionHint: fullyApproved
+          ? line.id === 'toll_plaza_project'
+            ? 'Aprovado em definitivo — Praça de Pedágio operada pelo orçamento de Infraestrutura.'
+            : `Todas as evoluções aprovadas! Novas unidades constroem automaticamente pelo fundo de ${areaLabel}.`
           : nextSpec
-            ? `Próxima evolução: ${nextSpec.tierLabel} — ${nextSpec.title}`
-            : line.id === 'toll_plaza_project'
-              ? 'Obra única na rodovia de entrada · Tarifa ajustável (Baixa / Média / Alta)'
-              : isRepeatableStadiumTier
-                ? `Regra de Estádio: 1 a cada 100.000 hab. (Atual: ${state.stats.stadiumCount} · Próximo marco: ${minPop.toLocaleString('pt-BR')} hab.)`
-                : 'Nível máximo atingido (obra repetível de alto impacto)',
+            ? `Próxima evolução aprovável: ${nextSpec.tierLabel} — ${nextSpec.title} (+$${nextSpec.monthlyNeedIncrease}/mês em ${areaLabel})`
+            : `Última evolução desta linha (+$${needInc}/mês em ${areaLabel} · $${unitInvCost.toLocaleString('pt-BR')}/obra do fundo)`,
         cost,
         durationMonths: activeWork ? activeWork.totalMonths : spec.durationMonths,
         accentColor: line.accentColor,
@@ -6432,25 +6511,29 @@ export function getEmergencyOffers(state: CityState): EmergencyOfferView[] {
         inProgress,
         remainingMonths: activeWork?.remainingMonths,
         totalMonths: activeWork?.totalMonths,
-        lockReason: alreadyBuiltToll
-          ? 'Pedágio já construído (ajuste a tarifa em Finanças)'
-          : activeWork
-            ? `Obra em andamento (${activeWork.remainingMonths} ${activeWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'})`
-            : unlocked
-              ? undefined
-              : isRepeatableStadiumTier
-                ? `Requer ${minPop.toLocaleString('pt-BR')} hab. (1 estádio a cada 100 mil hab.)`
-                : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
+        approvedTier,
+        maxTier,
+        fullyApproved,
+        investmentArea: area,
+        monthlyNeedIncrease: needInc,
+        unitInvestmentCost: unitInvCost,
+        investmentFundBalance: fundBal,
+        investmentCoveragePct: covPct,
+        lockReason: fullyApproved
+          ? 'Evolução máxima já aprovada (compra única concluída)'
+          : unlocked
+            ? undefined
+            : `Requer ${minPop.toLocaleString('pt-BR')} habitantes`,
       },
     });
   }
 
   // Sort structural works & milestones by First Necessity ("ordem de primeira necessidade"):
-  // 1) Active works in progress or ready/upcoming works ordered by lowest population requirement (minPopulation ascending), then lowest cost
-  // 2) Already-completed one-off works (e.g. built Toll Plaza) at the very end
+  // 1) Active/approvable works ordered by lowest population requirement (minPopulation ascending), then lowest cost
+  // 2) Fully-approved lines at the bottom
   structuralOffers.sort((a, b) => {
-    if (a.alreadyBuiltOneOff !== b.alreadyBuiltOneOff) {
-      return a.alreadyBuiltOneOff ? 1 : -1;
+    if (a.fullyApproved !== b.fullyApproved) {
+      return a.fullyApproved ? 1 : -1;
     }
     if (Boolean(a.offer.inProgress) !== Boolean(b.offer.inProgress)) {
       return a.offer.inProgress ? -1 : 1;
@@ -7127,7 +7210,8 @@ function findBestEstablishmentRect(
   establishmentId: EstablishmentId,
   forceOverwriteLowLevel: boolean = true,
   customFw?: number,
-  customFh?: number
+  customFh?: number,
+  allowExpand: boolean = true
 ): { x: number; y: number; fw: number; fh: number } | null {
   const spec = ESTABLISHMENT_MAP[establishmentId];
   if (!spec) return null;
@@ -7199,7 +7283,7 @@ function findBestEstablishmentRect(
                 t.type === 'water' ||
                 t.type === 'bridge' ||
                 t.type === 'rail_track' ||
-                isRailCorridorTile(state, t.x, t.y) ||
+                isNearRailCorridor(state, t.x, t.y, 1) ||
                 isLandmarkType(t.type) ||
                 isTransitStationType(t.type)
               ) {
@@ -7277,26 +7361,28 @@ function findBestEstablishmentRect(
 
   // If the current map is too small to satisfy the >= 32-block spacing from an existing compound,
   // expand the frontier away from existing instances (just like Airport & Shopping reservations)
-  for (let expAttempt = 0; expAttempt < 3 && !found; expAttempt++) {
-    const offers = getLandExpansions(state).filter((o) => o.canExpand);
-    if (offers.length === 0) break;
-    const anchors = getExistingMajorAnchors();
-    const refX = anchors.length > 0 ? anchors[0].x : state.gridWidth / 2;
-    const refY = anchors.length > 0 ? anchors[0].y : state.gridHeight / 2;
-    const prefDirs: ExpandDirection[] = [
-      refX <= state.gridWidth / 2 ? 'leste' : 'oeste',
-      refY <= state.gridHeight / 2 ? 'sul' : 'norte',
-      'leste',
-      'sul',
-      'oeste',
-      'norte',
-    ];
-    const chosenOffer =
-      prefDirs.map((d) => offers.find((o) => o.direction === d)).find(Boolean) ?? offers[0];
-    if (!chosenOffer) break;
-    state.money += chosenOffer.cost;
-    expandCityLand(state, chosenOffer.direction);
-    found = searchMap(true) ?? searchMap(false);
+  if (allowExpand) {
+    for (let expAttempt = 0; expAttempt < 3 && !found; expAttempt++) {
+      const offers = getLandExpansions(state).filter((o) => o.canExpand);
+      if (offers.length === 0) break;
+      const anchors = getExistingMajorAnchors();
+      const refX = anchors.length > 0 ? anchors[0].x : state.gridWidth / 2;
+      const refY = anchors.length > 0 ? anchors[0].y : state.gridHeight / 2;
+      const prefDirs: ExpandDirection[] = [
+        refX <= state.gridWidth / 2 ? 'leste' : 'oeste',
+        refY <= state.gridHeight / 2 ? 'sul' : 'norte',
+        'leste',
+        'sul',
+        'oeste',
+        'norte',
+      ];
+      const chosenOffer =
+        prefDirs.map((d) => offers.find((o) => o.direction === d)).find(Boolean) ?? offers[0];
+      if (!chosenOffer) break;
+      state.money += chosenOffer.cost;
+      expandCityLand(state, chosenOffer.direction);
+      found = searchMap(true) ?? searchMap(false);
+    }
   }
 
   return found;
@@ -7426,6 +7512,8 @@ function findBestAirportReservationRect(
               qt.construction ||
               qt.type === 'water' ||
               qt.type === 'bridge' ||
+              qt.type === 'rail_track' ||
+              isNearRailCorridor(state, qt.x, qt.y, 1) ||
               qt.type === 'port' ||
               qt.type === 'stadium'
             ) {
@@ -7526,17 +7614,33 @@ function findBestAirportReservationRect(
 
 function findBestShoppingReservationRect(
   state: CityState,
-  targetLevel: number
+  targetLevel: number,
+  allowAdditionalUnit: boolean = false,
+  allowExpand: boolean = true
 ): { x: number; y: number; fw: number; fh: number; existingAnchor: Tile | null } | null {
   const clampedLevel = Math.max(1, Math.min(3, targetLevel)) as 1 | 2 | 3;
   const { w, h } = SHOPPING_FOOTPRINT_BY_LEVEL[clampedLevel];
   const cx = typeof state.roadOriginX === 'number' ? state.roadOriginX : state.gridWidth / 2;
   const cy = typeof state.roadOriginY === 'number' ? state.roadOriginY : state.gridHeight / 2;
   const existingShoppingTiles = state.tiles.filter((t) => t.type === 'shopping');
-  const existingAnchor =
-    existingShoppingTiles.find((t) => t.lotRole === 'anchor') ?? existingShoppingTiles[0] ?? null;
+  const existingAnchor = allowAdditionalUnit
+    ? null
+    : existingShoppingTiles.find((t) => t.lotRole === 'anchor') ?? existingShoppingTiles[0] ?? null;
+
+  const existingAnchors: Array<{ x: number; y: number }> = [];
+  if (allowAdditionalUnit) {
+    for (const t of existingShoppingTiles) {
+      if (t.lotRole !== 'part') existingAnchors.push({ x: t.x, y: t.y });
+    }
+    for (const pw of state.pendingWorks ?? []) {
+      if (pw.actionId === 'shopping_evolution' && typeof pw.anchorX === 'number' && typeof pw.anchorY === 'number') {
+        existingAnchors.push({ x: pw.anchorX, y: pw.anchorY });
+      }
+    }
+  }
 
   if (
+    !allowAdditionalUnit &&
     existingAnchor &&
     (existingAnchor.lotWidth ?? 1) >= w &&
     (existingAnchor.lotHeight ?? 1) >= h &&
@@ -7558,6 +7662,9 @@ function findBestShoppingReservationRect(
     const maxY = state.gridHeight - h - 1;
     for (let y = 1; y <= maxY; y++) {
       for (let x = 1; x <= maxX; x++) {
+        if (allowAdditionalUnit && existingAnchors.some((a) => Math.hypot(a.x - x, a.y - y) < 32)) {
+          continue;
+        }
         let valid = true;
         let overlapShopping = 0;
         let demolishedBuildings = 0;
@@ -7573,10 +7680,11 @@ function findBestShoppingReservationRect(
               qt.type === 'water' ||
               qt.type === 'bridge' ||
               qt.type === 'rail_track' ||
-              isRailCorridorTile(state, qt.x, qt.y) ||
+              isNearRailCorridor(state, qt.x, qt.y, 1) ||
               qt.type === 'port' ||
               qt.type === 'airport' ||
               qt.type === 'stadium' ||
+              (allowAdditionalUnit && qt.type === 'shopping') ||
               isExternalBorderRoadTile(state, qt.x, qt.y) ||
               isTollPlazaTile(state, qt.x, qt.y)
             ) {
@@ -7647,16 +7755,18 @@ function findBestShoppingReservationRect(
   };
 
   let candidates = searchRects();
-  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
-    const offers = getLandExpansions(state);
-    const chosenOffer = offers.find((o) => o.canExpand);
-    if (!chosenOffer) break;
-    state.money += chosenOffer.cost;
-    expandCityLand(state, chosenOffer.direction);
-    candidates = searchRects();
+  if (allowExpand) {
+    for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
+      const offers = getLandExpansions(state);
+      const chosenOffer = offers.find((o) => o.canExpand);
+      if (!chosenOffer) break;
+      state.money += chosenOffer.cost;
+      expandCityLand(state, chosenOffer.direction);
+      candidates = searchRects();
+    }
   }
   if (candidates.length === 0) {
-    return existingAnchor
+    return !allowAdditionalUnit && existingAnchor
       ? {
           x: existingAnchor.x,
           y: existingAnchor.y,
@@ -7674,11 +7784,25 @@ function findBestCustomCompoundReservationRect(
   state: CityState,
   targetType: 'clean_energy' | 'rail_terminal',
   w: number,
-  h: number
+  h: number,
+  allowAdditionalUnit: boolean = false,
+  allowExpand: boolean = true
 ): { x: number; y: number; fw: number; fh: number; existingAnchor: Tile | null } | null {
   const existingTiles = state.tiles.filter((t) => t.type === targetType);
-  const existingAnchor =
-    existingTiles.find((t) => t.lotRole !== 'part') ?? existingTiles[0] ?? null;
+  const existingAnchor = allowAdditionalUnit
+    ? null
+    : existingTiles.find((t) => t.lotRole !== 'part') ?? existingTiles[0] ?? null;
+  const existingAnchors: Array<{ x: number; y: number }> = [];
+  if (allowAdditionalUnit) {
+    for (const t of existingTiles) {
+      if (t.lotRole !== 'part') existingAnchors.push({ x: t.x, y: t.y });
+    }
+    for (const pw of state.pendingWorks ?? []) {
+      if (pw.targetType === targetType && typeof pw.anchorX === 'number' && typeof pw.anchorY === 'number') {
+        existingAnchors.push({ x: pw.anchorX, y: pw.anchorY });
+      }
+    }
+  }
   const cx = state.roadOriginX ?? Math.floor(state.gridWidth / 2);
   const cy = state.roadOriginY ?? Math.floor(state.gridHeight / 2);
   const mainRoadSet = getMainConnectedRoadSet(state);
@@ -7689,6 +7813,9 @@ function findBestCustomCompoundReservationRect(
     const maxY = state.gridHeight - h - 1;
     for (let y = 1; y <= maxY; y++) {
       for (let x = 1; x <= maxX; x++) {
+        if (allowAdditionalUnit && existingAnchors.some((a) => Math.hypot(a.x - x, a.y - y) < 32)) {
+          continue;
+        }
         let valid = true;
         let overlapSame = 0;
         let demolishedBuildings = 0;
@@ -7703,8 +7830,8 @@ function findBestCustomCompoundReservationRect(
               qt.construction ||
               qt.type === 'water' ||
               qt.type === 'bridge' ||
-              (targetType !== 'rail_terminal' && (qt.type === 'rail_track' || isRailCorridorTile(state, qt.x, qt.y))) ||
-              (isLandmarkType(qt.type) && qt.type !== targetType) ||
+              (targetType !== 'rail_terminal' && (qt.type === 'rail_track' || isNearRailCorridor(state, qt.x, qt.y, 1))) ||
+              (isLandmarkType(qt.type) && (allowAdditionalUnit || qt.type !== targetType)) ||
               isExternalBorderRoadTile(state, qt.x, qt.y) ||
               isTollPlazaTile(state, qt.x, qt.y)
             ) {
@@ -7781,16 +7908,18 @@ function findBestCustomCompoundReservationRect(
   };
 
   let candidates = searchRects();
-  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
-    const offers = getLandExpansions(state);
-    const chosenOffer = offers.find((o) => o.canExpand);
-    if (!chosenOffer) break;
-    state.money += chosenOffer.cost;
-    expandCityLand(state, chosenOffer.direction);
-    candidates = searchRects();
+  if (allowExpand) {
+    for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
+      const offers = getLandExpansions(state);
+      const chosenOffer = offers.find((o) => o.canExpand);
+      if (!chosenOffer) break;
+      state.money += chosenOffer.cost;
+      expandCityLand(state, chosenOffer.direction);
+      candidates = searchRects();
+    }
   }
   if (candidates.length === 0) {
-    return existingAnchor
+    return !allowAdditionalUnit && existingAnchor
       ? {
           x: existingAnchor.x,
           y: existingAnchor.y,
@@ -7837,8 +7966,84 @@ function findBestRailTerminalReservationRect(
       ? ['ew', 'ns']
       : ['ns', 'ew'];
 
+  const isStructuralForRailClearance = (t: Tile | null | undefined): boolean =>
+    Boolean(
+      t &&
+        t.type !== 'rail_terminal' &&
+        (isBuildingType(t.type) ||
+          isLandmarkType(t.type) ||
+          isTransitStationType(t.type) ||
+          Boolean(t.construction))
+    );
+
+  // Compute urban bounding box & center of existing buildings so a new railway skirts the OUTER
+  // perimeter of the city (never cutting through downtown) with >= 1 block clearance from all buildings!
+  const computeUrbanBounds = () => {
+    let minBx = Infinity;
+    let maxBx = -Infinity;
+    let minBy = Infinity;
+    let maxBy = -Infinity;
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    for (const t of state.tiles) {
+      if (isStructuralForRailClearance(t)) {
+        if (t.x < minBx) minBx = t.x;
+        if (t.x > maxBx) maxBx = t.x;
+        if (t.y < minBy) minBy = t.y;
+        if (t.y > maxBy) maxBy = t.y;
+        sumX += t.x;
+        sumY += t.y;
+        count++;
+      }
+    }
+    const cx = count > 0 ? sumX / count : (state.roadOriginX ?? Math.floor(state.gridWidth / 2));
+    const cy = count > 0 ? sumY / count : (state.roadOriginY ?? Math.floor(state.gridHeight / 2));
+    return {
+      hasBuildings: count > 0,
+      minBx: count > 0 ? minBx : Math.floor(cx),
+      maxBx: count > 0 ? maxBx : Math.floor(cx),
+      minBy: count > 0 ? minBy : Math.floor(cy),
+      maxBy: count > 0 ? maxBy : Math.floor(cy),
+      urbanCx: cx,
+      urbanCy: cy,
+    };
+  };
+
   const searchCorridorAndStation = () => {
     const mainRoadSet = getMainConnectedRoadSet(state);
+    const bounds = computeUrbanBounds();
+    const gw = state.gridWidth;
+    const gh = state.gridHeight;
+    // BFS over non-water, non-landmark tiles from mainRoadSet so the Train Station is guaranteed
+    // to be reachable by road (never stranded across an unbridged river from the city!)
+    const dryReachable = new Uint8Array(gw * gh);
+    const bfsQueue: number[] = [];
+    for (const idx of mainRoadSet) {
+      if (idx >= 0 && idx < dryReachable.length && !dryReachable[idx]) {
+        dryReachable[idx] = 1;
+        bfsQueue.push(idx);
+      }
+    }
+    let bfsHead = 0;
+    while (bfsHead < bfsQueue.length) {
+      const cur = bfsQueue[bfsHead++];
+      const cx = cur % gw;
+      const cy = Math.floor(cur / gw);
+      for (const [dx, dy] of ORTHO_DIRS) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+        const nIdx = ny * gw + nx;
+        if (dryReachable[nIdx]) continue;
+        const nt = state.tiles[nIdx];
+        if (!nt || nt.type === 'water' || (isLandmarkType(nt.type) && nt.type !== 'rail_terminal')) {
+          continue;
+        }
+        dryReachable[nIdx] = 1;
+        bfsQueue.push(nIdx);
+      }
+    }
     const out: Array<{
       x: number;
       y: number;
@@ -7846,6 +8051,7 @@ function findBestRailTerminalReservationRect(
       fh: number;
       axis: 'ns' | 'ew';
       lineCoord: number;
+      priorityTier: number;
       score: number;
     }> = [];
 
@@ -7867,11 +8073,18 @@ function findBestRailTerminalReservationRect(
         }
       }
 
+      const cityMinCross = axis === 'ns' ? bounds.minBx : bounds.minBy;
+      const cityMaxCross = axis === 'ns' ? bounds.maxBx : bounds.maxBy;
+      const urbanMidAlong = axis === 'ns' ? bounds.urbanCy : bounds.urbanCx;
+
       for (const lineCoord of lineCandidates) {
-        // Validate the entire edge-to-edge corridor along lineCoord
+        // Validate the entire edge-to-edge corridor along lineCoord AND its 1-block setback buffer!
         let corridorBlocked = false;
-        let corridorDemolitions = 0;
+        let corridorBuildingHits = 0;
+        let corridorAdjacentBuildings = 0;
         let corridorWaterCrossings = 0;
+        let corridorRoadCrossings = 0;
+
         for (let c = 0; c < alongSpan; c++) {
           const tx = axis === 'ns' ? lineCoord : c;
           const ty = axis === 'ns' ? c : lineCoord;
@@ -7890,11 +8103,36 @@ function findBestRailTerminalReservationRect(
             break;
           }
           if (qt.type === 'water') corridorWaterCrossings++;
-          else if (isBuildingType(qt.type) && qt.type !== 'rail_terminal') {
-            corridorDemolitions += qt.establishmentId ? 5 : qt.level >= 3 ? 3 : 1;
+          else if (qt.type === 'road' || qt.type === 'bridge') corridorRoadCrossings++;
+          else if (isStructuralForRailClearance(qt)) {
+            corridorBuildingHits += qt.establishmentId ? 4 : qt.level >= 3 ? 2 : 1;
+          }
+
+          // Check 1-block flanking buffer on BOTH sides of the track (ensures >= 1 empty block clearance)
+          for (const sideOff of [-1, 1] as const) {
+            const bx = axis === 'ns' ? lineCoord + sideOff : c;
+            const by = axis === 'ns' ? c : lineCoord + sideOff;
+            const nb = getTile(state, bx, by);
+            if (isStructuralForRailClearance(nb)) {
+              corridorAdjacentBuildings++;
+            }
           }
         }
         if (corridorBlocked) continue;
+
+        // Does this corridor cut across the middle of the built city, or skirt outside its perimeter?
+        const cutsThroughCity =
+          bounds.hasBuildings &&
+          lineCoord >= cityMinCross - 1 &&
+          lineCoord <= cityMaxCross + 1;
+        const outsideDist = !bounds.hasBuildings
+          ? 3
+          : lineCoord < cityMinCross
+            ? cityMinCross - lineCoord
+            : lineCoord > cityMaxCross
+              ? lineCoord - cityMaxCross
+              : 0;
+        const hasRoomForTier2 = lineCoord >= 3 && lineCoord <= crossSpan - 4;
 
         // Station cross-offset so lineCoord always runs directly through the station tracks:
         // Lv.1 (width 2): lineCoord is dx=1 (anchor = lineCoord - 1)
@@ -7929,7 +8167,7 @@ function findBestRailTerminalReservationRect(
               }
               if (qt.type === 'rail_terminal') overlapStation++;
               else if (qt.type === 'road') demolishedRoads++;
-              else if (isBuildingType(qt.type)) {
+              else if (isStructuralForRailClearance(qt)) {
                 demolishedBuildings++;
                 if (qt.level >= 3 || qt.establishmentId) demolishedHighLv++;
               }
@@ -7937,66 +8175,146 @@ function findBestRailTerminalReservationRect(
           }
           if (!valid) continue;
 
+          // Check 1-block setback ring around the Train Station footprint itself
+          let stationBufferBuildings = 0;
+          for (let py = sy - 1; py <= sy + fh; py++) {
+            for (let px = sx - 1; px <= sx + fw; px++) {
+              if (px >= sx && px < sx + fw && py >= sy && py < sy + fh) continue;
+              if (isStructuralForRailClearance(getTile(state, px, py))) {
+                stationBufferBuildings++;
+              }
+            }
+          }
+
           let touchesMainRoad = false;
           let touchesAnyRoad = false;
+          let roadReachable = mainRoadSet.size === 0;
           for (let dx = 0; dx < fw; dx++) {
-            for (const nb of [getTile(state, sx + dx, sy - 1), getTile(state, sx + dx, sy + fh)]) {
-              if (nb && isRoadLike(nb.type)) {
-                touchesAnyRoad = true;
-                if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+            for (const py of [sy - 1, sy + fh]) {
+              const nb = getTile(state, sx + dx, py);
+              if (nb) {
+                if (dryReachable[nb.y * gw + nb.x]) roadReachable = true;
+                if (isRoadLike(nb.type)) {
+                  touchesAnyRoad = true;
+                  if (mainRoadSet.has(nb.y * gw + nb.x)) touchesMainRoad = true;
+                }
               }
             }
           }
           for (let dy = 0; dy < fh; dy++) {
-            for (const nb of [getTile(state, sx - 1, sy + dy), getTile(state, sx + fw, sy + dy)]) {
-              if (nb && isRoadLike(nb.type)) {
-                touchesAnyRoad = true;
-                if (mainRoadSet.has(nb.y * state.gridWidth + nb.x)) touchesMainRoad = true;
+            for (const px of [sx - 1, sx + fw]) {
+              const nb = getTile(state, px, sy + dy);
+              if (nb) {
+                if (dryReachable[nb.y * gw + nb.x]) roadReachable = true;
+                if (isRoadLike(nb.type)) {
+                  touchesAnyRoad = true;
+                  if (mainRoadSet.has(nb.y * gw + nb.x)) touchesMainRoad = true;
+                }
               }
             }
           }
 
+          let priorityTier = 0;
           let score = 0;
           if (existingAnchor) {
+            priorityTier = 4;
             const distFromOld = Math.hypot(sx - existingAnchor.x, sy - existingAnchor.y);
             score =
               overlapStation * 45 -
               distFromOld * 18 -
-              demolishedBuildings * 6 -
-              demolishedHighLv * 14 -
+              demolishedBuildings * 10 -
+              demolishedHighLv * 18 -
               demolishedRoads * 12 +
               (touchesMainRoad ? 24 : touchesAnyRoad ? 12 : 0);
           } else {
-            const cx = state.roadOriginX ?? Math.floor(state.gridWidth / 2);
-            const cy = state.roadOriginY ?? Math.floor(state.gridHeight / 2);
-            const distCore = Math.hypot(sx + fw * 0.5 - cx, sy + fh * 0.5 - cy);
-            const axisBonus = axis === defaultAxes[0] ? 12 : 0;
+            const cleanCorridor =
+              corridorBuildingHits === 0 &&
+              corridorAdjacentBuildings === 0 &&
+              demolishedBuildings === 0;
+            if (roadReachable && cleanCorridor && !cutsThroughCity && stationBufferBuildings === 0) {
+              priorityTier = 4; // Ideal: road-reachable, completely outside city center, >= 1 block clearance everywhere!
+            } else if (roadReachable && cleanCorridor) {
+              priorityTier = 3; // Road-reachable with clean >= 1 block clearance along entire track!
+            } else if (cleanCorridor && !cutsThroughCity && stationBufferBuildings === 0) {
+              priorityTier = 2;
+            } else if (roadReachable && corridorBuildingHits === 0 && demolishedBuildings === 0) {
+              priorityTier = 1;
+            } else {
+              priorityTier = 0;
+            }
+
+            const stationMidAlong = alongStart + longDim * 0.5;
+            const axisBonus = axis === defaultAxes[0] ? 8 : 0;
             score =
-              55 +
-              axisBonus -
-              Math.abs(distCore - 7) * 2.1 -
-              corridorDemolitions * 1.4 -
-              corridorWaterCrossings * 1.2 -
-              demolishedBuildings * 8 -
-              demolishedHighLv * 18 -
-              demolishedRoads * 16 +
-              (touchesMainRoad ? 26 : touchesAnyRoad ? 12 : 0);
+              100 +
+              axisBonus +
+              (roadReachable ? 35 : -50) +
+              (hasRoomForTier2 ? 18 : 0) +
+              (!cutsThroughCity ? 40 : -35) -
+              Math.abs(outsideDist - 3.5) * 3.2 -
+              Math.abs(stationMidAlong - urbanMidAlong) * 1.15 -
+              corridorBuildingHits * 65 -
+              corridorAdjacentBuildings * 28 -
+              stationBufferBuildings * 14 -
+              corridorWaterCrossings * 3.5 -
+              corridorRoadCrossings * 1.1 -
+              demolishedBuildings * 50 -
+              demolishedHighLv * 24 -
+              demolishedRoads * 14 +
+              (touchesMainRoad ? 14 : touchesAnyRoad ? 8 : 0);
           }
-          out.push({ x: sx, y: sy, fw, fh, axis, lineCoord, score });
+          out.push({ x: sx, y: sy, fw, fh, axis, lineCoord, priorityTier, score });
         }
       }
     }
-    return out;
+    return { candidates: out, dryReachable };
   };
 
-  let candidates = searchCorridorAndStation();
-  for (let expAttempt = 0; expAttempt < 2 && candidates.length === 0; expAttempt++) {
-    const offers = getLandExpansions(state);
-    const chosenOffer = offers.find((o) => o.canExpand);
-    if (!chosenOffer) break;
+  let searchRes = searchCorridorAndStation();
+  let candidates = searchRes.candidates;
+  const hasCleanOuterCorridor = () =>
+    existingAnchor !== null || candidates.some((c) => c.priorityTier >= 3);
+
+  // If the current map is too packed (or blocked by a river) to route a road-reachable railway
+  // with >=1-block clearance from all buildings, automatically expand an outer dry edge!
+  for (let expAttempt = 0; expAttempt < 2 && (candidates.length === 0 || !hasCleanOuterCorridor()); expAttempt++) {
+    const offers = getLandExpansions(state).filter((o) => o.canExpand);
+    if (offers.length === 0) break;
+    const gw = state.gridWidth;
+    const gh = state.gridHeight;
+    const dryReachable = searchRes.dryReachable;
+    const edgeDryCount = (dir: ExpandDirection): number => {
+      let c = 0;
+      if (dir === 'norte') {
+        for (let x = 0; x < gw; x++) if (dryReachable[x]) c++;
+      } else if (dir === 'sul') {
+        for (let x = 0; x < gw; x++) if (dryReachable[(gh - 1) * gw + x]) c++;
+      } else if (dir === 'oeste') {
+        for (let y = 0; y < gh; y++) if (dryReachable[y * gw]) c++;
+      } else {
+        for (let y = 0; y < gh; y++) if (dryReachable[y * gw + (gw - 1)]) c++;
+      }
+      return c;
+    };
+    // Prefer expanding an outer edge connected to the city's dry land (same side of river as main roads)
+    const preferredDirs: ExpandDirection[] =
+      hwEdge === 'north' || hwEdge === 'south'
+        ? ['norte', 'sul', 'leste', 'oeste']
+        : ['leste', 'oeste', 'norte', 'sul'];
+    offers.sort((a, b) => {
+      const dryA = edgeDryCount(a.direction) > 0 ? 1 : 0;
+      const dryB = edgeDryCount(b.direction) > 0 ? 1 : 0;
+      if (dryB !== dryA) return dryB - dryA;
+      const ea = state.expansions[a.direction] ?? 0;
+      const eb = state.expansions[b.direction] ?? 0;
+      if (ea !== eb) return ea - eb;
+      return preferredDirs.indexOf(a.direction) - preferredDirs.indexOf(b.direction);
+    });
+    const chosenOffer = offers[0];
     state.money += chosenOffer.cost;
     expandCityLand(state, chosenOffer.direction);
-    candidates = searchCorridorAndStation();
+    searchRes = searchCorridorAndStation();
+    candidates = searchRes.candidates;
   }
   if (candidates.length === 0) {
     if (existingAnchor && state.railCorridor) {
@@ -8012,7 +8330,10 @@ function findBestRailTerminalReservationRect(
     }
     return null;
   }
-  candidates.sort((a, b) => b.score - a.score);
+  candidates.sort((a, b) => {
+    if (b.priorityTier !== a.priorityTier) return b.priorityTier - a.priorityTier;
+    return b.score - a.score;
+  });
   const best = candidates[0];
   return {
     x: best.x,
@@ -8851,15 +9172,17 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
         'shopping'
       )
     ) {
-      for (const oldS of state.tiles) {
-        if (
-          oldS.type === 'shopping' &&
-          (oldS.x < work.anchorX ||
-            oldS.x >= work.anchorX + (work.lotWidth ?? w) ||
-            oldS.y < work.anchorY ||
-            oldS.y >= work.anchorY + (work.lotHeight ?? h))
-        ) {
-          resetTileToGrass(oldS, 0.5);
+      if (work.isUpgrade) {
+        for (const oldS of state.tiles) {
+          if (
+            oldS.type === 'shopping' &&
+            (oldS.x < work.anchorX ||
+              oldS.x >= work.anchorX + (work.lotWidth ?? w) ||
+              oldS.y < work.anchorY ||
+              oldS.y >= work.anchorY + (work.lotHeight ?? h))
+          ) {
+            resetTileToGrass(oldS, 0.5);
+          }
         }
       }
       const compound = assignCompoundLot(
@@ -8880,7 +9203,28 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       placed = compound[0] ?? null;
     }
     if (!placed) {
-      placeOrExpandShoppingComplex(state, targetShopLv, true);
+      if (work.isUpgrade) {
+        placeOrExpandShoppingComplex(state, targetShopLv, true);
+      } else {
+        const fallbackShop = findBestShoppingReservationRect(state, targetShopLv, true, false);
+        if (fallbackShop) {
+          const compound = assignCompoundLot(
+            state,
+            fallbackShop.x,
+            fallbackShop.y,
+            fallbackShop.fw,
+            fallbackShop.fh,
+            'shopping',
+            targetShopLv,
+            work.variant ?? 0,
+            1.85,
+            undefined,
+            work.lotRotation ?? pickDistinctLotRotation(state, (t) => t.type === 'shopping')
+          );
+          ensureTileConnectedToMainRoad(state, compound);
+          state.mapVersion += 1;
+        }
+      }
     }
     if (tier >= 2) {
       upgradeTopBuildings(state, tier === 3 ? 3 : 2, 'commercial');
@@ -9029,15 +9373,17 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       typeof work.anchorY === 'number' &&
       canUseReservedRectForLandmark(state, work.anchorX, work.anchorY, fw, fh, 'clean_energy')
     ) {
-      for (const oldT of state.tiles) {
-        if (
-          oldT.type === 'clean_energy' &&
-          (oldT.x < work.anchorX ||
-            oldT.x >= work.anchorX + fw ||
-            oldT.y < work.anchorY ||
-            oldT.y >= work.anchorY + fh)
-        ) {
-          resetTileToGrass(oldT, 0.5);
+      if (work.isUpgrade) {
+        for (const oldT of state.tiles) {
+          if (
+            oldT.type === 'clean_energy' &&
+            (oldT.x < work.anchorX ||
+              oldT.x >= work.anchorX + fw ||
+              oldT.y < work.anchorY ||
+              oldT.y >= work.anchorY + fh)
+          ) {
+            resetTileToGrass(oldT, 0.5);
+          }
         }
       }
       const compound = assignCompoundLot(
@@ -9056,10 +9402,19 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
       placed = compound[0] ?? null;
     }
     if (!placed) {
-      const fallback = findBestCustomCompoundReservationRect(state, 'clean_energy', fw, fh);
+      const fallback = findBestCustomCompoundReservationRect(
+        state,
+        'clean_energy',
+        fw,
+        fh,
+        !work.isUpgrade,
+        false
+      );
       if (fallback) {
-        for (const oldT of state.tiles) {
-          if (oldT.type === 'clean_energy') resetTileToGrass(oldT, 0.5);
+        if (work.isUpgrade) {
+          for (const oldT of state.tiles) {
+            if (oldT.type === 'clean_energy') resetTileToGrass(oldT, 0.5);
+          }
         }
         const compound = assignCompoundLot(
           state,
@@ -9340,127 +9695,73 @@ function finalizePendingWork(state: CityState, work: PendingConstructionWork): v
     );
   }
 
-  // Advance work line tier ONLY upon true project completion!
+  // Advance built work line tier ONLY upon true physical completion (maxTier + 1 marks all approved tiers built)!
   const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
   const maxTier = lineSpec ? lineSpec.tiers.length : 4;
   const currentTier = state.workTiers[actionId] ?? 1;
-  state.workTiers[actionId] = Math.min(maxTier, Math.max(currentTier, tier + 1));
+  state.workTiers[actionId] = Math.min(maxTier + 1, Math.max(currentTier, tier + 1));
 }
 
-/** Execute one of the progressive evolving Emergency / Landmark Works */
-export function executeEmergencyAction(
+/**
+ * Start a physical public work construction on the map (either first/upgraded phase or an additional unit)
+ * funded by the linked area's accumulated investment reserve.
+ */
+function startPublicWorkProject(
   state: CityState,
-  actionId: EmergencyActionId
-): { ok: boolean; reason?: string; executedTitle?: string; evolvedToTier?: number } {
-  if (actionId === 'incident_response') {
-    const res = resolveUrbanIncident(state);
-    return {
-      ok: res.ok,
-      reason: res.reason,
-      executedTitle: res.resolvedTitle ? `Conter ${res.resolvedTitle}` : undefined,
-      evolvedToTier: 1,
-    };
-  }
-
+  actionId: EmergencyActionId,
+  tier: number,
+  isAdditionalUnit: boolean = false
+): boolean {
   if (!Array.isArray(state.pendingWorks)) {
     state.pendingWorks = [];
   }
+  const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
+  const spec = lineSpec?.tiers[Math.max(0, tier - 1)];
+  if (!lineSpec || !spec) return false;
+  const cleanTitle = spec.title.replace(/^Aprovar\s+/i, '');
+  const durationMonths = Math.max(1, spec.durationMonths || 1);
 
-  const offers = getEmergencyOffers(state);
-  const offer = offers.find((o) => o.id === actionId);
-  if (!offer) return { ok: false, reason: 'Ação inválida.' };
-
-  if (!offer.unlocked) {
-    return { ok: false, reason: offer.lockReason ?? 'Obra ainda bloqueada.' };
-  }
-
-  if (state.money < offer.cost) {
-    return {
-      ok: false,
-      reason: `Caixa insuficiente (necessário $${offer.cost.toLocaleString('pt-BR')}).`,
-    };
-  }
-
-  if (actionId === 'revitalization' && offer.tier <= 2 && state.stats.abandonedCount === 0) {
-    return {
-      ok: false,
-      reason: 'Não há prédios abandonados na cidade no momento.',
-    };
-  }
-
-  state.money -= offer.cost;
-  const tier = offer.tier;
-
-  const upsertBoost = (label: string, months: number) => {
-    if (months <= 0) return;
-    const existing = state.activeBoosts.find((b) => b.actionId === actionId);
-    if (existing) {
-      existing.remainingMonths = Math.max(existing.remainingMonths, months);
-      existing.totalMonths = Math.max(existing.totalMonths ?? months, existing.remainingMonths);
-      existing.tier = Math.max(existing.tier, tier);
-      existing.label = label;
-    } else {
-      state.activeBoosts.push({
-        id: `${actionId}_${state.tick}`,
-        actionId,
-        label,
-        tier,
-        remainingMonths: months,
-        totalMonths: months,
-      });
+  if (actionId === 'toll_plaza_project') {
+    ensureExternalHighwayConnected(state, state.externalHighway?.edge);
+    if (!state.tollPlaza) {
+      state.tollPlaza = createInitialTollPlaza();
     }
-  };
-
-  // Immediate project (0 durationMonths): Toll Plaza
-  if (offer.durationMonths <= 1 || actionId === 'toll_plaza_project') {
-    if (actionId === 'toll_plaza_project') {
-      ensureExternalHighwayConnected(state, state.externalHighway?.edge);
-      if (!state.tollPlaza) {
-        state.tollPlaza = createInitialTollPlaza();
-      }
-      state.tollPlaza.built = true;
-      state.tollPlaza.tariff = state.tollPlaza.tariff ?? 'medium';
-      const tollTile = state.externalHighway
-        ? getTile(state, state.externalHighway.tollX, state.externalHighway.tollY)
-        : null;
-      if (tollTile) {
-        tollTile.evolveFlash = 1.8;
-      }
-      reconcileRoadHierarchy(state);
-      pushNews(
-        state,
-        'Praça de Pedágio inaugurada na Rodovia Externa! Ajuste a tarifa (Baixa, Média ou Alta) em Finanças ou clicando no pedágio.',
-        'milestone'
-      );
+    state.tollPlaza.built = true;
+    state.tollPlaza.tariff = state.tollPlaza.tariff ?? 'medium';
+    const tollTile = state.externalHighway
+      ? getTile(state, state.externalHighway.tollX, state.externalHighway.tollY)
+      : null;
+    if (tollTile) {
+      tollTile.evolveFlash = 1.8;
     }
-
-    const lineSpec = EMERGENCY_LINES.find((l) => l.id === actionId);
-    const maxTier = lineSpec ? lineSpec.tiers.length : 4;
-    const nextTier = Math.min(maxTier, tier + 1);
-    state.workTiers[actionId] = nextTier;
-    state.pendingSounds.push({ type: 'emergency' });
+    reconcileRoadHierarchy(state);
+    pushNews(
+      state,
+      'Praça de Pedágio inaugurada na Rodovia Externa com recursos de Infraestrutura! Ajuste a tarifa em Finanças.',
+      'milestone'
+    );
+    state.workTiers[actionId] = lineSpec.tiers.length + 1;
+    state.pendingSounds.push({ type: 'milestone' });
     recomputeFieldsAndStats(state);
-    return {
-      ok: true,
-      executedTitle: offer.title,
-      evolvedToTier: nextTier,
-    };
+    return true;
   }
 
-  // Multi-month public work: reserve lot(s)/construction site on the map and deliver upon real completion!
   const work: PendingConstructionWork = {
     id: `work_${actionId}_${state.tick}_${Math.floor(nextRandom(state) * 10000)}`,
     actionId,
     tier,
-    title: offer.title,
-    totalMonths: offer.durationMonths,
-    remainingMonths: offer.durationMonths,
+    title: cleanTitle,
+    totalMonths: durationMonths,
+    remainingMonths: durationMonths,
   };
+  const offer = { title: cleanTitle, durationMonths };
+  const allowExpand = !isAdditionalUnit;
 
   if (actionId === 'sports_center_project') {
     const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
     const fp = SPORTS_CENTER_FOOTPRINT_BY_TIER[tierKey];
-    const slot = findBestEstablishmentRect(state, 'sports_court', true, fp.w, fp.h);
+    const slot = findBestEstablishmentRect(state, 'sports_court', true, fp.w, fp.h, allowExpand);
+    if (isAdditionalUnit && !slot) return false;
     work.variant = pickEstablishmentVariation(state, 'sports_court');
     work.lotRotation = pickDistinctLotRotation(
       state,
@@ -9491,6 +9792,7 @@ export function executeEmergencyAction(
   } else if (actionId === 'bus_transit_project') {
     const slots = findTransitStationSlots(state, 'bus_station', 2);
     const existingStations = state.tiles.filter((t) => t.type === 'bus_station' && !t.construction);
+    if (isAdditionalUnit && slots.length === 0) return false;
     const coords: Array<{ x: number; y: number }> = [];
     for (const s of slots) {
       clearObstructionAndReserveTile(state, s, [], {
@@ -9539,6 +9841,7 @@ export function executeEmergencyAction(
   } else if (actionId === 'metro_transit_project') {
     const slots = findTransitStationSlots(state, 'metro_station', 2);
     const existingStations = state.tiles.filter((t) => t.type === 'metro_station' && !t.construction);
+    if (isAdditionalUnit && slots.length === 0) return false;
     const coords: Array<{ x: number; y: number }> = [];
     for (const s of slots) {
       clearObstructionAndReserveTile(state, s, [], {
@@ -9582,164 +9885,6 @@ export function executeEmergencyAction(
     pushNews(
       state,
       `Escavações iniciadas: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
-      'info'
-    );
-  } else if (actionId === 'environmental_cleanup') {
-    // Explicit ongoing environmental cleanup crew buff + reserved park slots completed at term end
-    upsertBoost(offer.title, offer.durationMonths);
-    const parkTargets = tier * 2;
-    const openSlots: Tile[] = [];
-    for (const t of state.tiles) {
-      if (
-        (t.type === 'grass' || t.type === 'forest') &&
-        !t.construction &&
-        getOrthoNeighbors(state, t.x, t.y).some((nt) => nt.type === 'road')
-      ) {
-        openSlots.push(t);
-      }
-    }
-    const coords: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i < parkTargets && openSlots.length > 0; i++) {
-      const idx = Math.floor(nextRandom(state) * openSlots.length);
-      const slot = openSlots.splice(idx, 1)[0];
-      slot.construction = {
-        workId: work.id,
-        actionId,
-        title: offer.title,
-        targetType: 'park',
-        targetLevel: 1,
-        isUpgrade: false,
-        lotWidth: 1,
-        lotHeight: 1,
-        lotDx: 0,
-        lotDy: 0,
-        totalMonths: work.totalMonths,
-        remainingMonths: work.remainingMonths,
-      };
-      slot.evolveFlash = 0.85;
-      coords.push({ x: slot.x, y: slot.y });
-    }
-    work.targetCoords = coords;
-    work.targetType = 'park';
-    pushNews(
-      state,
-      `${offer.title} em execução! Equipes despoluem o ar e preparam ${parkTargets} parques (${offer.durationMonths} meses).`,
-      'good'
-    );
-  } else if (actionId === 'revitalization') {
-    // Explicit ongoing anti-abandonment shield + multi-month restoration scaffolds on abandoned buildings
-    upsertBoost(offer.title, offer.durationMonths);
-    const abandonedTiles = state.tiles.filter((t) => t.type === 'abandoned' && !t.construction);
-    const maxRestore = tier >= 3 ? abandonedTiles.length : tier === 2 ? 10 : 6;
-    const coords: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i < Math.min(maxRestore, abandonedTiles.length); i++) {
-      const t = abandonedTiles[i];
-      t.construction = {
-        workId: work.id,
-        actionId,
-        title: offer.title,
-        targetType: t.previousType ?? 'residential',
-        targetLevel: tier >= 2 ? 2 : 1,
-        isUpgrade: true,
-        lotWidth: 1,
-        lotHeight: 1,
-        lotDx: 0,
-        lotDy: 0,
-        totalMonths: work.totalMonths,
-        remainingMonths: work.remainingMonths,
-      };
-      t.evolveFlash = 0.85;
-      coords.push({ x: t.x, y: t.y });
-    }
-    work.targetCoords = coords;
-    work.isUpgrade = true;
-    pushNews(
-      state,
-      `${offer.title} iniciada! Andaimes instalados em ${coords.length} imóveis (${offer.durationMonths} meses para entrega).`,
-      'good'
-    );
-  } else if (actionId === 'tourism_festival') {
-    // Explicit festival campaign boost during execution + commercial upgrades delivered upon conclusion
-    upsertBoost(offer.title, offer.durationMonths);
-    pushNews(
-      state,
-      `${offer.title} em andamento por ${offer.durationMonths} meses! Atrações aquecem o turismo e o comércio local.`,
-      'milestone'
-    );
-  } else if (actionId === 'emergency_roadworks') {
-    const roadTargets = [4, 6, 8, 10][tier - 1] ?? 8;
-    const { roadTiles, bridgeWaterTiles } = findRoadworkPlanCoords(state, roadTargets, true);
-    const coords: Array<{ x: number; y: number }> = [];
-    for (const rt of roadTiles) {
-      const plan = classifyPlannedRoadCell(state, rt.x, rt.y);
-      rt.construction = {
-        workId: work.id,
-        actionId,
-        title: offer.title,
-        targetType: 'road',
-        targetLevel: plan.corridorLevel,
-        isUpgrade: false,
-        lotWidth: 1,
-        lotHeight: 1,
-        lotDx: 0,
-        lotDy: 0,
-        totalMonths: work.totalMonths,
-        remainingMonths: work.remainingMonths,
-      };
-      rt.evolveFlash = 0.85;
-      coords.push({ x: rt.x, y: rt.y });
-    }
-    for (const wt of bridgeWaterTiles) {
-      wt.construction = {
-        workId: work.id,
-        actionId,
-        title: offer.title,
-        targetType: 'bridge',
-        targetLevel: getCurrentBridgeLevel(state),
-        isUpgrade: false,
-        lotWidth: 1,
-        lotHeight: 1,
-        lotDx: 0,
-        lotDy: 0,
-        totalMonths: work.totalMonths,
-        remainingMonths: work.remainingMonths,
-      };
-      wt.evolveFlash = 0.85;
-      coords.push({ x: wt.x, y: wt.y });
-    }
-    const targetBridgeLv =
-      tier >= 4 && state.totalPopulation >= 22000
-        ? 4
-        : tier >= 3 && state.totalPopulation >= 12000
-          ? 3
-          : tier >= 2 && state.totalPopulation >= 3500
-            ? 2
-            : 1;
-    if (targetBridgeLv >= 2) {
-      for (const bt of state.tiles) {
-        if (bt.type === 'bridge' && (bt.level || 1) < targetBridgeLv && !bt.construction) {
-          bt.construction = {
-            workId: work.id,
-            actionId,
-            title: offer.title,
-            targetType: 'bridge',
-            targetLevel: targetBridgeLv,
-            isUpgrade: true,
-            lotWidth: 1,
-            lotHeight: 1,
-            lotDx: 0,
-            lotDy: 0,
-            totalMonths: work.totalMonths,
-            remainingMonths: work.remainingMonths,
-          };
-          coords.push({ x: bt.x, y: bt.y });
-        }
-      }
-    }
-    work.targetCoords = coords;
-    pushNews(
-      state,
-      `Canteiros viários abertos: ${offer.title} (${offer.durationMonths} meses para conclusão).`,
       'info'
     );
   } else if (actionId === 'port_evolution') {
@@ -9830,13 +9975,14 @@ export function executeEmergencyAction(
     );
   } else if (actionId === 'shopping_evolution') {
     const targetShopLv = Math.max(1, Math.min(3, tier)) as 1 | 2 | 3;
-    const slot = findBestShoppingReservationRect(state, targetShopLv);
+    const slot = findBestShoppingReservationRect(state, targetShopLv, isAdditionalUnit, allowExpand);
+    if (isAdditionalUnit && !slot) return false;
     work.variant = slot?.existingAnchor ? slot.existingAnchor.variant : Math.floor(nextRandom(state) * 8);
-    work.lotRotation = slot?.existingAnchor
+    work.lotRotation = slot?.existingAnchor && !isAdditionalUnit
       ? slot.existingAnchor.lotRotation ?? 0
       : pickDistinctLotRotation(state, (t) => t.type === 'shopping');
     if (slot) {
-      work.isUpgrade = Boolean(slot.existingAnchor);
+      work.isUpgrade = !isAdditionalUnit && Boolean(slot.existingAnchor);
       reserveCompoundConstructionRect(
         state,
         slot.x,
@@ -9846,7 +9992,7 @@ export function executeEmergencyAction(
         work,
         'shopping',
         targetShopLv,
-        ['shopping']
+        work.isUpgrade ? ['shopping'] : []
       );
     }
     pushNews(
@@ -9859,7 +10005,8 @@ export function executeEmergencyAction(
       tier === 1 ||
       (tier >= 3 && state.stats.stadiumCount < getMaxStadiumsForPopulation(state.totalPopulation))
     ) {
-      const slot = findBestStadiumRect(state, true);
+      const slot = findBestStadiumRect(state, !isAdditionalUnit);
+      if (isAdditionalUnit && !slot) return false;
       work.variant = pickEstablishmentVariation(state, 'soccer_stadium');
       work.lotRotation = pickDistinctLotRotation(state, (t) => t.type === 'stadium');
       if (slot) {
@@ -9877,7 +10024,8 @@ export function executeEmergencyAction(
         );
       }
     } else if (tier === 2) {
-      const slot = findBestEstablishmentRect(state, 'amusement_park', true);
+      const slot = findBestEstablishmentRect(state, 'amusement_park', true, undefined, undefined, allowExpand);
+      if (isAdditionalUnit && !slot) return false;
       work.variant = pickEstablishmentVariation(state, 'amusement_park');
       work.lotRotation = pickDistinctLotRotation(state, (t) => t.establishmentId === 'amusement_park');
       if (slot) {
@@ -9903,12 +10051,20 @@ export function executeEmergencyAction(
   } else if (actionId === 'clean_energy_project') {
     const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
     const fp = CLEAN_ENERGY_FOOTPRINT_BY_TIER[tierKey];
-    const slot = findBestCustomCompoundReservationRect(state, 'clean_energy', fp.w, fp.h);
+    const slot = findBestCustomCompoundReservationRect(
+      state,
+      'clean_energy',
+      fp.w,
+      fp.h,
+      isAdditionalUnit,
+      allowExpand
+    );
+    if (isAdditionalUnit && !slot) return false;
     work.variant = slot?.existingAnchor
       ? slot.existingAnchor.variant
       : Math.floor(nextRandom(state) * 4);
     if (slot) {
-      work.isUpgrade = Boolean(slot.existingAnchor);
+      work.isUpgrade = !isAdditionalUnit && Boolean(slot.existingAnchor);
       reserveCompoundConstructionRect(
         state,
         slot.x,
@@ -9918,7 +10074,7 @@ export function executeEmergencyAction(
         work,
         'clean_energy',
         tierKey,
-        ['clean_energy']
+        work.isUpgrade ? ['clean_energy'] : []
       );
     }
     pushNews(
@@ -9929,7 +10085,8 @@ export function executeEmergencyAction(
   } else if (actionId === 'hospital_project') {
     const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
     const fp = HOSPITAL_FOOTPRINT_BY_TIER[tierKey];
-    const slot = findBestEstablishmentRect(state, 'general_hospital', true, fp.w, fp.h);
+    const slot = findBestEstablishmentRect(state, 'general_hospital', true, fp.w, fp.h, allowExpand);
+    if (isAdditionalUnit && !slot) return false;
     work.variant = pickEstablishmentVariation(state, 'general_hospital');
     work.lotRotation = pickDistinctLotRotation(state, (t) => t.establishmentId === 'general_hospital');
     if (slot) {
@@ -9954,7 +10111,8 @@ export function executeEmergencyAction(
   } else if (actionId === 'tech_university_project') {
     const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
     const fp = UNIVERSITY_FOOTPRINT_BY_TIER[tierKey];
-    const slot = findBestEstablishmentRect(state, 'tech_university', true, fp.w, fp.h);
+    const slot = findBestEstablishmentRect(state, 'tech_university', true, fp.w, fp.h, allowExpand);
+    if (isAdditionalUnit && !slot) return false;
     work.variant = pickEstablishmentVariation(state, 'tech_university');
     work.lotRotation = pickDistinctLotRotation(state, (t) => t.establishmentId === 'tech_university');
     if (slot) {
@@ -9979,7 +10137,8 @@ export function executeEmergencyAction(
   } else if (actionId === 'amusement_park_project') {
     const tierKey = (tier >= 2 ? 2 : 1) as 1 | 2;
     const fp = AMUSEMENT_FOOTPRINT_BY_TIER[tierKey];
-    const slot = findBestEstablishmentRect(state, 'amusement_park', true, fp.w, fp.h);
+    const slot = findBestEstablishmentRect(state, 'amusement_park', true, fp.w, fp.h, allowExpand);
+    if (isAdditionalUnit && !slot) return false;
     work.variant = pickEstablishmentVariation(state, 'amusement_park');
     work.lotRotation = pickDistinctLotRotation(state, (t) => t.establishmentId === 'amusement_park');
     if (slot) {
@@ -10031,18 +10190,195 @@ export function executeEmergencyAction(
       `Canteiro ferroviário aberto: ${offer.title} (${labelW}×${labelH} · ${offer.durationMonths} meses).`,
       'info'
     );
+  } else {
+    return false;
   }
 
   state.pendingWorks.push(work);
   state.mapVersion += 1;
   state.pendingSounds.push({ type: 'emergency' });
   recomputeFieldsAndStats(state);
+  return true;
+}
+
+/**
+ * Automatically construct approved evolutions and new city units when:
+ * 1) the linked budget area investment is in order (>= 100% coverage & invested >= needed), and
+ * 2) the area's accumulated `investmentFunds[area]` covers `spec.unitInvestmentCost`.
+ */
+function processApprovedAutoConstructions(state: CityState): boolean {
+  if (!state.approvedTiers) state.approvedTiers = createInitialApprovedTiers();
+  if (!state.investmentFunds) state.investmentFunds = createZeroAreaRecord();
+  if (!Array.isArray(state.pendingWorks)) state.pendingWorks = [];
+
+  let startedAny = false;
+  const pop = state.totalPopulation;
+  const st = state.stats;
+
+  for (const line of EMERGENCY_LINES) {
+    const approvedTier = Math.max(0, Math.min(line.tiers.length, state.approvedTiers[line.id] ?? 0));
+    if (approvedTier <= 0) continue;
+    if (state.pendingWorks.some((w) => w.actionId === line.id)) continue;
+
+    const area = line.investmentArea;
+    const covArea = state.stats.coverage[area];
+    if (!covArea || covArea.coveragePct < 100 || covArea.invested < covArea.needed) {
+      continue;
+    }
+
+    let tierToBuild: number | null = null;
+    let isAdditionalUnit = false;
+    const builtNextTier = state.workTiers[line.id] ?? 1;
+
+    if (builtNextTier <= approvedTier) {
+      if (line.id === 'toll_plaza_project' && state.tollPlaza?.built) {
+        state.workTiers[line.id] = line.tiers.length + 1;
+        continue;
+      }
+      if (
+        line.id === 'landmark_project' &&
+        (builtNextTier === 1 || builtNextTier >= 3) &&
+        st.stadiumCount >= getMaxStadiumsForPopulation(pop)
+      ) {
+        continue;
+      }
+      tierToBuild = builtNextTier;
+      isAdditionalUnit = false;
+    } else {
+      // All approved phases already built once -> check if city growth needs an additional unit automatically!
+      if (line.id === 'sports_center_project') {
+        const desired = 1 + Math.floor(pop / 22000);
+        if (st.sportsCenterCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'clean_energy_project') {
+        const desired = 1 + Math.floor(pop / 18000);
+        if (st.cleanEnergyCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'bus_transit_project') {
+        const desired = Math.min(10, approvedTier * 2 + Math.floor(pop / 14000) * 2);
+        if (st.busStationCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'hospital_project') {
+        const desired = 1 + Math.floor(pop / 18000);
+        if (st.hospitalCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'tech_university_project') {
+        const desired = Math.min(3, approvedTier + Math.floor(pop / 32000));
+        if (st.universityCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'shopping_evolution') {
+        const desired = 1 + Math.floor(Math.max(0, pop - 12000) / 28000);
+        if (pop >= 32000 && st.shoppingCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'amusement_park_project') {
+        const desired = 1 + Math.floor(pop / 35000);
+        if (st.amusementParkCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'metro_transit_project') {
+        const desired = Math.min(12, approvedTier * 2 + Math.floor(pop / 24000) * 2);
+        if (st.metroStationCount < desired) {
+          tierToBuild = approvedTier;
+          isAdditionalUnit = true;
+        }
+      } else if (line.id === 'landmark_project') {
+        if (approvedTier >= 3 && st.stadiumCount < getMaxStadiumsForPopulation(pop)) {
+          tierToBuild = 3;
+          isAdditionalUnit = true;
+        }
+      }
+    }
+
+    if (tierToBuild === null) continue;
+    const spec = line.tiers[Math.max(0, Math.min(line.tiers.length - 1, tierToBuild - 1))];
+    if (!spec) continue;
+    const fundBalance = state.investmentFunds[area] ?? 0;
+    if (fundBalance < spec.unitInvestmentCost) continue;
+
+    if (startPublicWorkProject(state, line.id, tierToBuild, isAdditionalUnit)) {
+      state.investmentFunds[area] = Math.max(0, (state.investmentFunds[area] ?? 0) - spec.unitInvestmentCost);
+      startedAny = true;
+    }
+  }
+
+  return startedAny;
+}
+
+/** Grant one-time approval for an evolving Work / Landmark tier (construction is funded & built automatically via area investments) */
+export function executeEmergencyAction(
+  state: CityState,
+  actionId: EmergencyActionId
+): { ok: boolean; reason?: string; executedTitle?: string; evolvedToTier?: number } {
+  if (actionId === 'incident_response') {
+    const res = resolveUrbanIncident(state);
+    return {
+      ok: res.ok,
+      reason: res.reason,
+      executedTitle: res.resolvedTitle ? `Conter ${res.resolvedTitle}` : undefined,
+      evolvedToTier: 1,
+    };
+  }
+
+  if (!state.approvedTiers) state.approvedTiers = createInitialApprovedTiers();
+  if (!state.investmentFunds) state.investmentFunds = createZeroAreaRecord();
+
+  const offers = getEmergencyOffers(state);
+  const offer = offers.find((o) => o.id === actionId);
+  if (!offer) return { ok: false, reason: 'Ação inválida.' };
+
+  if (offer.fullyApproved) {
+    return { ok: false, reason: offer.lockReason ?? 'Evolução máxima já aprovada.' };
+  }
+
+  if (!offer.unlocked) {
+    return { ok: false, reason: offer.lockReason ?? 'Evolução ainda bloqueada.' };
+  }
+
+  if (state.money < offer.cost) {
+    return {
+      ok: false,
+      reason: `Caixa insuficiente (necessário $${offer.cost.toLocaleString('pt-BR')}).`,
+    };
+  }
+
+  state.money -= offer.cost;
+  const approvedTier = offer.tier;
+  state.approvedTiers[actionId] = approvedTier;
+  state.pendingSounds.push({ type: 'emergency' });
+
+  recomputeFieldsAndStats(state);
+
+  const areaLabel = offer.investmentArea
+    ? BUDGET_AREA_META[offer.investmentArea].label
+    : 'Infraestrutura';
+  const needInc = offer.monthlyNeedIncrease ?? 0;
+  pushNews(
+    state,
+    `Aprovado (compra única): ${offer.title}! Orçamento de ${areaLabel} ajustado (+$${needInc}/mês) para financiar obras automáticas.`,
+    'milestone'
+  );
+
   return {
     ok: true,
     executedTitle: offer.title,
-    evolvedToTier: tier,
+    evolvedToTier: approvedTier,
   };
 }
+
+// (Removed duplicate tail of executeEmergencyAction — moved into startPublicWorkProject)
 
 /**
  * Trigger a major Evolutionary Breakthrough ("Salto Evolutivo") when a system reaches 100% charge!
@@ -10506,9 +10842,9 @@ export function stepCityTick(state: CityState): void {
         buildings.push(t);
       }
     } else if ((t.type === 'grass' || t.type === 'forest') && !t.construction) {
-      // Reserve planned road corridors (right-of-way) and require adjacency to the main connected road network!
+      // Reserve planned road corridors (right-of-way), keep >=1-block railway setback, and require main road adjacency!
       const cellPlan = classifyPlannedRoadCell(state, t.x, t.y);
-      if (!cellPlan.isPlanned) {
+      if (!cellPlan.isPlanned && !isNearRailCorridor(state, t.x, t.y, 1)) {
         const neigh = getOrthoNeighbors(state, t.x, t.y);
         if (
           neigh.some(
@@ -11140,7 +11476,6 @@ export function stepCityTick(state: CityState): void {
         decayRisk * effectiveMitigation * revitShield * tm.decayMultiplier;
 
       if (nextRandom(state) < finalDecayChance) {
-        const lostType = tile.type;
         const compoundTiles = getCompoundTiles(state, tile);
         for (const ct of compoundTiles) {
           ct.previousType = ct.type as 'rural' | 'residential' | 'commercial' | 'industrial';
@@ -11150,26 +11485,6 @@ export function stepCityTick(state: CityState): void {
           ct.evolutionProgress = 0;
           ct.upgradeCooldown = 6;
           ct.evolveFlash = 0.85;
-        }
-        if (nextRandom(state) < 0.38) {
-          state.pendingSounds.push({ type: 'decay' });
-          const taxMsg =
-            lostType === 'commercial'
-              ? `Imposto Comercial alto (${state.taxes.commercial}%) faz lojas fecharem e abandonarem pontos comerciais!`
-              : lostType === 'industrial' || lostType === 'rural'
-                ? `Imposto Industrial alto (${state.taxes.industrial}%) espanta empresas e fecha fábricas!`
-                : `Imposto Residencial alto (${state.taxes.residential}%) provoca abandono de casas e saída de moradores!`;
-          pushNews(
-            state,
-            sectorTaxExcess >= 2.0
-              ? taxMsg
-              : tile.pollution >= GROWTH_CONFIG.dangerPollutionThreshold
-                ? 'Poluição elevada provoca abandono de imóvel em Pixópolis!'
-                : state.money < 0
-                  ? 'Caixa negativo gera decadência urbana em Pixópolis!'
-                  : 'Baixa segurança provoca abandono de imóvel na cidade.',
-            'warning'
-          );
         }
         continue;
       }
@@ -11651,6 +11966,11 @@ export function stepCityTick(state: CityState): void {
   if (newlyUnlockedMilestones.length > 0) {
     recomputeFieldsAndStats(state);
   }
+  if (state.tick % 4 === 0) {
+    if (processApprovedAutoConstructions(state)) {
+      recomputeFieldsAndStats(state);
+    }
+  }
   if (
     state.recentMilestoneBanner &&
     state.tick - state.recentMilestoneBanner.triggeredAtTick >= 6
@@ -11961,7 +12281,6 @@ export function closeFinancialMonth(state: CityState): void {
       const activeSectorTiles = state.tiles.filter(
         (t) => t.type === sc.zone && t.lotRole !== 'part' && !t.establishmentId && !t.construction
       );
-      let leftCount = 0;
       for (let i = 0; i < exodusSeverity && activeSectorTiles.length > 1; i++) {
         const idx = Math.floor(nextRandom(state) * activeSectorTiles.length);
         const victim = activeSectorTiles.splice(idx, 1)[0];
@@ -11973,11 +12292,6 @@ export function closeFinancialMonth(state: CityState): void {
           ct.evolutionProgress = 0;
           ct.evolveFlash = 1.0;
         }
-        leftCount++;
-      }
-      if (leftCount > 0) {
-        state.pendingSounds.push({ type: 'decay' });
-        pushNews(state, sc.newsExodus, 'warning');
       }
     } else if (
       (sc.rate <= 7 && sc.excess <= -2.5 && sc.demand >= 45 && state.globalHappiness >= 56) ||
@@ -12059,6 +12373,19 @@ export function closeFinancialMonth(state: CityState): void {
       finalizePendingWork(state, doneWork);
     }
   }
+
+  // Accrue each budget area's monthly allocation into its construction investment reserve
+  if (!state.investmentFunds) state.investmentFunds = createZeroAreaRecord();
+  for (const areaKey of BUDGET_AREA_ORDER) {
+    const needed = state.stats.coverage[areaKey]?.needed ?? 500;
+    const cap = Math.max(500_000, needed * 36);
+    state.investmentFunds[areaKey] = Math.min(
+      cap,
+      (state.investmentFunds[areaKey] ?? 0) + Math.max(0, state.budgets[areaKey] ?? 0)
+    );
+  }
+  recomputeFieldsAndStats(state);
+  processApprovedAutoConstructions(state);
 
   // Advance / expire active Economic Cycles & Urban Incidents
   if (state.activeEconomicEvent) {
@@ -12150,9 +12477,7 @@ export function closeFinancialMonth(state: CityState): void {
   const migText =
     state.lastMigrationDelta > 0
       ? ` · +${state.lastMigrationDelta} novos moradores`
-      : state.lastMigrationDelta < 0
-        ? ` · ${state.lastMigrationDelta} moradores saíram`
-        : '';
+      : '';
   pushNews(
     state,
     `Fechamento mensal: ${sign}$${Math.abs(net).toLocaleString('pt-BR')} (Caixa: $${Math.round(state.money).toLocaleString('pt-BR')})${migText}.`,
@@ -12418,16 +12743,6 @@ export function computeCityNeeds(state: CityState): CityNeedItem[] {
     });
   }
 
-  if (state.stats.abandonedCount >= 2) {
-    needs.push({
-      id: 'city_abandoned',
-      severity: state.stats.abandonedCount >= 4 ? 'critical' : 'warning',
-      title: `Cidade tem ${state.stats.abandonedCount} prédios abandonados`,
-      detail: 'Reforce Segurança e Infraestrutura no orçamento geral para ativar a Revitalização automática.',
-      targetTab: 'budget',
-    });
-  }
-
   if (state.stats.avgPollution >= 26) {
     needs.push({
       id: 'city_pollution',
@@ -12580,6 +12895,28 @@ export function deserializeCitySave(rawJson: string): CityState | null {
       ...(parsed.workTiers ?? {}),
     };
 
+    const approvedTiers: Record<EmergencyActionId, number> = {
+      ...createInitialApprovedTiers(),
+      ...(parsed.approvedTiers ?? {}),
+    };
+    if (!parsed.approvedTiers) {
+      for (const line of EMERGENCY_LINES) {
+        if (line.id === 'toll_plaza_project') {
+          approvedTiers[line.id] = parsed.tollPlaza?.built ? 1 : 0;
+        } else {
+          approvedTiers[line.id] = Math.max(
+            0,
+            Math.min(line.tiers.length, (workTiers[line.id] ?? 1) - 1)
+          );
+        }
+      }
+    }
+
+    const investmentFunds: Record<BudgetAreaKey, number> = {
+      ...createZeroAreaRecord(),
+      ...(parsed.investmentFunds ?? {}),
+    };
+
     const expansions: Record<ExpandDirection, number> = {
       norte: parsed.expansions?.norte ?? 0,
       leste: parsed.expansions?.leste ?? 0,
@@ -12639,6 +12976,8 @@ export function deserializeCitySave(rawJson: string): CityState | null {
       breakthroughCharge,
       breakthroughCount,
       workTiers,
+      approvedTiers,
+      investmentFunds,
       stats: createEmptyCityStats(budgets),
       trait,
       difficulty,
@@ -13066,6 +13405,8 @@ export function createHudSnapshot(state: CityState): HudSnapshot {
     difficulty: sanitizeDifficulty(state.difficulty),
     budgets: { ...state.budgets },
     budgetTargetsPct: { ...(state.budgetTargetsPct ?? createDefaultTargetPcts()) },
+    investmentFunds: { ...(state.investmentFunds ?? createZeroAreaRecord()) },
+    approvedTiers: { ...(state.approvedTiers ?? createInitialApprovedTiers()) },
     stats: {
       ...state.stats,
       coverage: covCopy,
@@ -13776,7 +14117,7 @@ export function updateCarsAndParticles(
       const roadNeighbors = getOrthoNeighbors(state, start.x, start.y).filter((n) =>
         isRoadLike(n.type)
       );
-      if (roadNeighbors.length === 0) break;
+      if (roadNeighbors.length === 0) continue;
       roadNeighbors.sort(
         (a, b) =>
           Math.hypot(a.x - dest.x, a.y - dest.y) - Math.hypot(b.x - dest.x, b.y - dest.y)

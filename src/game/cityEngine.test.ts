@@ -48,6 +48,7 @@ import {
 import {
   BUDGET_AREA_META,
   BUDGET_AREA_ORDER,
+  EMERGENCY_LINES,
   FIXED_COSTS_CONFIG,
   GRID_SIZE,
   GROWTH_CONFIG,
@@ -61,12 +62,32 @@ import {
 } from './simulationConfig';
 import type { BoatEntity, CameraRotation, CameraState, CarEntity, EmergencyActionId, HelicopterEntity, PlaneEntity } from './types';
 
+function triggerApprovedWorkFromInvestments(
+  city: ReturnType<typeof createNewCity>,
+  actionId: EmergencyActionId
+): void {
+  const line = EMERGENCY_LINES.find((l) => l.id === actionId);
+  if (!line) return;
+  const area = line.investmentArea;
+  setCityBudgetTargetPct(city, area, Math.max(100, city.budgetTargetsPct?.[area] ?? 100));
+  let guard = 18;
+  while (
+    (city.workTiers[actionId] ?? 1) <= (city.approvedTiers?.[actionId] ?? 0) &&
+    !city.pendingWorks.some((w) => w.actionId === actionId) &&
+    guard > 0
+  ) {
+    closeFinancialMonth(city);
+    guard--;
+  }
+}
+
 function runEmergencyWorkToCompletion(
   city: ReturnType<typeof createNewCity>,
   actionId: EmergencyActionId
 ): { ok: boolean; reason?: string; executedTitle?: string; evolvedToTier?: number } {
   const res = executeEmergencyAction(city, actionId);
   if (!res.ok) return res;
+  triggerApprovedWorkFromInvestments(city, actionId);
   let guard = 18;
   while (city.pendingWorks.some((w) => w.actionId === actionId) && guard > 0) {
     closeFinancialMonth(city);
@@ -465,11 +486,15 @@ test('city save and load round-trips full expanded map, budgets, taxes, landmark
     }
   }
   expandCityLand(city, 'leste');
+  city.money = 100_000;
   executeEmergencyAction(city, 'port_evolution');
-  setCityBudget(city, 'infrastructure', 999);
+  const infraBudget = Math.max(1500, city.stats.coverage.infrastructure.needed + 100);
+  setCityBudget(city, 'infrastructure', infraBudget);
   setTaxRate(city, 'commercial', 14);
+  // Advance 1 month so infrastructure investment triggers the approved port pending work
+  closeFinancialMonth(city);
 
-  // Mid-construction save/load preserves pendingWorks and tile construction sites
+  // Mid-construction save/load preserves pendingWorks, approvedTiers, investmentFunds, and tile construction sites
   const midJson = serializeCitySave(city);
   const midLoaded = deserializeCitySave(midJson);
   assert.ok(midLoaded, 'Expected valid deserialized city state mid-construction');
@@ -477,8 +502,10 @@ test('city save and load round-trips full expanded map, budgets, taxes, landmark
   assert.equal(midLoaded.gridWidth, city.gridWidth);
   assert.equal(midLoaded.gridHeight, city.gridHeight);
   assert.equal(midLoaded.money, city.money);
-  assert.equal(midLoaded.budgets.infrastructure, 999);
+  assert.equal(midLoaded.budgets.infrastructure, infraBudget);
   assert.equal(midLoaded.taxes.commercial, 14);
+  assert.equal(midLoaded.approvedTiers?.port_evolution, 1);
+  assert.equal(midLoaded.investmentFunds?.infrastructure, city.investmentFunds?.infrastructure);
   assert.equal(midLoaded.pendingWorks.length, 1);
   assert.equal(midLoaded.workTiers.port_evolution, 1);
   assert.equal(midLoaded.tiles.length, city.tiles.length);
@@ -491,6 +518,7 @@ test('city save and load round-trips full expanded map, budgets, taxes, landmark
   const completedLoaded = deserializeCitySave(serializeCitySave(midLoaded));
   assert.ok(completedLoaded);
   assert.equal(completedLoaded.workTiers.port_evolution, 2);
+  assert.equal(completedLoaded.approvedTiers?.port_evolution, 1);
 });
 
 test('tax tolerance scales with service coverage and abusive taxes cause happiness drop, exodus & city need alerts', () => {
@@ -2080,7 +2108,7 @@ test('population gates enforce 2k Sports Center, 5k/15k/30k Airports, and 20k St
   raisePopTo(20000);
   city.money = 5_000_000;
   assert.equal(runEmergencyWorkToCompletion(city, 'landmark_project').ok, true, 'Stadium should unlock at 20k');
-  assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true, 'Toll Plaza should unlock at 20k');
+  assert.equal(runEmergencyWorkToCompletion(city, 'toll_plaza_project').ok, true, 'Toll Plaza should unlock at 20k');
   assert.equal(city.tollPlaza.built, true);
 
   // At 30,000 pop -> Aeroporto Grande (Fase III) unlocks!
@@ -2148,7 +2176,7 @@ test('permanent External Highway reaches outer map edge across expansions, spawn
     idx++;
     recomputeFieldsAndStats(city);
   }
-  assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true);
+  assert.equal(runEmergencyWorkToCompletion(city, 'toll_plaza_project').ok, true);
   assert.equal(city.tollPlaza.built, true);
   assert.equal(isTollPlazaTile(city, city.externalHighway.tollX, city.externalHighway.tollY), true);
 
@@ -2326,7 +2354,7 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.equal(city.stats.sportsCenterCount, 0);
   assert.equal(city.tollPlaza.built, false);
 
-  // Fund treasury and explicitly execute Obras orders
+  // Fund treasury and explicitly approve Obras evolutions (purchase is one-time approval only)
   city.money = 10_000_000;
   assert.equal(executeEmergencyAction(city, 'port_evolution').ok, true);
   assert.equal(executeEmergencyAction(city, 'sports_center_project').ok, true);
@@ -2335,14 +2363,29 @@ test('civic milestones unlock projects without auto-building; construction & upg
   assert.equal(executeEmergencyAction(city, 'airport_evolution').ok, true);
   assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
   assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true);
-  // Toll Plaza is immediate (0 durationMonths); multi-month works stay in pendingWorks until completed
-  assert.equal(city.tollPlaza.built, true, 'Expected immediate Toll Plaza built right after order');
-  assert.equal(city.stats.airportCount, 0, 'Multi-month Airport must NOT count as built mid-construction');
-  assert.equal(city.stats.stadiumCount, 0, 'Multi-month Stadium must NOT count as built mid-construction');
+  // Approval alone grants permission and raises monthly budget need, without building immediately
+  assert.equal(city.tollPlaza.built, false, 'Approving Toll Plaza must NOT build immediately before investment fund triggers');
+  assert.equal(city.stats.airportCount, 0, 'Airport must NOT count as built before investment builds & finishes it');
+  assert.equal(city.stats.stadiumCount, 0, 'Stadium must NOT count as built before investment builds & finishes it');
 
-  // Complete all active multi-month projects
-  while (city.pendingWorks.length > 0) {
+  // Keep area investments >= 100% so investment funds accrue and construct all approved works automatically
+  for (const area of BUDGET_AREA_ORDER) {
+    setCityBudgetTargetPct(city, area, Math.max(100, city.budgetTargetsPct?.[area] ?? 100));
+  }
+  for (let m = 0; m < 16; m++) {
     closeFinancialMonth(city);
+    if (
+      city.pendingWorks.length === 0 &&
+      city.stats.portCount >= 1 &&
+      city.stats.sportsCenterCount >= 1 &&
+      city.stats.busStationCount >= 2 &&
+      city.stats.metroStationCount >= 2 &&
+      city.stats.airportCount >= 1 &&
+      city.stats.stadiumCount >= 1 &&
+      city.tollPlaza.built
+    ) {
+      break;
+    }
   }
   recomputeFieldsAndStats(city);
 
@@ -2722,9 +2765,10 @@ test('Bus (4k) and Metro (14k) Public Transit unlock via Milestones, spawn buses
   assert.ok(unlockedIds.includes('civic_bus_system'), 'Expected Bus milestone at >= 4,000 pop');
   assert.ok(unlockedIds.includes('civic_metro_system'), 'Expected Metro milestone at >= 14,000 pop');
 
-  // Execute Bus Transit Project -> enters construction first, delivers >= 2 bus_station hubs & bus fleet only on completion!
+  // Approve Bus Transit Project -> enters construction via Infraestrutura investments, delivers >= 2 bus_station hubs & bus fleet only on completion!
   const busRes = executeEmergencyAction(city, 'bus_transit_project');
-  assert.equal(busRes.ok, true, `Expected bus_transit_project to succeed: ${busRes.reason ?? ''}`);
+  assert.equal(busRes.ok, true, `Expected bus_transit_project approval to succeed: ${busRes.reason ?? ''}`);
+  triggerApprovedWorkFromInvestments(city, 'bus_transit_project');
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.busStationCount, 0, 'Bus stations must NOT become operational while still under construction');
   while (city.pendingWorks.some((w) => w.actionId === 'bus_transit_project')) {
@@ -2954,7 +2998,9 @@ test('3 Shopping Mall designs unlock by population milestones (5x5 Small at 7.5k
 
   const resLv1 = executeEmergencyAction(city, 'shopping_evolution');
   assert.equal(resLv1.ok, true);
-  // Immediately after starting: reserved construction site is placed (5x5), Shopping is NOT operational yet!
+  assert.equal(city.stats.shoppingCount, 0, 'Approval alone must NOT immediately build Shopping');
+  triggerApprovedWorkFromInvestments(city, 'shopping_evolution');
+  // Once investment triggers construction: reserved construction site is placed (5x5), Shopping is NOT operational yet!
   assert.equal(city.stats.shoppingCount, 0, 'Shopping must NOT be operational during construction');
   assert.equal(
     city.tiles.filter((t) => t.construction?.targetType === 'shopping').length,
@@ -2968,7 +3014,7 @@ test('3 Shopping Mall designs unlock by population milestones (5x5 Small at 7.5k
   assert.equal(
     executeEmergencyAction(city, 'shopping_evolution').ok,
     false,
-    'Duplicate purchase must be blocked while work is in progress'
+    'Next shopping tier (16k pop) remains population-locked during Lv.1 construction'
   );
 
   // Pending work tracks remainingMonths & totalMonths for the progress bar button across months
@@ -3321,8 +3367,8 @@ test('civic_stadium_20k and civic_toll_20k track built status independently and 
   assert.equal(statuses.civic_toll_20k.unlocked, true);
   assert.equal(statuses.civic_toll_20k.built, false, 'Building Stadium must NOT mark Toll Plaza milestone as built');
 
-  // Now build Toll Plaza -> civic_toll_20k built=true
-  assert.equal(executeEmergencyAction(city, 'toll_plaza_project').ok, true);
+  // Now approve & build Toll Plaza -> civic_toll_20k built=true
+  assert.equal(runEmergencyWorkToCompletion(city, 'toll_plaza_project').ok, true);
   recomputeFieldsAndStats(city);
   statuses = Object.fromEntries(getCivicMilestoneStatuses(city).map((s) => [s.id, s]));
   assert.equal(statuses.civic_toll_20k.built, true);
@@ -3366,14 +3412,18 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   }
   evaluateCivicMilestones(city);
 
-  // 1. Start Airport (3 months, 4x10 = 40 tiles) -> deducts cost immediately, reserves 40 construction tiles, defers airportCount & airplanes
+  // 1. Approve Airport (3 months, 4x10 = 40 tiles) -> deducts approval cost immediately; investment triggers 40 construction tiles while deferring airportCount & airplanes
   const moneyBefore = city.money;
   const airOffer = getEmergencyOffers(city).find((o) => o.id === 'airport_evolution')!;
   assert.equal(airOffer.durationMonths, 3);
   const airStart = executeEmergencyAction(city, 'airport_evolution');
   assert.equal(airStart.ok, true);
   assert.equal(city.money, moneyBefore - airOffer.cost);
+  assert.equal(city.approvedTiers?.airport_evolution, 1);
   assert.equal(city.workTiers.airport_evolution, 1, 'Work tier must NOT advance before completion');
+  assert.equal(city.pendingWorks.length, 0, 'Approval alone must NOT spawn pendingWorks before investment builds it');
+
+  triggerApprovedWorkFromInvestments(city, 'airport_evolution');
   assert.equal(city.stats.airportCount, 0, 'Airport count must remain 0 during construction');
 
   const reservedAirportTiles = city.tiles.filter((t) => t.construction?.actionId === 'airport_evolution');
@@ -3384,17 +3434,27 @@ test('multi-month EMERGENCY_LINES works reserve map sites, block demolition/dupl
   const demoBlocked = demolishCityTile(city, reservedAirportTiles[0].x, reservedAirportTiles[0].y);
   assert.equal(demoBlocked.ok, false);
 
-  // Duplicate purchase is blocked while work is in progress
+  // Next tier (15k pop) is still population-locked while work is in progress
   const airOfferBusy = getEmergencyOffers(city).find((o) => o.id === 'airport_evolution')!;
   assert.equal(airOfferBusy.inProgress, true);
   assert.equal(airOfferBusy.unlocked, false);
   assert.equal(executeEmergencyAction(city, 'airport_evolution').ok, false);
 
-  // Also start Port (2 months) and Bus Transit (3 months)
+  // Also approve & trigger Port (2 months) and Bus Transit (3 months) via Infraestrutura investments
   const portStart = executeEmergencyAction(city, 'port_evolution');
   const busStart = executeEmergencyAction(city, 'bus_transit_project');
   assert.equal(portStart.ok, true);
   assert.equal(busStart.ok, true);
+  setCityBudgetTargetPct(city, 'infrastructure', 100);
+  // Seed enough infrastructure investment reserve to open both Port and Bus sites on the same closing
+  city.investmentFunds!.infrastructure = 2000;
+  closeFinancialMonth(city);
+  // Note: Airport advanced 1 month (3m -> 2m) during that closeFinancialMonth! Reset Airport remainingMonths to 3 for clean 3-month progression test below:
+  const airWorkInit = city.pendingWorks.find((w) => w.actionId === 'airport_evolution')!;
+  airWorkInit.remainingMonths = 3;
+  for (const t of reservedAirportTiles) {
+    if (t.construction) t.construction.remainingMonths = 3;
+  }
   assert.equal(city.stats.portCount, 0, 'Port count must remain 0 during construction');
   assert.equal(city.financials.revenue.tradeIncome, 0, 'Port tradeIncome must remain 0 until completion');
   assert.equal(city.stats.busStationCount, 0, 'Bus count must remain 0 during construction');
@@ -3549,7 +3609,8 @@ test('available works and milestones are ordered by first necessity and 2x2 mark
     ]
   );
 
-  // When Port Phase I completes (advancing to Phase II · 10,000 hab.), Sports Center (2,000 hab.) becomes first in the list
+  // When Port Phase I is approved (advancing to Phase II · 8,000 hab.), Sports Center (2,000 hab.) becomes first in the list
+  city.approvedTiers!.port_evolution = 1;
   city.workTiers.port_evolution = 2;
   const reorderedOffers = getEmergencyOffers(city);
   assert.equal(reorderedOffers[0].id, 'sports_center_project', 'Sports Center (2k) should move ahead of Port Phase II (10k)');
@@ -3664,6 +3725,7 @@ test('Mercado (2x2) is a basic early-game commercial establishment that boosts l
   assert.equal(city.workTiers.sports_center_project, 1);
   const startSports1 = executeEmergencyAction(city, 'sports_center_project');
   assert.equal(startSports1.ok, true);
+  triggerApprovedWorkFromInvestments(city, 'sports_center_project');
   const reservedSports1 = city.tiles.filter((t) => t.construction?.actionId === 'sports_center_project');
   assert.equal(reservedSports1.length, 4, '1st Sports Center must reserve a 2×2 (4-tile) footprint');
   while (city.pendingWorks.length > 0) {
@@ -3689,6 +3751,7 @@ test('Mercado (2x2) is a basic early-game commercial establishment that boosts l
   // Build 2nd Sports Center (Tier 2 -> 4×4 = 16 tiles)
   const startSports2 = executeEmergencyAction(city, 'sports_center_project');
   assert.equal(startSports2.ok, true);
+  triggerApprovedWorkFromInvestments(city, 'sports_center_project');
   const reservedSports2 = city.tiles.filter((t) => t.construction?.actionId === 'sports_center_project');
   assert.equal(reservedSports2.length, 16, '2nd Sports Center must reserve a 4×4 (16-tile) footprint');
   while (city.pendingWorks.length > 0) {
@@ -3719,23 +3782,23 @@ test('Mercado (2x2) is a basic early-game commercial establishment that boosts l
   assert.equal(getMaxStadiumsForPopulation(199999), 2);
   assert.equal(getMaxStadiumsForPopulation(200000), 3);
 
-  // At 25,000 inhabitants, 1st Stadium (Tier 1) can be built, Tier 2 expands complex,
-  // but Tier 3 (which adds a 2nd Stadium) MUST remain locked until 100,000 inhabitants!
-  city.totalPopulation = 25000;
-  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
-  while (city.pendingWorks.length > 0) {
-    closeFinancialMonth(city);
+  // At 26,000+ real inhabitants, 1st Stadium (Tier 1) and Tier 2 complex expansion can be built,
+  // while Tier 3 (which adds a 2nd Stadium) MUST remain locked until 100,000 inhabitants!
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 26000) {
+      t.type = 'residential';
+      t.level = 3;
+      recomputeFieldsAndStats(city);
+    }
   }
+  assert.ok(city.totalPopulation >= 25000);
+  assert.equal(runEmergencyWorkToCompletion(city, 'landmark_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.stadiumCount, 1);
   assert.equal(city.workTiers.landmark_project, 2);
 
-  // Tier 2 (Arena & Esplanada Cultural expansion, doesn't add a 2nd stadium) can be built at 45,000 hab.
-  city.totalPopulation = 45000;
-  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
-  while (city.pendingWorks.length > 0) {
-    closeFinancialMonth(city);
-  }
+  // Tier 2 (Arena & Esplanada Cultural expansion at >=25k, doesn't add a 2nd stadium) builds without raising 2nd stadium
+  assert.equal(runEmergencyWorkToCompletion(city, 'landmark_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.stadiumCount, 1);
   assert.equal(city.workTiers.landmark_project, 3);
@@ -3781,39 +3844,32 @@ test('5 new evolutionary landmarks (Clean Energy, Hospital 3x3, Tech University,
   assert.ok(city.totalPopulation >= 22000);
 
   // 1. Build Clean Energy Tier 1 (2×2 Solar Power Plant)
-  assert.equal(executeEmergencyAction(city, 'clean_energy_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'clean_energy_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.cleanEnergyCount, 1);
   assert.equal(city.stats.cleanEnergyLevel, 1);
 
   // 2. Build Hospital Central Tier 1 (3×3 with Helipad)
-  assert.equal(executeEmergencyAction(city, 'hospital_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'hospital_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.hospitalCount, 1);
   assert.ok(city.stats.helipadCount >= 1, 'Hospital Central 3×3 should register a rooftop helipad');
 
   // 3. Build Tech University Tier 1 (3×3) and Tier 2 (4×4 Tech Park with Helipad)
-  assert.equal(executeEmergencyAction(city, 'tech_university_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
-  assert.equal(executeEmergencyAction(city, 'tech_university_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'tech_university_project').ok, true);
+  assert.equal(runEmergencyWorkToCompletion(city, 'tech_university_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.ok(city.stats.universityCount >= 2);
   assert.ok(city.stats.helipadCount >= 2, '4×4 Tech Park should add a 2nd rooftop helipad');
 
   // 4. Build Amusement Park Tier 1 (3×3 with Illuminated Ferris Wheel)
-  assert.equal(executeEmergencyAction(city, 'amusement_park_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'amusement_park_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.amusementParkCount, 1);
 
   // 5. Build Port + Rail Freight Terminal (3×2) and verify Freight Convoys spawn between Industry, Rail Terminal, and Port
-  assert.equal(executeEmergencyAction(city, 'port_evolution').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
-  assert.equal(executeEmergencyAction(city, 'rail_freight_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'port_evolution').ok, true);
+  assert.equal(runEmergencyWorkToCompletion(city, 'rail_freight_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.portCount, 1);
   assert.equal(city.stats.railTerminalCount, 1);
@@ -3843,8 +3899,7 @@ test('5 new evolutionary landmarks (Clean Energy, Hospital 3x3, Tech University,
   );
 
   // 7. Build Stadium and verify Stadium Match Day triggers fireworks & tourism bonus
-  assert.equal(executeEmergencyAction(city, 'landmark_project').ok, true);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  assert.equal(runEmergencyWorkToCompletion(city, 'landmark_project').ok, true);
   recomputeFieldsAndStats(city);
   assert.equal(city.stats.stadiumCount, 1);
   assert.equal(triggerStadiumMatchDay(city, 2).ok, true);
@@ -3965,11 +4020,8 @@ test('dynamic parking lots allow live cars to enter stalls, park, and exit back 
   }
   // Unlock and construct a 5x5 Shopping Mall Lv.1 with 7 live parking bays adjacent to the road network
   city.totalPopulation = Math.max(city.totalPopulation, 8500);
-  const res = executeEmergencyAction(city, 'shopping_evolution');
+  const res = runEmergencyWorkToCompletion(city, 'shopping_evolution');
   assert.equal(res.ok, true, `Expected 5x5 Shopping Mall work to start: ${res.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) {
-    closeFinancialMonth(city);
-  }
   recomputeFieldsAndStats(city);
   assert.ok(city.stats.shoppingCount >= 1, 'Expected at least 1 shopping mall');
 
@@ -4023,11 +4075,8 @@ test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, an
 
   // 1. Build Tier 1 Train Station (2x4 or 4x2) with cross-map railway corridor
   city.totalPopulation = Math.max(city.totalPopulation, 40_000);
-  const railLv1 = executeEmergencyAction(city, 'rail_freight_project');
-  assert.equal(railLv1.ok, true, `Expected Lv.1 train station work to start: ${railLv1.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) {
-    closeFinancialMonth(city);
-  }
+  const railLv1 = runEmergencyWorkToCompletion(city, 'rail_freight_project');
+  assert.equal(railLv1.ok, true, `Expected Lv.1 train station work to complete: ${railLv1.reason ?? ''}`);
   recomputeFieldsAndStats(city);
 
   const rc1 = city.railCorridor;
@@ -4072,11 +4121,8 @@ test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, an
 
   // 2. Upgrade to Tier 2 Central Train Station (4x8 or 8x4) on the same corridor
   city.totalPopulation = Math.max(city.totalPopulation, 80_000);
-  const railLv2 = executeEmergencyAction(city, 'rail_freight_project');
-  assert.equal(railLv2.ok, true, `Expected Lv.2 train station upgrade to start: ${railLv2.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) {
-    closeFinancialMonth(city);
-  }
+  const railLv2 = runEmergencyWorkToCompletion(city, 'rail_freight_project');
+  assert.equal(railLv2.ok, true, `Expected Lv.2 train station upgrade to complete: ${railLv2.reason ?? ''}`);
   recomputeFieldsAndStats(city);
 
   const stLv2Tiles = city.tiles.filter((t) => t.type === 'rail_terminal');
@@ -4113,13 +4159,11 @@ test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, an
 
   // 4. Duplicate Sports Centers (2x2 & 4x4) and Hospitals (3x3) enforce >= 32 blocks spacing & distinct lotRotation
   city.totalPopulation = 80_000;
-  const sp1 = executeEmergencyAction(city, 'sports_center_project');
-  assert.equal(sp1.ok, true, `Expected 1st sports center to start: ${sp1.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  const sp1 = runEmergencyWorkToCompletion(city, 'sports_center_project');
+  assert.equal(sp1.ok, true, `Expected 1st sports center to complete: ${sp1.reason ?? ''}`);
   city.totalPopulation = 80_000;
-  const sp2 = executeEmergencyAction(city, 'sports_center_project');
-  assert.equal(sp2.ok, true, `Expected 2nd sports center to start: ${sp2.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  const sp2 = runEmergencyWorkToCompletion(city, 'sports_center_project');
+  assert.equal(sp2.ok, true, `Expected 2nd sports center to complete: ${sp2.reason ?? ''}`);
 
   const sportAnchors = city.tiles.filter(
     (t) => t.establishmentId === 'sports_court' && t.lotRole !== 'part' && (t.lotWidth ?? 1) >= 2 && (t.lotHeight ?? 1) >= 2
@@ -4134,13 +4178,11 @@ test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, an
   );
 
   city.totalPopulation = 80_000;
-  const h1 = executeEmergencyAction(city, 'hospital_project');
-  assert.equal(h1.ok, true, `Expected 1st hospital to start: ${h1.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  const h1 = runEmergencyWorkToCompletion(city, 'hospital_project');
+  assert.equal(h1.ok, true, `Expected 1st hospital to complete: ${h1.reason ?? ''}`);
   city.totalPopulation = 80_000;
-  const h2 = executeEmergencyAction(city, 'hospital_project');
-  assert.equal(h2.ok, true, `Expected 2nd hospital to start: ${h2.reason ?? ''}`);
-  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  const h2 = runEmergencyWorkToCompletion(city, 'hospital_project');
+  assert.equal(h2.ok, true, `Expected 2nd hospital to complete: ${h2.reason ?? ''}`);
 
   const hospAnchors = city.tiles.filter(
     (t) => t.establishmentId === 'general_hospital' && t.lotRole !== 'part' && (t.lotWidth ?? 1) >= 3
@@ -4170,3 +4212,268 @@ test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, an
   );
 });
 
+test('one-time evolution approval increases monthly investment need, deducts unitInvestmentCost from investmentFunds when coverage>=100%, and auto-builds new units without re-approval', () => {
+  const city = createNewCity(612345, 'medium');
+  city.money = 5_000_000;
+
+  // Raise population above 7,000 so both Sports Center tiers (2k & 6k) unlock
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 7200) {
+      t.type = 'residential';
+      t.level = 3;
+      recomputeFieldsAndStats(city);
+    }
+  }
+
+  const entertainmentSpec = EMERGENCY_LINES.find((l) => l.id === 'sports_center_project')!;
+  const tier1Spec = entertainmentSpec.tiers[0];
+  const neededBeforeApproval = city.stats.coverage.entertainment.needed;
+
+  // 1. Approving Tier 1 only registers one-time approval, does NOT start building immediately, and raises monthly needed budget!
+  const approveRes = executeEmergencyAction(city, 'sports_center_project');
+  assert.equal(approveRes.ok, true);
+  assert.equal(city.approvedTiers?.sports_center_project, 1);
+  assert.equal(city.pendingWorks.length, 0, 'Approval alone must NOT immediately start map construction');
+  assert.equal(city.stats.sportsCenterCount, 0);
+  assert.equal(
+    city.stats.coverage.entertainment.needed,
+    neededBeforeApproval + tier1Spec.monthlyNeedIncrease,
+    'Approving evolution must permanently increase monthly investment needed'
+  );
+
+  // 2. When linked area coverage is < 100%, even ample funds in investmentFunds must NOT build approved works
+  setCityBudgetTargetPct(city, 'entertainment', 70);
+  city.investmentFunds!.entertainment = 5000;
+  closeFinancialMonth(city);
+  assert.equal(city.pendingWorks.length, 0, 'Approved works must NOT build while entertainment coverage < 100%');
+
+  // 3. Raising entertainment coverage to >= 100% triggers construction automatically and deducts unitInvestmentCost from investmentFunds!
+  setCityBudgetTargetPct(city, 'entertainment', 100);
+  const fundBeforeTrigger = city.investmentFunds!.entertainment + city.budgets.entertainment;
+  closeFinancialMonth(city);
+  assert.equal(
+    city.pendingWorks.some((w) => w.actionId === 'sports_center_project'),
+    true,
+    'Expected investmentFunds >= unitInvestmentCost at 100% coverage to auto-start Sports Center construction'
+  );
+  assert.equal(
+    city.investmentFunds!.entertainment,
+    fundBeforeTrigger - tier1Spec.unitInvestmentCost,
+    'Auto-construction must deduct unitInvestmentCost from investmentFunds[area]'
+  );
+
+  // Finish Tier 1 construction
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.sportsCenterCount, 1);
+
+  // 4. Approve Tier 2 (max tier) -> once fullyApproved, it cannot be approved/purchased again!
+  assert.equal(executeEmergencyAction(city, 'sports_center_project').ok, true);
+  const maxedOffer = getEmergencyOffers(city).find((o) => o.id === 'sports_center_project')!;
+  assert.equal(maxedOffer.fullyApproved, true);
+  assert.equal(executeEmergencyAction(city, 'sports_center_project').ok, false, 'Maxed approval is a one-time purchase only');
+
+  // Complete Tier 2 (4x4 Complex)
+  triggerApprovedWorkFromInvestments(city, 'sports_center_project');
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.equal(city.stats.sportsCenterCount, 2);
+
+  // 5. Expand east & grow real population past 45,000 -> city automatically builds a 3rd Sports Center using investmentFunds WITHOUT any re-approval!
+  expandCityLand(city, 'leste');
+  expandCityLand(city, 'sul');
+  for (const t of city.tiles) {
+    if (t.type === 'residential' && !t.establishmentId && t.level < 4) {
+      t.level = 4;
+    }
+  }
+  recomputeFieldsAndStats(city);
+  for (const t of city.tiles) {
+    if ((t.type === 'grass' || t.type === 'forest') && city.totalPopulation < 46_000) {
+      t.type = 'residential';
+      t.level = 4;
+      recomputeFieldsAndStats(city);
+    }
+  }
+  assert.ok(city.totalPopulation >= 45_000, `Expected real pop >= 45,000, got ${city.totalPopulation}`);
+  city.investmentFunds!.entertainment = 10_000;
+  setCityBudgetTargetPct(city, 'entertainment', 100);
+  closeFinancialMonth(city);
+  assert.equal(
+    city.pendingWorks.some((w) => w.actionId === 'sports_center_project'),
+    true,
+    'Expected approved Sports Center line to auto-start an additional unit as city grows without re-approval'
+  );
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.sportsCenterCount >= 3, `Expected >= 3 sports centers after auto-expansion, got ${city.stats.sportsCenterCount}`);
+});
+
+test('evictions and abandonments remain silent without eviction news notifications, decay sounds, or city_abandoned alerts', () => {
+  const city = createNewCity(612399, 'medium');
+  for (let i = 0; i < 30; i++) {
+    stepCityTick(city);
+  }
+
+  // Trigger harsh residential taxation and drop security so buildings become abandoned
+  setTaxRate(city, 'residential', 25);
+  setCityBudget(city, 'security', 0);
+  city.news = [];
+  city.pendingSounds = [];
+
+  for (let m = 0; m < 4; m++) {
+    closeFinancialMonth(city);
+  }
+  for (let i = 0; i < 20; i++) {
+    stepCityTick(city);
+  }
+
+  const abandonedCount = city.tiles.filter((t) => t.type === 'abandoned').length;
+  assert.ok(abandonedCount > 0, `Expected abusive taxes to create abandoned tiles, got ${abandonedCount}`);
+
+  const evictionNews = city.news.filter((n) =>
+    /despejo|abandonad|êxodo|esvaziaram|fecharam por impostos/i.test(n.text)
+  );
+  assert.equal(
+    evictionNews.length,
+    0,
+    `Evictions/abandonments must not emit news notifications, saw: ${evictionNews.map((n) => n.text).join(' | ')}`
+  );
+  assert.equal(
+    city.pendingSounds.some((s) => s.type === 'decay'),
+    false,
+    'Evictions/abandonments must not emit decay sound alerts'
+  );
+
+  const needs = computeCityNeeds(city);
+  assert.equal(
+    needs.some((n) => n.id === 'city_abandoned'),
+    false,
+    'computeCityNeeds must not emit city_abandoned eviction notifications'
+  );
+});
+
+test('railway routes around the outer perimeter of the city and keeps >=1-block clearance from all buildings permanently', () => {
+  const isNonRailBuilding = (type: string) =>
+    type !== 'grass' &&
+    type !== 'forest' &&
+    type !== 'water' &&
+    type !== 'road' &&
+    type !== 'bridge' &&
+    type !== 'rail_track' &&
+    type !== 'rail_terminal';
+
+  // Scenario A: normal city built around center
+  const city = createNewCity(771199, 'easy');
+  city.money = 8_000_000;
+  for (let i = 0; i < 35; i++) {
+    stepCityTick(city);
+  }
+
+  // Record built city bounding box BEFORE railway is built
+  let minBx = Infinity;
+  let maxBx = -Infinity;
+  let minBy = Infinity;
+  let maxBy = -Infinity;
+  for (const t of city.tiles) {
+    if (isNonRailBuilding(t.type)) {
+      if (t.x < minBx) minBx = t.x;
+      if (t.x > maxBx) maxBx = t.x;
+      if (t.y < minBy) minBy = t.y;
+      if (t.y > maxBy) maxBy = t.y;
+    }
+  }
+  assert.ok(maxBx > minBx && maxBy > minBy, 'Expected built urban core before railway placement');
+
+  city.totalPopulation = Math.max(city.totalPopulation, 45_000);
+  const railLv1 = runEmergencyWorkToCompletion(city, 'rail_freight_project');
+  assert.equal(railLv1.ok, true, `Expected Lv.1 railway to complete: ${railLv1.reason ?? ''}`);
+  recomputeFieldsAndStats(city);
+
+  const rc = city.railCorridor;
+  assert.ok(rc, 'Expected railCorridor to be created');
+
+  // Verify the railway line does NOT cut through the middle of the built city
+  const crossMin = rc.axis === 'ns' ? minBx : minBy;
+  const crossMax = rc.axis === 'ns' ? maxBx : maxBy;
+  const isOutsideUrbanCore = rc.lineCoord <= crossMin - 2 || rc.lineCoord >= crossMax + 2;
+  assert.equal(
+    isOutsideUrbanCore,
+    true,
+    `Expected railway lineCoord=${rc.lineCoord} (${rc.axis}) to route outside urban core [${crossMin}..${crossMax}] with >=1-block buffer`
+  );
+
+  // Verify EVERY rail_track tile has ZERO adjacent non-station buildings within 1 block (Chebyshev <= 1)
+  const checkRailClearance = (label: string) => {
+    const railTrackTiles = city.tiles.filter((t) => t.type === 'rail_track');
+    assert.ok(railTrackTiles.length > 0, `${label}: expected rail_track tiles on map`);
+    for (const rt of railTrackTiles) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nb = getTile(city, rt.x + dx, rt.y + dy);
+          if (!nb) continue;
+          assert.equal(
+            isNonRailBuilding(nb.type),
+            false,
+            `${label}: rail_track at (${rt.x},${rt.y}) has adjacent building '${nb.type}' at (${nb.x},${nb.y}) violating 1-block setback`
+          );
+        }
+      }
+    }
+  };
+  checkRailClearance('After Lv.1 railway build');
+
+  // Step 50 growth ticks with low taxes & high budgets so the city expands aggressively, and confirm permanent >=1-block setback
+  setTaxRate(city, 'residential', 4);
+  setTaxRate(city, 'commercial', 4);
+  setTaxRate(city, 'industrial', 4);
+  for (let i = 0; i < 50; i++) {
+    stepCityTick(city);
+  }
+  checkRailClearance('After 50 urban growth ticks');
+
+  // Scenario B: heavily packed city across the entire central grid -> auto-expands perimeter so railway still avoids buildings by >=1 block
+  const packed = createNewCity(554433, 'easy');
+  packed.money = 12_000_000;
+  for (const t of packed.tiles) {
+    if (
+      (t.type === 'grass' || t.type === 'forest') &&
+      t.x >= 2 &&
+      t.x <= packed.gridWidth - 3 &&
+      t.y >= 2 &&
+      t.y <= packed.gridHeight - 3
+    ) {
+      t.type = 'residential';
+      t.level = 2;
+    }
+  }
+  recomputeFieldsAndStats(packed);
+  packed.totalPopulation = Math.max(packed.totalPopulation, 45_000);
+  const packedRail = runEmergencyWorkToCompletion(packed, 'rail_freight_project');
+  assert.equal(packedRail.ok, true, `Expected packed city railway to succeed via outer-edge perimeter routing: ${packedRail.reason ?? ''}`);
+  recomputeFieldsAndStats(packed);
+
+  const packedTrackTiles = packed.tiles.filter((t) => t.type === 'rail_track');
+  assert.ok(packedTrackTiles.length > 0, 'Expected packed city to lay rail_track tiles');
+  for (const rt of packedTrackTiles) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nb = getTile(packed, rt.x + dx, rt.y + dy);
+        if (!nb) continue;
+        assert.equal(
+          isNonRailBuilding(nb.type),
+          false,
+          `Packed city: rail_track at (${rt.x},${rt.y}) has adjacent building '${nb.type}' at (${nb.x},${nb.y})`
+        );
+      }
+    }
+  }
+});

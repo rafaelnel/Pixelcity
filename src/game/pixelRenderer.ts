@@ -8217,7 +8217,15 @@ function drawRailRiverBridge64(
   ctx.restore();
 }
 
-/** Draw a single 3D isometric train locomotive or coach car gliding along the cross-map railway corridor */
+/**
+ * Draw a detailed 64-bit Pixópolis-style isometric train locomotive or colorful wagon:
+ * - Locomotive: cowcatcher, stepped engine boiler & brass bands, brass steam dome, tall smokestack
+ *   with animated billowing smoke puffs, elevated engine cab ("casa da máquina") with overhanging
+ *   roof & lit windows, steel wheels with reciprocating piston rod, and warm headlamp.
+ * - Wagons: vibrant multi-color city-palette liveries (turquoise, amber, emerald, cobalt boxcar,
+ *   berry express, and rear scarlet observation caboose with cupola & red tail lantern), framed
+ *   windows, arched roofs/vents, wheel bogies, and dark steel couplers.
+ */
 function drawRailTrainCar64(
   ctx: CanvasRenderingContext2D,
   sx: number,
@@ -8230,85 +8238,597 @@ function drawRailTrainCar64(
   isExpress: boolean,
   carIndex: number,
   glowStrength: number,
-  bridgeLiftPx: number
+  bridgeLiftPx: number,
+  timeSeconds: number = 0,
+  isStopped: boolean = false,
+  isLastCar: boolean = false,
+  trainIndex: number = 0
 ): void {
   const screenAxis = getRotatedRailScreenAxis(axis, rotation);
   const hw = TILE_HW * zoom;
   const hh = TILE_HH * zoom;
-  const baseZ = 2.0 + bridgeLiftPx;
+  const baseZ = 1.9 + bridgeLiftPx;
   const pt = (u: number, wv: number, z: number = 0): [number, number] => [
     sx + (u - wv) * hw,
     sy + (u + wv) * hh - z * zoom,
   ];
 
-  // Car spans [-0.39..+0.39] along screenAxis and [-0.15..+0.15] across
-  const u0 = screenAxis === 'u' ? -0.39 : -0.15;
-  const u1 = screenAxis === 'u' ? 0.39 : 0.15;
-  const v0 = screenAxis === 'v' ? -0.39 : -0.15;
-  const v1 = screenAxis === 'v' ? 0.39 : 0.15;
-
-  // Undercarriage bogie frame
-  drawIsoSpanBox64(ctx, pt, u0, u1, v0, v1, baseZ, 1.6, {
-    top: '#1e293b',
-    left: '#0f172a',
-    right: '#020617',
-  });
-
-  // Main carbody livery
-  const freightPalette = [
-    { top: '#38bdf8', topHi: '#7dd3fc', left: '#0284c7', leftBot: '#0369a1', right: '#075985', rightBot: '#0c4a6e' },
-    { top: '#4ade80', topHi: '#86efac', left: '#16a34a', leftBot: '#15803d', right: '#166534', rightBot: '#14532d' },
-    { top: '#fbbf24', topHi: '#fde68a', left: '#d97706', leftBot: '#b45309', right: '#92400e', rightBot: '#78350f' },
-    { top: '#f87171', topHi: '#fca5a5', left: '#dc2626', leftBot: '#b91c1c', right: '#991b1b', rightBot: '#7f1d1d' },
-  ];
-  const bodyColors = isLocomotive
-    ? isExpress
-      ? { top: '#f8fafc', topHi: '#ffffff', left: '#e2e8f0', leftBot: '#0284c7', right: '#94a3b8', rightBot: '#0369a1' }
-      : { top: '#ef4444', topHi: '#f87171', left: '#dc2626', leftBot: '#991b1b', right: '#991b1b', rightBot: '#7f1d1d' }
-    : isExpress
-      ? { top: '#f8fafc', topHi: '#ffffff', left: '#e2e8f0', leftBot: '#38bdf8', right: '#cbd5e1', rightBot: '#0284c7' }
-      : freightPalette[carIndex % freightPalette.length];
-
-  const carH = isLocomotive ? 7.6 : isExpress ? 6.8 : 6.4;
-  drawIsoSpanBox64(ctx, pt, u0, u1, v0, v1, baseZ + 1.6, carH, bodyColors);
-
-  // Illuminated passenger windows (for express coaches & locomotive cab)
-  if ((isExpress || isLocomotive) && zoom >= 0.45) {
-    const winCol = glowStrength > 0.2 ? '#fef08a' : '#bae6fd';
-    if (screenAxis === 'u') {
-      const [w0x, w0y] = pt(u0 + 0.08, v1, baseZ + 5.4);
-      const [w1x, w1y] = pt(u1 - 0.08, v1, baseZ + 5.4);
-      drawLine64(ctx, w0x, w0y, w1x, w1y, winCol, Math.max(1.2, 2.0 * zoom));
-    } else {
-      const [w0x, w0y] = pt(u1, v0 + 0.08, baseZ + 5.4);
-      const [w1x, w1y] = pt(u1, v1 - 0.08, baseZ + 5.4);
-      drawLine64(ctx, w0x, w0y, w1x, w1y, winCol, Math.max(1.2, 2.0 * zoom));
-    }
+  // Convert world travel direction `dirSign` into screen-axis forward sign (`sSign`: +1 = toward front/camera, -1 = away)
+  let sSign: 1 | -1 = dirSign;
+  if (axis === 'ns') {
+    sSign = rotation === 0 || rotation === 3 ? dirSign : (-dirSign as 1 | -1);
+  } else {
+    sSign = rotation === 0 || rotation === 1 ? dirSign : (-dirSign as 1 | -1);
   }
 
-  // Locomotive warm headlamp beam
-  if (isLocomotive) {
-    // Convert world dirSign along corridor into rotated screen sign
-    let screenAlongSign = dirSign;
-    if (axis === 'ns') {
-      screenAlongSign = rotation === 0 || rotation === 3 ? dirSign : (-dirSign as 1 | -1);
-    } else {
-      screenAlongSign = rotation === 0 || rotation === 1 ? dirSign : (-dirSign as 1 | -1);
+  // Oriented helpers: `localAlong > 0` is ALWAYS the FRONT of the car; `localAlong < 0` is the REAR
+  const ptA = (localAlong: number, across: number, z: number = 0): [number, number] => {
+    const a = localAlong * sSign;
+    return screenAxis === 'u' ? pt(a, across, z) : pt(across, a, z);
+  };
+
+  const boxA = (
+    a0: number,
+    a1: number,
+    c0: number,
+    c1: number,
+    z0: number,
+    h: number,
+    colors: {
+      top: string;
+      topHi?: string;
+      left: string;
+      leftBot?: string;
+      right: string;
+      rightBot?: string;
+      parapetColor?: string;
     }
-    const frontAlong = screenAlongSign * 0.41;
-    const [hlX, hlY] =
-      screenAxis === 'u'
-        ? pt(frontAlong, 0, baseZ + 4.8)
-        : pt(0, frontAlong, baseZ + 4.8);
+  ) => {
+    const p0 = a0 * sSign;
+    const p1 = a1 * sSign;
+    const mnA = Math.min(p0, p1);
+    const mxA = Math.max(p0, p1);
+    const mnC = Math.min(c0, c1);
+    const mxC = Math.max(c0, c1);
+    if (screenAxis === 'u') {
+      drawIsoSpanBox64(ctx, pt, mnA, mxA, mnC, mxC, z0, h, colors, Math.max(0.65, 0.85 * zoom));
+    } else {
+      drawIsoSpanBox64(ctx, pt, mnC, mxC, mnA, mxA, z0, h, colors, Math.max(0.65, 0.85 * zoom));
+    }
+  };
+
+  const quadA = (
+    a0: number,
+    a1: number,
+    c0: number,
+    c1: number,
+    z: number,
+    fill: string,
+    stroke?: string
+  ) => {
+    const q0 = ptA(a0, c0, z);
+    const q1 = ptA(a1, c0, z);
+    const q2 = ptA(a1, c1, z);
+    const q3 = ptA(a0, c1, z);
+    ctx.beginPath();
+    ctx.moveTo(q0[0], q0[1]);
+    ctx.lineTo(q1[0], q1[1]);
+    ctx.lineTo(q2[0], q2[1]);
+    ctx.lineTo(q3[0], q3[1]);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = Math.max(0.6, 0.8 * zoom);
+      ctx.stroke();
+    }
+  };
+
+  // Draw a crisp framed window on the visible camera-facing side (`across = +sideC`)
+  const drawSideWindow = (
+    a0: number,
+    a1: number,
+    sideC: number,
+    z0: number,
+    z1: number,
+    glassFill: string,
+    frameStroke: string = '#1e293b'
+  ) => {
+    const w00 = ptA(a0, sideC, z0);
+    const w10 = ptA(a1, sideC, z0);
+    const w11 = ptA(a1, sideC, z1);
+    const w01 = ptA(a0, sideC, z1);
+    ctx.beginPath();
+    ctx.moveTo(w00[0], w00[1]);
+    ctx.lineTo(w10[0], w10[1]);
+    ctx.lineTo(w11[0], w11[1]);
+    ctx.lineTo(w01[0], w01[1]);
+    ctx.closePath();
+    ctx.fillStyle = glassFill;
+    ctx.fill();
+    ctx.strokeStyle = frameStroke;
+    ctx.lineWidth = Math.max(0.65, 0.9 * zoom);
+    ctx.stroke();
+    // Subtle sunlit glass reflection diagonal in daytime
+    if (zoom >= 0.7 && glowStrength < 0.35) {
+      const g0 = ptA(a0 + (a1 - a0) * 0.2, sideC, z1 - 0.35);
+      const g1 = ptA(a0 + (a1 - a0) * 0.55, sideC, z0 + 0.35);
+      drawLine64(ctx, g0[0], g0[1], g1[0], g1[1], 'rgba(255, 255, 255, 0.55)', Math.max(0.55, 0.8 * zoom));
+    }
+  };
+
+  // Draw visible steel wheel bogie circles on the camera-facing flank (`across = +0.165`)
+  const drawWheelSet = (positions: number[], hubColor: string, drawRod: boolean) => {
+    if (zoom < 0.38) return;
+    const wheelR = Math.max(1.2, (drawRod ? 2.25 : 1.85) * zoom);
+    const centers: Array<[number, number]> = [];
+    for (const wa of positions) {
+      const [wx, wy] = ptA(wa, 0.165, baseZ + 0.85);
+      centers.push([wx, wy]);
+      ctx.beginPath();
+      ctx.arc(wx, wy, wheelR, 0, Math.PI * 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(wx, wy, wheelR * 0.68, 0, Math.PI * 2);
+      ctx.fillStyle = hubColor;
+      ctx.fill();
+      if (zoom >= 0.65) {
+        ctx.beginPath();
+        ctx.arc(wx, wy, wheelR * 0.28, 0, Math.PI * 2);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fill();
+      }
+    }
+    if (drawRod && centers.length >= 2) {
+      const phase = isStopped ? 0 : timeSeconds * 9.5;
+      const rodOffY = Math.sin(phase) * 0.65 * zoom;
+      const rodOffX = Math.cos(phase) * 0.5 * zoom;
+      const first = centers[0];
+      const last = centers[centers.length - 1];
+      drawLine64(
+        ctx,
+        first[0] + rodOffX,
+        first[1] + rodOffY,
+        last[0] + rodOffX,
+        last[1] + rodOffY,
+        '#f1f5f9',
+        Math.max(0.9, 1.35 * zoom)
+      );
+      drawLine64(
+        ctx,
+        first[0] + rodOffX,
+        first[1] + rodOffY + 0.5 * zoom,
+        last[0] + rodOffX,
+        last[1] + rodOffY + 0.5 * zoom,
+        '#475569',
+        Math.max(0.6, 0.8 * zoom)
+      );
+    }
+  };
+
+  ctx.save();
+
+  // 1. Soft Ground Shadow resting on the rail ballast
+  quadA(-0.44, 0.44, -0.21, 0.22, baseZ - 0.15, 'rgba(15, 23, 42, 0.34)');
+
+  // 2. Front & Rear Steel Couplers linking cars into a continuous consist
+  if (!isLocomotive) {
+    boxA(0.39, 0.46, -0.055, 0.055, baseZ + 0.65, 0.95, {
+      top: '#475569',
+      left: '#334155',
+      right: '#0f172a',
+    });
+  }
+  if (!isLastCar) {
+    boxA(-0.46, -0.39, -0.055, 0.055, baseZ + 0.65, 0.95, {
+      top: '#475569',
+      left: '#334155',
+      right: '#0f172a',
+    });
+  }
+
+  const winCol = glowStrength > 0.22 ? '#fef08a' : '#bae6fd';
+  const warmWinCol = glowStrength > 0.22 ? '#fde047' : '#e0f2fe';
+
+  if (isLocomotive) {
+    // =========================================================================
+    // LOCOMOTIVE: Cowcatcher + Boiler Hood + Brass Dome + Chimney + Smoke + Engine Cab ("Casa da Máquina")
+    // =========================================================================
+    const isBlueEngine = trainIndex % 2 === 1 || isExpress;
+    const mainLivery = isBlueEngine
+      ? { top: '#3b82f6', topHi: '#60a5fa', left: '#2563eb', leftBot: '#1d4ed8', right: '#1e40af', rightBot: '#1e3a8a', parapetColor: '#1d4ed8' }
+      : { top: '#ef4444', topHi: '#f87171', left: '#dc2626', leftBot: '#b91c1c', right: '#991b1b', rightBot: '#7f1d1d', parapetColor: '#b91c1c' };
+    const wheelHub = isBlueEngine ? '#f59e0b' : '#dc2626';
+
+    // Dark iron underframe chassis & red/gold front pilot beam
+    boxA(-0.42, 0.41, -0.16, 0.16, baseZ, 1.8, {
+      top: '#334155',
+      topHi: '#475569',
+      left: '#1e293b',
+      leftBot: '#0f172a',
+      right: '#0f172a',
+      rightBot: '#020617',
+    });
+
+    // Angled front cowcatcher / pilot ("Limpa-trilhos") with safety gold bumper
+    const drawCowcatcher = () => {
+      boxA(0.39, 0.47, -0.145, 0.145, baseZ + 0.1, 1.55, {
+        top: '#facc15',
+        topHi: '#fef08a',
+        left: '#d97706',
+        leftBot: '#1e293b',
+        right: '#92400e',
+        rightBot: '#0f172a',
+      });
+      // Cowcatcher iron grille wedge pointing forward
+      const cL = ptA(0.42, -0.13, baseZ + 0.15);
+      const cR = ptA(0.42, 0.13, baseZ + 0.15);
+      const cTip = ptA(0.51, 0, baseZ + 0.1);
+      const cTop = ptA(0.44, 0, baseZ + 1.55);
+      ctx.beginPath();
+      ctx.moveTo(cL[0], cL[1]);
+      ctx.lineTo(cTip[0], cTip[1]);
+      ctx.lineTo(cR[0], cR[1]);
+      ctx.lineTo(cTop[0], cTop[1]);
+      ctx.closePath();
+      ctx.fillStyle = '#334155';
+      ctx.fill();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = Math.max(0.7, 0.9 * zoom);
+      ctx.stroke();
+    };
+
+    // Front Boiler / Engine Hood + Brass Bands + Steam Dome + Tall Chimney + Headlamp
+    const drawBoilerSection = () => {
+      // Main colored boiler body
+      boxA(-0.04, 0.29, -0.14, 0.14, baseZ + 1.8, 5.6, mainLivery);
+      // Dark cast-iron front smokebox nose
+      boxA(0.28, 0.41, -0.135, 0.135, baseZ + 1.8, 5.5, {
+        top: '#334155',
+        topHi: '#475569',
+        left: '#1e293b',
+        leftBot: '#0f172a',
+        right: '#0f172a',
+        rightBot: '#020617',
+      });
+      // Sculpted upper cylindrical boiler barrel crown
+      boxA(-0.02, 0.39, -0.095, 0.095, baseZ + 7.3, 1.35, {
+        top: isBlueEngine ? '#60a5fa' : '#f87171',
+        topHi: '#f8fafc',
+        left: isBlueEngine ? '#2563eb' : '#dc2626',
+        right: '#1e293b',
+      });
+      // Golden brass boiler strap bands & waist pinstripe
+      if (zoom >= 0.45) {
+        const [st0x, st0y] = ptA(-0.03, 0.142, baseZ + 4.3);
+        const [st1x, st1y] = ptA(0.29, 0.142, baseZ + 4.3);
+        drawLine64(ctx, st0x, st0y, st1x, st1y, '#facc15', Math.max(1.0, 1.55 * zoom));
+        for (const ba of [0.05, 0.18, 0.285]) {
+          const [b0x, b0y] = ptA(ba, -0.10, baseZ + 8.65);
+          const [b1x, b1y] = ptA(ba, 0.10, baseZ + 8.65);
+          drawLine64(ctx, b0x, b0y, b1x, b1y, '#facc15', Math.max(0.85, 1.2 * zoom));
+        }
+      }
+      // Brass Steam Dome (behind chimney)
+      boxA(0.05, 0.15, -0.065, 0.065, baseZ + 8.6, 1.85, {
+        top: '#fef08a',
+        topHi: '#ffffff',
+        left: '#facc15',
+        leftBot: '#d97706',
+        right: '#b45309',
+        rightBot: '#78350f',
+      });
+      // Tall Flared Smokestack / Exhaust Chimney ("Chaminé")
+      boxA(0.28, 0.36, -0.055, 0.055, baseZ + 8.5, 3.6, {
+        top: '#475569',
+        left: '#334155',
+        leftBot: '#1e293b',
+        right: '#1e293b',
+        rightBot: '#0f172a',
+      });
+      // Flared chimney crown with golden brass collar
+      boxA(0.265, 0.375, -0.072, 0.072, baseZ + 11.9, 1.0, {
+        top: '#0f172a',
+        left: '#facc15',
+        leftBot: '#b45309',
+        right: '#334155',
+        rightBot: '#1e293b',
+      });
+      // Warm brass headlamp mounted on front smokebox
+      const [hlX, hlY] = ptA(0.425, 0, baseZ + 5.7);
+      ctx.beginPath();
+      ctx.arc(hlX, hlY, Math.max(1.3, 2.2 * zoom), 0, Math.PI * 2);
+      ctx.fillStyle = '#facc15';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(hlX, hlY, Math.max(0.9, 1.45 * zoom), 0, Math.PI * 2);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fill();
+      drawGlow64(
+        ctx,
+        hlX,
+        hlY,
+        Math.max(4.5, (7 + glowStrength * 6.5) * zoom),
+        'rgba(254, 240, 138, 0.92)',
+        'rgba(254, 240, 138, 0)'
+      );
+    };
+
+    // Rear Elevated Engine Cab ("Cabine Casa da Máquina") with Overhanging Roof & Framed Windows
+    const drawEngineCab = () => {
+      // Main tall cab structure
+      boxA(-0.41, -0.02, -0.165, 0.165, baseZ + 1.8, 8.6, mainLivery);
+      // Cream & gold cab waist livery band
+      if (zoom >= 0.45) {
+        const [cb0x, cb0y] = ptA(-0.40, 0.168, baseZ + 4.3);
+        const [cb1x, cb1y] = ptA(-0.03, 0.168, baseZ + 4.3);
+        drawLine64(ctx, cb0x, cb0y, cb1x, cb1y, '#fef08a', Math.max(1.1, 1.7 * zoom));
+        // Twin framed engineer cab side windows!
+        drawSideWindow(-0.35, -0.22, 0.168, baseZ + 5.4, baseZ + 8.6, warmWinCol);
+        drawSideWindow(-0.19, -0.06, 0.168, baseZ + 5.4, baseZ + 8.6, warmWinCol);
+        // Forward cab lookout glass above the boiler crown
+        if (sSign === 1) {
+          const fw0 = ptA(-0.018, -0.12, baseZ + 7.6);
+          const fw1 = ptA(-0.018, 0.12, baseZ + 7.6);
+          const fw2 = ptA(-0.018, 0.12, baseZ + 9.4);
+          const fw3 = ptA(-0.018, -0.12, baseZ + 9.4);
+          ctx.beginPath();
+          ctx.moveTo(fw0[0], fw0[1]);
+          ctx.lineTo(fw1[0], fw1[1]);
+          ctx.lineTo(fw2[0], fw2[1]);
+          ctx.lineTo(fw3[0], fw3[1]);
+          ctx.closePath();
+          ctx.fillStyle = warmWinCol;
+          ctx.fill();
+          ctx.strokeStyle = '#1e293b';
+          ctx.lineWidth = Math.max(0.65, 0.85 * zoom);
+          ctx.stroke();
+        }
+      }
+      // Overhanging pitched dark-slate Cab Roof ("Teto da Casa da Máquina")
+      boxA(-0.445, 0.015, -0.188, 0.188, baseZ + 10.35, 1.35, {
+        top: '#475569',
+        topHi: '#94a3b8',
+        left: '#334155',
+        leftBot: '#1e293b',
+        right: '#1e293b',
+        rightBot: '#0f172a',
+        parapetColor: '#64748b',
+      });
+      // Subtle cab roof skylight hatch / brass whistle
+      boxA(-0.30, -0.14, -0.09, 0.09, baseZ + 11.7, 0.85, {
+        top: '#64748b',
+        topHi: '#cbd5e1',
+        left: '#475569',
+        right: '#1e293b',
+      });
+    };
+
+    // Painter's order along screen depth: draw the FARTHER half first, CLOSER half second!
+    if (sSign === 1) {
+      drawEngineCab();
+      drawBoilerSection();
+      drawCowcatcher();
+    } else {
+      drawCowcatcher();
+      drawBoilerSection();
+      drawEngineCab();
+    }
+
+    // Driving wheels & animated side connecting rod along the camera-facing flank
+    drawWheelSet([-0.24, 0.04, 0.25], wheelHub, true);
+
+    // Animated Volumetric Steam / Smoke Plume ("Fumaça") drifting from the chimney!
+    if (zoom >= 0.35) {
+      const puffCount = 8;
+      const puffRate = isStopped ? 0.55 : 1.18;
+      for (let k = puffCount - 1; k >= 0; k--) {
+        const p = (timeSeconds * puffRate + k / puffCount) % 1;
+        const trailAlong = 0.32 - p * (isStopped ? 0.28 : 1.38);
+        const swayAcross = Math.sin(p * Math.PI * 2.3 + timeSeconds * 2.2 + k) * (0.04 + p * 0.12);
+        const riseZ = baseZ + 13.0 + p * (isStopped ? 17.5 : 13.8) + Math.sin(p * Math.PI) * 2.2;
+        const [px, py] = ptA(trailAlong, swayAcross, riseZ);
+        const alpha = Math.sin(p * Math.PI) * (isStopped ? 0.62 : 0.78);
+        if (alpha <= 0.03) continue;
+        const radius = (2.0 + p * 5.2) * zoom;
+        // Soft shaded underside lobe
+        ctx.beginPath();
+        ctx.arc(px + 0.5 * zoom, py + 0.9 * zoom, radius * 0.95, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(148, 163, 184, ${(alpha * 0.52).toFixed(3)})`;
+        ctx.fill();
+        // Bright puffy steam cloud core
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(248, 250, 252, ${alpha.toFixed(3)})`;
+        ctx.fill();
+        // Crisp sunlit upper-left puff highlight
+        if (zoom >= 0.6) {
+          ctx.beginPath();
+          ctx.arc(px - radius * 0.25, py - radius * 0.25, radius * 0.52, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 255, 255, ${(alpha * 0.72).toFixed(3)})`;
+          ctx.fill();
+        }
+      }
+    }
+  } else if (isLastCar) {
+    // =========================================================================
+    // REAR OBSERVATION CABOOSE ("Vagão Caboose Colorido com Cúpula e Lanterna")
+    // =========================================================================
+    const cabooseLivery =
+      trainIndex % 2 === 1
+        ? { top: '#fbbf24', topHi: '#fde68a', left: '#d97706', leftBot: '#b45309', right: '#92400e', rightBot: '#78350f' }
+        : { top: '#f43f5e', topHi: '#fda4af', left: '#e11d48', leftBot: '#be123c', right: '#9f1239', rightBot: '#881337' };
+
+    // Undercarriage & rear balcony deck
+    boxA(-0.41, 0.39, -0.155, 0.155, baseZ, 1.6, {
+      top: '#334155',
+      left: '#1e293b',
+      right: '#0f172a',
+    });
+    // Main caboose cabin (leaves open observation deck at rear `-0.41..-0.30`)
+    boxA(-0.30, 0.35, -0.155, 0.155, baseZ + 1.6, 6.4, cabooseLivery);
+    // Gold/cream waist stripe & framed cabin windows
+    if (zoom >= 0.45) {
+      const [s0x, s0y] = ptA(-0.29, 0.158, baseZ + 3.8);
+      const [s1x, s1y] = ptA(0.34, 0.158, baseZ + 3.8);
+      drawLine64(ctx, s0x, s0y, s1x, s1y, '#fef08a', Math.max(1.0, 1.45 * zoom));
+      drawSideWindow(-0.22, -0.06, 0.158, baseZ + 4.8, baseZ + 7.0, warmWinCol);
+      drawSideWindow(0.08, 0.26, 0.158, baseZ + 4.8, baseZ + 7.0, warmWinCol);
+    }
+    // Overhanging beveled caboose roof
+    boxA(-0.36, 0.38, -0.17, 0.17, baseZ + 8.0, 1.05, {
+      top: '#475569',
+      topHi: '#94a3b8',
+      left: '#334155',
+      right: '#1e293b',
+    });
+    // Classic Raised Observation Cupola Turret on the roof!
+    boxA(-0.14, 0.16, -0.115, 0.115, baseZ + 9.0, 2.35, cabooseLivery);
+    if (zoom >= 0.5) {
+      drawSideWindow(-0.10, 0.12, 0.118, baseZ + 9.5, baseZ + 10.9, warmWinCol);
+    }
+    boxA(-0.165, 0.185, -0.13, 0.13, baseZ + 11.35, 0.85, {
+      top: '#475569',
+      topHi: '#cbd5e1',
+      left: '#334155',
+      right: '#1e293b',
+    });
+    // Rear balcony handrail & glowing red tail lantern
+    const [rl0x, rl0y] = ptA(-0.40, -0.14, baseZ + 1.6);
+    const [rl1x, rl1y] = ptA(-0.40, -0.14, baseZ + 4.2);
+    const [rr0x, rr0y] = ptA(-0.40, 0.14, baseZ + 1.6);
+    const [rr1x, rr1y] = ptA(-0.40, 0.14, baseZ + 4.2);
+    drawLine64(ctx, rl0x, rl0y, rl1x, rl1y, '#cbd5e1', Math.max(0.8, 1.1 * zoom));
+    drawLine64(ctx, rr0x, rr0y, rr1x, rr1y, '#cbd5e1', Math.max(0.8, 1.1 * zoom));
+    drawLine64(ctx, rl1x, rl1y, rr1x, rr1y, '#f8fafc', Math.max(0.8, 1.1 * zoom));
+    const [tlX, tlY] = ptA(-0.41, 0, baseZ + 4.4);
     drawGlow64(
       ctx,
-      hlX,
-      hlY,
-      Math.max(4, (6 + glowStrength * 5) * zoom),
-      'rgba(254, 240, 138, 0.92)',
-      'rgba(254, 240, 138, 0)'
+      tlX,
+      tlY,
+      Math.max(3.2, (4.5 + glowStrength * 3.5) * zoom),
+      'rgba(248, 113, 113, 0.92)',
+      'rgba(248, 113, 113, 0)'
     );
+    drawWheelSet([-0.24, -0.13, 0.13, 0.24], '#94a3b8', false);
+  } else {
+    // =========================================================================
+    // COLORFUL PASSENGER COACHES & EXPRESS CARGO BOXCARS ("Vagões Coloridos")
+    // =========================================================================
+    const wagonLiveries = [
+      // 1: Vibrant Turquoise & Cream Passenger Coach
+      {
+        kind: 'passenger' as const,
+        lower: { top: '#2dd4bf', topHi: '#5eead4', left: '#14b8a6', leftBot: '#0f766e', right: '#0d9488', rightBot: '#115e59' },
+        upper: { top: '#f8fafc', topHi: '#ffffff', left: '#f1f5f9', leftBot: '#e2e8f0', right: '#cbd5e1', rightBot: '#94a3b8' },
+        stripe: '#facc15',
+        roof: { top: '#475569', topHi: '#94a3b8', left: '#334155', right: '#1e293b' },
+      },
+      // 2: Sunny Amber / Tangerine & Ivory Passenger Coach
+      {
+        kind: 'passenger' as const,
+        lower: { top: '#fbbf24', topHi: '#fde68a', left: '#f59e0b', leftBot: '#b45309', right: '#d97706', rightBot: '#92400e' },
+        upper: { top: '#fffbeb', topHi: '#ffffff', left: '#fef3c7', leftBot: '#fde68a', right: '#e2e8f0', rightBot: '#cbd5e1' },
+        stripe: '#ea580c',
+        roof: { top: '#475569', topHi: '#94a3b8', left: '#334155', right: '#1e293b' },
+      },
+      // 3: Emerald Green & Cream Panoramic Coach
+      {
+        kind: 'passenger' as const,
+        lower: { top: '#4ade80', topHi: '#86efac', left: '#22c55e', leftBot: '#15803d', right: '#16a34a', rightBot: '#166534' },
+        upper: { top: '#f8fafc', topHi: '#ffffff', left: '#f0fdf4', leftBot: '#dcfce7', right: '#cbd5e1', rightBot: '#94a3b8' },
+        stripe: '#facc15',
+        roof: { top: '#334155', topHi: '#64748b', left: '#1e293b', right: '#0f172a' },
+      },
+      // 4: Royal Cobalt Blue & Yellow Express Cargo Boxcar
+      {
+        kind: 'boxcar' as const,
+        lower: { top: '#60a5fa', topHi: '#93c5fd', left: '#3b82f6', leftBot: '#1d4ed8', right: '#2563eb', rightBot: '#1e3a8a' },
+        upper: { top: '#60a5fa', topHi: '#93c5fd', left: '#3b82f6', leftBot: '#1d4ed8', right: '#2563eb', rightBot: '#1e3a8a' },
+        stripe: '#facc15',
+        roof: { top: '#94a3b8', topHi: '#e2e8f0', left: '#64748b', right: '#475569' },
+      },
+      // 5: Berry Magenta / Coral Express Coach (shown on 6-car Lv. 2 trains)
+      {
+        kind: 'passenger' as const,
+        lower: { top: '#f472b6', topHi: '#f9a8d4', left: '#ec4899', leftBot: '#be185d', right: '#db2777', rightBot: '#9d174d' },
+        upper: { top: '#fdf2f8', topHi: '#ffffff', left: '#fce7f3', leftBot: '#fbcfe8', right: '#e2e8f0', rightBot: '#cbd5e1' },
+        stripe: '#fde047',
+        roof: { top: '#475569', topHi: '#94a3b8', left: '#334155', right: '#1e293b' },
+      },
+    ];
+    const livery = wagonLiveries[(Math.max(0, carIndex - 1) + trainIndex * 2) % wagonLiveries.length];
+
+    // Undercarriage bogie frame
+    boxA(-0.395, 0.395, -0.152, 0.152, baseZ, 1.6, {
+      top: '#334155',
+      left: '#1e293b',
+      right: '#0f172a',
+    });
+
+    if (livery.kind === 'boxcar') {
+      // Full-height corrugated cargo boxcar with contrasting yellow sliding center door & roof catwalk
+      boxA(-0.39, 0.39, -0.155, 0.155, baseZ + 1.6, 6.7, livery.lower);
+      if (zoom >= 0.45) {
+        // Vertical corrugated metal panel ribs
+        for (const ribA of [-0.30, -0.20, 0.20, 0.30]) {
+          const [r0x, r0y] = ptA(ribA, 0.158, baseZ + 2.0);
+          const [r1x, r1y] = ptA(ribA, 0.158, baseZ + 8.0);
+          drawLine64(ctx, r0x, r0y, r1x, r1y, 'rgba(15, 23, 42, 0.32)', Math.max(0.7, 1.0 * zoom));
+        }
+        // Contrasting golden-yellow sliding center cargo door
+        drawSideWindow(-0.13, 0.13, 0.159, baseZ + 2.1, baseZ + 7.7, '#facc15', '#1e293b');
+        const [dMx0, dMy0] = ptA(0, 0.16, baseZ + 2.2);
+        const [dMx1, dMy1] = ptA(0, 0.16, baseZ + 7.6);
+        drawLine64(ctx, dMx0, dMy0, dMx1, dMy1, '#92400e', Math.max(0.7, 0.95 * zoom));
+        // Top door slide rail
+        const [tr0x, tr0y] = ptA(-0.24, 0.16, baseZ + 7.85);
+        const [tr1x, tr1y] = ptA(0.24, 0.16, baseZ + 7.85);
+        drawLine64(ctx, tr0x, tr0y, tr1x, tr1y, '#0f172a', Math.max(0.8, 1.1 * zoom));
+      }
+      // Beveled metal roof & central wooden roof catwalk
+      boxA(-0.40, 0.40, -0.162, 0.162, baseZ + 8.3, 0.85, livery.roof);
+      boxA(-0.37, 0.37, -0.05, 0.05, baseZ + 9.15, 0.45, {
+        top: '#cbd5e1',
+        left: '#94a3b8',
+        right: '#64748b',
+      });
+    } else {
+      // Two-tone Passenger Coach: rich colorful lower skirt + crisp light upper window band
+      boxA(-0.395, 0.395, -0.155, 0.155, baseZ + 1.6, 3.0, livery.lower);
+      boxA(-0.395, 0.395, -0.155, 0.155, baseZ + 4.6, 3.6, livery.upper);
+      if (zoom >= 0.45) {
+        // Accent beltline stripe separating lower color & upper window fascia
+        const [st0x, st0y] = ptA(-0.39, 0.158, baseZ + 4.6);
+        const [st1x, st1y] = ptA(0.39, 0.158, baseZ + 4.6);
+        drawLine64(ctx, st0x, st0y, st1x, st1y, livery.stripe, Math.max(1.1, 1.65 * zoom));
+        // 4 crisp individually framed passenger windows along the visible flank!
+        const winSpans: Array<[number, number]> = [
+          [-0.33, -0.19],
+          [-0.15, -0.01],
+          [0.03, 0.17],
+          [0.21, 0.34],
+        ];
+        for (const [wa0, wa1] of winSpans) {
+          drawSideWindow(wa0, wa1, 0.158, baseZ + 5.2, baseZ + 7.55, winCol);
+        }
+      }
+      // Arched overhanging coach roof + raised clerestory skylight / HVAC ridge
+      boxA(-0.405, 0.405, -0.164, 0.164, baseZ + 8.2, 0.95, livery.roof);
+      boxA(-0.32, 0.32, -0.09, 0.09, baseZ + 9.15, 0.85, {
+        top: '#94a3b8',
+        topHi: '#cbd5e1',
+        left: '#64748b',
+        right: '#334155',
+      });
+    }
+
+    drawWheelSet([-0.26, -0.14, 0.14, 0.26], '#94a3b8', false);
   }
+
+  ctx.restore();
 }
 
 /**
@@ -12100,6 +12620,9 @@ export function renderCityCanvas(
     isExpress: boolean;
     carIndex: number;
     bridgeLiftPx: number;
+    isStopped: boolean;
+    isLastCar: boolean;
+    trainIndex: number;
   }
   const railCarsByDepth = new Map<number, RailCarDrawItem[]>();
   const stationRailCarsByDepth = new Map<number, RailCarDrawItem[]>();
@@ -12149,6 +12672,7 @@ export function renderCityCanvas(
       const endAlong = dirSign === 1 ? alongSpan + 2.2 : -3.2;
       const stopStart = 0.43;
       const stopEnd = 0.57;
+      const isStopped = tNorm >= stopStart && tNorm <= stopEnd;
       let headAlong: number;
       if (tNorm < stopStart) {
         const u = tNorm / stopStart;
@@ -12162,10 +12686,10 @@ export function renderCityCanvas(
         headAlong = stationMidAlong + (endAlong - stationMidAlong) * easeIn;
       }
 
-      const isExpress = ti === 0 && rc.stationLevel >= 2;
+      const isExpress = ti === 1 && rc.stationLevel >= 2;
       const carCount = rc.stationLevel >= 2 ? 6 : 5;
       for (let c = 0; c < carCount; c++) {
-        const carAlong = headAlong - dirSign * (c - 1.5) * 0.86;
+        const carAlong = headAlong - dirSign * (c - 1.5) * 0.88;
         const carTx = rc.axis === 'ns' ? rc.lineCoord : carAlong;
         const carTy = rc.axis === 'ns' ? carAlong : rc.lineCoord;
         if (carTx < -0.55 || carTx > gw - 0.45 || carTy < -0.55 || carTy > gh - 0.45) continue;
@@ -12182,14 +12706,14 @@ export function renderCityCanvas(
           rxFloat += fracDx;
           ryFloat += fracDy;
         } else if (rot === 1) {
-          rxFloat += fracDy;
-          ryFloat -= fracDx;
+          rxFloat -= fracDy;
+          ryFloat += fracDx;
         } else if (rot === 2) {
           rxFloat -= fracDx;
           ryFloat -= fracDy;
         } else {
-          rxFloat -= fracDy;
-          ryFloat += fracDx;
+          rxFloat += fracDy;
+          ryFloat -= fracDx;
         }
         const sortKey = rxFloat + ryFloat;
         const item: RailCarDrawItem = {
@@ -12201,6 +12725,9 @@ export function renderCityCanvas(
           isExpress,
           carIndex: c,
           bridgeLiftPx,
+          isStopped,
+          isLastCar: c === carCount - 1,
+          trainIndex: ti,
         };
         if (underTile?.type === 'rail_terminal' && stationTrackInFront && stationFrontDepth > 0) {
           let bucket = stationRailCarsByDepth.get(stationFrontDepth);
@@ -12580,7 +13107,7 @@ export function renderCityCanvas(
       for (let rci = 0; rci < depthRailCars.length; rci++) {
         const rcCar = depthRailCars[rci];
         const pos = gridToScreen(rcCar.tx, rcCar.ty, canvasW, canvasH, camera, gw, gh);
-        if (pos.sx < -42 || pos.sx > canvasW + 42 || pos.sy < -42 || pos.sy > canvasH + 42) continue;
+        if (pos.sx < -90 || pos.sx > canvasW + 90 || pos.sy < -90 || pos.sy > canvasH + 90) continue;
         drawRailTrainCar64(
           ctx,
           pos.sx,
@@ -12593,7 +13120,11 @@ export function renderCityCanvas(
           rcCar.isExpress,
           rcCar.carIndex,
           lighting.glowStrength,
-          rcCar.bridgeLiftPx
+          rcCar.bridgeLiftPx,
+          opts.timeSeconds,
+          rcCar.isStopped,
+          rcCar.isLastCar,
+          rcCar.trainIndex
         );
       }
     }
@@ -13022,7 +13553,7 @@ export function renderCityCanvas(
       for (let rci = 0; rci < depthStationRailCars.length; rci++) {
         const rcCar = depthStationRailCars[rci];
         const pos = gridToScreen(rcCar.tx, rcCar.ty, canvasW, canvasH, camera, gw, gh);
-        if (pos.sx < -42 || pos.sx > canvasW + 42 || pos.sy < -42 || pos.sy > canvasH + 42) continue;
+        if (pos.sx < -90 || pos.sx > canvasW + 90 || pos.sy < -90 || pos.sy > canvasH + 90) continue;
         drawRailTrainCar64(
           ctx,
           pos.sx,
@@ -13035,7 +13566,11 @@ export function renderCityCanvas(
           rcCar.isExpress,
           rcCar.carIndex,
           lighting.glowStrength,
-          rcCar.bridgeLiftPx
+          rcCar.bridgeLiftPx,
+          opts.timeSeconds,
+          rcCar.isStopped,
+          rcCar.isLastCar,
+          rcCar.trainIndex
         );
       }
     }

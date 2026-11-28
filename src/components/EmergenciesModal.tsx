@@ -253,10 +253,10 @@ export function EmergenciesModal({
   const completedMissionsCount = mandateMissions.filter((m) => m.claimed).length;
   const readyStructuralCount = orderedStructuralOffers.filter(
     (o) =>
+      o.id !== 'incident_response' &&
+      !o.fullyApproved &&
       o.unlocked &&
-      !o.inProgress &&
-      hud.money >= o.cost &&
-      !pendingWorks.some((w) => w.actionId === o.id)
+      hud.money >= o.cost
   ).length;
   const expandableDirsCount = hud.landExpansions.filter(
     (e) => e.canExpand && hud.money >= e.cost
@@ -270,20 +270,26 @@ export function EmergenciesModal({
   const renderStandardOfferCard = (offer: EmergencyOfferView) => {
     const canAfford = hud.money >= offer.cost;
     const pendingWork = pendingWorks.find((w) => w.actionId === offer.id);
-    const isExecuting = Boolean(pendingWork);
-    const isReadyToClick = !isExecuting && offer.unlocked && canAfford;
-    const disabled = isExecuting || !offer.unlocked || !canAfford;
+    const isFullyApproved = Boolean(offer.fullyApproved);
+    const isReadyToClick = !isFullyApproved && offer.unlocked && canAfford;
+    const disabled = isFullyApproved || !offer.unlocked || !canAfford;
     const progressPct = pendingWork
       ? computeWorkProgressPct(pendingWork, hud.monthProgress)
       : 0;
     const isLandmark = offer.id === 'landmark_project';
+    const areaMeta = offer.investmentArea ? BUDGET_AREA_META[offer.investmentArea] : null;
+    const covOk = (offer.investmentCoveragePct ?? 100) >= 100;
 
     return (
       <div
         key={offer.id}
         data-testid={`emergency-card-${offer.id}`}
         className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
-          isLandmark ? 'border-[#ff8ec7]/50' : 'border-[#334361]'
+          isFullyApproved
+            ? 'border-[#3d8c61] bg-[#0e201b]'
+            : isLandmark
+              ? 'border-[#ff8ec7]/50'
+              : 'border-[#334361]'
         }`}
       >
         <div>
@@ -303,7 +309,7 @@ export function EmergenciesModal({
               </h3>
             </div>
             <span className="text-[19px] font-bold text-[#ffe066] tabular-nums shrink-0 leading-none">
-              ${offer.cost.toLocaleString('pt-BR')}
+              {isFullyApproved ? '✓' : `$${offer.cost.toLocaleString('pt-BR')}`}
             </span>
           </div>
 
@@ -313,6 +319,25 @@ export function EmergenciesModal({
           <p className="text-[14.5px] text-[#66d98c] leading-snug mb-1">
             {offer.effectHint}
           </p>
+          {areaMeta ? (
+            <div className="bg-[#0b101b] border border-[#26344f] px-2 py-1 text-[12.5px] leading-snug mb-1 tabular-nums flex flex-wrap items-center justify-between gap-1">
+              <span>
+                Área:{' '}
+                <strong style={{ color: areaMeta.color }}>{areaMeta.label}</strong>{' '}
+                (<strong className={covOk ? 'text-[#66d98c]' : 'text-[#ff7b8a]'}>
+                  {offer.investmentCoveragePct ?? 100}%
+                </strong>
+                {!isFullyApproved && offer.monthlyNeedIncrease
+                  ? ` · +$${offer.monthlyNeedIncrease}/mês`
+                  : ''}
+                )
+              </span>
+              <span className="text-[#cfd9e8]">
+                Fundo: ${(offer.investmentFundBalance ?? 0).toLocaleString('pt-BR')} / $
+                {(offer.unitInvestmentCost ?? 0).toLocaleString('pt-BR')}
+              </span>
+            </div>
+          ) : null}
           <p className="text-[13px] text-[#8fa4bf] leading-snug">
             {offer.nextEvolutionHint}
           </p>
@@ -320,16 +345,13 @@ export function EmergenciesModal({
 
         <div className="flex flex-col gap-1.5">
           {pendingWork ? (
-            <button
-              type="button"
-              disabled
+            <div
               role="progressbar"
               aria-valuenow={progressPct}
               aria-valuemin={0}
               aria-valuemax={100}
-              data-testid={`emergency-exec-${offer.id}`}
-              data-work-state="in_progress"
-              className="relative w-full py-2.5 px-3 font-pixel text-[7.5px] border-2 border-[#4ade80] bg-[#0f172a] text-white overflow-hidden select-none"
+              data-testid={`emergency-progress-box-${offer.id}`}
+              className="relative w-full py-1.5 px-2.5 font-pixel text-[7px] border border-[#4ade80] bg-[#0f172a] text-white overflow-hidden select-none"
             >
               <div
                 data-testid={`emergency-progress-fill-${offer.id}`}
@@ -337,35 +359,41 @@ export function EmergenciesModal({
                 style={{ width: `${progressPct}%` }}
               />
               <span className="relative z-10 flex items-center justify-between gap-2 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                <span>EM CONSTRUÇÃO · {progressPct}%</span>
+                <span>CONSTRUINDO NO MAPA · {progressPct}%</span>
                 <span>
                   {pendingWork.remainingMonths}{' '}
-                  {pendingWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'}
+                  {pendingWork.remainingMonths === 1 ? 'mês' : 'meses'}
                 </span>
               </span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={disabled}
-              data-testid={`emergency-exec-${offer.id}`}
-              data-work-state={isReadyToClick ? 'ready' : 'normal'}
-              onClick={() => onExecuteAction(offer.id)}
-              className={`pixel-btn w-full py-2 px-3 font-pixel text-[8px] flex items-center justify-center gap-2 transition-colors ${
-                isReadyToClick
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            disabled={disabled}
+            data-testid={`emergency-exec-${offer.id}`}
+            data-work-state={
+              isFullyApproved ? 'approved' : isReadyToClick ? 'ready' : 'normal'
+            }
+            onClick={() => onExecuteAction(offer.id)}
+            className={`pixel-btn w-full py-2 px-3 font-pixel text-[8px] flex items-center justify-center gap-2 transition-colors ${
+              isFullyApproved
+                ? 'bg-[#123024] border-[#3d8c61] text-[#66d98c]'
+                : isReadyToClick
                   ? 'bg-[#16a34a] hover:bg-[#15803d] border-[#4ade80] text-white shadow-[0_0_12px_rgba(22,163,74,0.45)]'
                   : 'bg-[#25314a] hover:bg-[#314161] text-[#eef2f7]'
-              }`}
-            >
-              <span>
-                {!offer.unlocked
+            }`}
+          >
+            <span>
+              {isFullyApproved
+                ? 'APROVADO · CONSTRUÇÃO AUTOMÁTICA ATIVA'
+                : !offer.unlocked
                   ? offer.lockReason ?? 'Bloqueado'
                   : !canAfford
                     ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
-                    : `Construir / Executar (-$${offer.cost.toLocaleString('pt-BR')})`}
-              </span>
-            </button>
-          )}
+                    : `Aprovar Evolução (-$${offer.cost.toLocaleString('pt-BR')})`}
+            </span>
+          </button>
         </div>
       </div>
     );
@@ -441,12 +469,15 @@ export function EmergenciesModal({
           : Math.max(1, Math.min(3, isBuilt ? Math.max(1, offer.tier - 1) : offer.tier));
     const canAfford = hud.money >= offer.cost;
     const pendingWork = pendingWorks.find((w) => w.actionId === offer.id);
-    const isExecuting = Boolean(pendingWork);
-    const isReadyToClick = !isExecuting && offer.unlocked && canAfford;
-    const disabled = isExecuting || !offer.unlocked || !canAfford;
+    const isFullyApproved = Boolean(offer.fullyApproved);
+    const approvedTier = offer.approvedTier ?? 0;
+    const isReadyToClick = !isFullyApproved && offer.unlocked && canAfford;
+    const disabled = isFullyApproved || !offer.unlocked || !canAfford;
     const progressPct = pendingWork
       ? computeWorkProgressPct(pendingWork, hud.monthProgress)
       : 0;
+    const areaMeta = offer.investmentArea ? BUDGET_AREA_META[offer.investmentArea] : null;
+    const covOk = (offer.investmentCoveragePct ?? 100) >= 100;
     const stepLabels = isBridge
       ? ['Pedra Nv.1', 'Arcos Nv.2', 'Estaiada 3', 'Dupla 2× 4']
       : isBus
@@ -473,9 +504,11 @@ export function EmergenciesModal({
       <div
         key={offer.id}
         data-testid={`emergency-card-${offer.id}`}
-        className="pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2"
+        className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
+          isFullyApproved ? 'bg-[#0e201b]' : ''
+        }`}
         style={{
-          borderColor: `${offer.accentColor}88`,
+          borderColor: isFullyApproved ? '#3d8c61' : `${offer.accentColor}88`,
         }}
       >
         <div className="flex flex-col gap-2">
@@ -491,27 +524,19 @@ export function EmergenciesModal({
                 </span>
                 <span
                   className={`font-pixel text-[6.5px] px-1.5 py-0.5 border ${
-                    isBuilt
+                    isFullyApproved || approvedTier > 0
                       ? 'bg-[#132f23] border-[#66d98c] text-[#66d98c]'
                       : offer.unlocked
                         ? 'bg-[#14283b] border-[#38bdf8] text-[#7dd3fc]'
                         : 'bg-[#2a1f16] border-[#f5b73b] text-[#ffe066]'
                   }`}
                 >
-                  {isBridge
-                    ? `${st.bridgeSpanCount} ${st.bridgeSpanCount === 1 ? 'PONTE' : 'PONTES'} · NV.${st.bridgeLevel}`
-                    : isBuilt
-                      ? isBus
-                        ? `${builtCount} ${builtCount === 1 ? 'TERMINAL' : 'TERMINAIS'} ATIVO`
-                        : isMetro
-                          ? `${builtCount} ${builtCount === 1 ? 'ESTAÇÃO' : 'ESTAÇÕES'} ATIVA`
-                          : isShopping
-                            ? `SHOPPING NV.${st.shoppingLevel || 1} (${st.shoppingLevel === 3 ? '9×9' : st.shoppingLevel === 2 ? '7×7' : '5×5'})`
-                            : isSports
-                              ? `${builtCount} ${builtCount === 1 ? 'CENTRO' : 'CENTROS'} DE ESPORTE`
-                              : `CONSTRUÍDO (${builtCount} no mapa)`
+                  {isFullyApproved
+                    ? `APROVADO EM DEFINITIVO · ${builtCount} NO MAPA`
+                    : approvedTier > 0
+                      ? `FASE ${approvedTier} APROVADA · ${builtCount} NO MAPA`
                       : offer.unlocked
-                        ? 'LIBERADO · AGUARDANDO ORDEM'
+                        ? 'LIBERADO P/ APROVAÇÃO ÚNICA'
                         : 'BLOQUEADO · MARCO POPULACIONAL'}
                 </span>
               </div>
@@ -523,7 +548,7 @@ export function EmergenciesModal({
               </h4>
             </div>
             <span className="text-[19px] font-bold text-[#ffe066] tabular-nums shrink-0 leading-none">
-              ${offer.cost.toLocaleString('pt-BR')}
+              {isFullyApproved ? '✓' : `$${offer.cost.toLocaleString('pt-BR')}`}
             </span>
           </div>
 
@@ -535,14 +560,12 @@ export function EmergenciesModal({
             active={activeSubTab === 'works'}
           />
 
-          {/* Evolutionary Progress Steps */}
+          {/* Evolutionary Progress Steps (Approved steps) */}
           <div className={`grid gap-1 ${stepLabels.length === 2 ? 'grid-cols-2' : stepLabels.length === 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
             {stepLabels.map((stepLabel, idx) => {
               const stepNum = idx + 1;
-              const done =
-                offer.tier > stepNum ||
-                (isShopping ? st.shoppingLevel >= stepNum : stepNum === 1 && isBuilt);
-              const current = offer.tier === stepNum;
+              const done = approvedTier >= stepNum;
+              const current = !isFullyApproved && offer.tier === stepNum;
               return (
                 <div
                   key={stepLabel}
@@ -566,6 +589,25 @@ export function EmergenciesModal({
           <p className="text-[14.5px] text-[#66d98c] leading-snug">
             {offer.effectHint}
           </p>
+          {areaMeta ? (
+            <div className="bg-[#0b101b] border border-[#26344f] px-2 py-1 text-[12.5px] leading-snug tabular-nums flex flex-wrap items-center justify-between gap-1">
+              <span>
+                Investimento:{' '}
+                <strong style={{ color: areaMeta.color }}>{areaMeta.label}</strong>{' '}
+                (<strong className={covOk ? 'text-[#66d98c]' : 'text-[#ff7b8a]'}>
+                  {offer.investmentCoveragePct ?? 100}%
+                </strong>
+                {!isFullyApproved && offer.monthlyNeedIncrease
+                  ? ` · +$${offer.monthlyNeedIncrease}/mês`
+                  : ''}
+                )
+              </span>
+              <span className="text-[#cfd9e8]">
+                Fundo: ${(offer.investmentFundBalance ?? 0).toLocaleString('pt-BR')} / $
+                {(offer.unitInvestmentCost ?? 0).toLocaleString('pt-BR')}
+              </span>
+            </div>
+          ) : null}
           <p className="text-[13px] text-[#8fa4bf] leading-snug">
             {offer.nextEvolutionHint}
           </p>
@@ -573,16 +615,13 @@ export function EmergenciesModal({
 
         <div className="flex flex-col gap-1.5">
           {pendingWork ? (
-            <button
-              type="button"
-              disabled
+            <div
               role="progressbar"
               aria-valuenow={progressPct}
               aria-valuemin={0}
               aria-valuemax={100}
-              data-testid={`emergency-exec-${offer.id}`}
-              data-work-state="in_progress"
-              className="relative w-full py-2.5 px-3 font-pixel text-[7.5px] border-2 border-[#4ade80] bg-[#0f172a] text-white overflow-hidden select-none"
+              data-testid={`emergency-progress-box-${offer.id}`}
+              className="relative w-full py-1.5 px-2.5 font-pixel text-[7px] border border-[#4ade80] bg-[#0f172a] text-white overflow-hidden select-none"
             >
               <div
                 data-testid={`emergency-progress-fill-${offer.id}`}
@@ -590,49 +629,41 @@ export function EmergenciesModal({
                 style={{ width: `${progressPct}%` }}
               />
               <span className="relative z-10 flex items-center justify-between gap-2 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                <span>EM CONSTRUÇÃO · {progressPct}%</span>
+                <span>EM CONSTRUÇÃO NO MAPA · {progressPct}%</span>
                 <span>
                   {pendingWork.remainingMonths}{' '}
-                  {pendingWork.remainingMonths === 1 ? 'mês restante' : 'meses restantes'}
+                  {pendingWork.remainingMonths === 1 ? 'mês' : 'meses'}
                 </span>
               </span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={disabled}
-              data-testid={`emergency-exec-${offer.id}`}
-              data-work-state={isReadyToClick ? 'ready' : 'normal'}
-              onClick={() => onExecuteAction(offer.id)}
-              className={`pixel-btn w-full py-2.5 px-3 font-pixel text-[8px] flex items-center justify-center gap-2 transition-colors ${
-                isReadyToClick
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            disabled={disabled}
+            data-testid={`emergency-exec-${offer.id}`}
+            data-work-state={
+              isFullyApproved ? 'approved' : isReadyToClick ? 'ready' : 'normal'
+            }
+            onClick={() => onExecuteAction(offer.id)}
+            className={`pixel-btn w-full py-2.5 px-3 font-pixel text-[8px] flex items-center justify-center gap-2 transition-colors ${
+              isFullyApproved
+                ? 'bg-[#123024] border-[#3d8c61] text-[#66d98c]'
+                : isReadyToClick
                   ? 'bg-[#16a34a] hover:bg-[#15803d] border-[#4ade80] text-white shadow-[0_0_12px_rgba(22,163,74,0.45)]'
                   : 'bg-[#25314a] hover:bg-[#314161] text-[#eef2f7]'
-              }`}
-            >
-              <span>
-                {!offer.unlocked
-                  ? `${offer.lockReason ?? 'Bloqueado'} para desbloquear`
+            }`}
+          >
+            <span>
+              {isFullyApproved
+                ? 'APROVADO · EXPANSÃO AUTOMÁTICA ATIVA'
+                : !offer.unlocked
+                  ? `${offer.lockReason ?? 'Bloqueado'} para aprovar`
                   : !canAfford
                     ? `Falta caixa ($${offer.cost.toLocaleString('pt-BR')})`
-                    : isBridge
-                      ? `Executar ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`
-                      : offer.tier === 1 && !isBuilt
-                        ? `Construir ${
-                            isPort
-                              ? 'Porto Fluvial'
-                              : isBus
-                                ? 'Terminais de Ônibus'
-                                : isMetro
-                                  ? 'Metrô Metropolitano'
-                                  : isShopping
-                                    ? 'Shopping Pequeno 5×5'
-                                    : 'Aeroporto'
-                          } (-$${offer.cost.toLocaleString('pt-BR')})`
-                        : `Pagar e Evoluir ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
-              </span>
-            </button>
-          )}
+                    : `Aprovar ${offer.tierLabel} (-$${offer.cost.toLocaleString('pt-BR')})`}
+            </span>
+          </button>
         </div>
       </div>
     );
@@ -641,7 +672,7 @@ export function EmergenciesModal({
   return (
     <PixelModal
       title="OBRAS & AÇÕES · MARCOS, TERRENOS E URGÊNCIAS"
-      subtitle="Evolua Shopping, Ônibus, Metrô, Porto e Aeroporto em arte 64-bit, expanda o mapa ou acione intervenções urbanas."
+      subtitle="Aprovação única por evolução: ao aprovar, o custo mensal de investimento aumenta e o jogo constrói novas unidades automaticamente com o fundo da área."
       headerSummary={
         <>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
