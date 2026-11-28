@@ -32,6 +32,7 @@ interface TopHudProps {
   onRequestReturnMenu: () => void;
   onOpenPauseMenu: () => void;
   onCycleSeason?: () => void;
+  onOpenFinances?: () => void;
 }
 
 export function TopHud({
@@ -47,6 +48,7 @@ export function TopHud({
   onRequestReturnMenu,
   onOpenPauseMenu,
   onCycleSeason,
+  onOpenFinances,
 }: TopHudProps) {
   const happyColor =
     hud.globalHappiness >= 70
@@ -197,6 +199,71 @@ export function TopHud({
               {hud.globalHappiness}%
             </span>
           </div>
+
+          <span className="text-[#334361]" aria-hidden="true">
+            |
+          </span>
+
+          {/* Live R / C / I Demand Bars (Clickable to adjust Taxes & view Cause-Effect) */}
+          <button
+            type="button"
+            data-testid="hud-rci-demand"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenFinances?.();
+            }}
+            title={`Demanda R/C/I — Residencial: ${hud.rciDemand.residential.demand > 0 ? '+' : ''}${hud.rciDemand.residential.demand} (${hud.rciDemand.residential.statusLabel}) · Comercial: ${hud.rciDemand.commercial.demand > 0 ? '+' : ''}${hud.rciDemand.commercial.demand} (${hud.rciDemand.commercial.statusLabel}) · Industrial: ${hud.rciDemand.industrial.demand > 0 ? '+' : ''}${hud.rciDemand.industrial.demand} (${hud.rciDemand.industrial.statusLabel}). ${hud.rciDemand.summary} Clique para ajustar impostos.`}
+            aria-label={`Demanda RCI: Residencial ${hud.rciDemand.residential.demand}, Comercial ${hud.rciDemand.commercial.demand}, Industrial ${hud.rciDemand.industrial.demand}. Clique para abrir Finanças`}
+            className="px-1.5 py-0.5 bg-[#0f1624] border border-[#2a3854] hover:border-[#f5b73b] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            {(
+              [
+                {
+                  code: 'R',
+                  val: hud.rciDemand.residential.demand,
+                  posColor: '#66d98c',
+                  labelColor: 'text-[#66d98c]',
+                },
+                {
+                  code: 'C',
+                  val: hud.rciDemand.commercial.demand,
+                  posColor: '#56c2ff',
+                  labelColor: 'text-[#56c2ff]',
+                },
+                {
+                  code: 'I',
+                  val: hud.rciDemand.industrial.demand,
+                  posColor: '#f5b73b',
+                  labelColor: 'text-[#f5b73b]',
+                },
+              ] as const
+            ).map(({ code, val, posColor, labelColor }) => {
+              const clamped = Math.max(-100, Math.min(100, val));
+              const halfPct = Math.max(clamped === 0 ? 0 : 12, Math.round(Math.abs(clamped) * 0.5));
+              const isPos = clamped >= 0;
+              return (
+                <div key={code} className="flex items-center gap-0.5">
+                  <span className={`font-pixel text-[6.5px] leading-none ${labelColor}`}>
+                    {code}
+                  </span>
+                  <div className="relative w-[7px] h-[18px] bg-[#080d17] border border-[#2c3b57] overflow-hidden">
+                    {/* Zero equilibrium midline */}
+                    <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-[#475569] z-10" />
+                    {clamped !== 0 ? (
+                      <div
+                        className="absolute left-0 right-0 transition-all duration-300"
+                        style={{
+                          backgroundColor: isPos ? posColor : '#ff6b6b',
+                          height: `${halfPct}%`,
+                          ...(isPos ? { bottom: '50%' } : { top: '50%' }),
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </button>
 
           <span className="text-[#334361]" aria-hidden="true">
             |

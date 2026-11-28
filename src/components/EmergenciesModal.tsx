@@ -893,118 +893,134 @@ export function EmergenciesModal({
 
       {/* TAB 1B: MISSÕES DO MANDATO & EVENTOS AO VIVO */}
       {activeSubTab === 'missions' ? (
-        <section
-          aria-label="Metas e missões do mandato com recompensas em caixa"
-          data-testid="mandate-missions-section"
-          className="flex flex-col gap-3"
-        >
-          <div className="pixel-inset p-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="font-pixel text-[9px] text-[#ffe066]">
-                METAS &amp; MISSÕES DO MANDATO (RECOMPENSAS EM CAIXA)
-              </h3>
-              <p className="text-[14.5px] text-[#9eb0c9] leading-tight mt-0.5">
-                Cumpra objetivos estratégicos de infraestrutura, energia limpa, saúde, educação e logística para resgatar bônus diretos no Tesouro Municipal.
-              </p>
-            </div>
-            {st.stadiumCount > 0 ? (
-              <button
-                type="button"
-                data-testid="trigger-stadium-match-btn"
-                disabled={Boolean(hud.stadiumMatchActive)}
-                onClick={() => onTriggerStadiumMatch?.()}
-                className={`pixel-btn px-3 py-2 font-pixel text-[7.5px] ${
-                  hud.stadiumMatchActive
-                    ? 'bg-[#143326] border-[#4ade80] text-[#4ade80]'
-                    : 'bg-[#1e3a8a] hover:bg-[#1d4ed8] border-[#ffe066] text-[#ffe066]'
-                }`}
-              >
-                {hud.stadiumMatchActive
-                  ? '⚽ DIA DE JOGO ATIVO (FOGOS & REFLETORES NO MAPA)'
-                  : '⚽ REALIZAR DIA DE JOGO NO ESTÁDIO (FOGOS & TURISMO)'}
-              </button>
-            ) : null}
-          </div>
+        (() => {
+          const visibleMissions = mandateMissions
+            .filter((m) => !m.claimed)
+            .sort((a, b) => Number(b.completed) - Number(a.completed));
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {mandateMissions.map((mission) => {
-              const pct = Math.min(
-                100,
-                Math.round((mission.currentValue / Math.max(1, mission.targetValue)) * 100)
-              );
-              const canClaim = mission.completed && !mission.claimed;
-
-              return (
-                <div
-                  key={mission.id}
-                  data-testid={`mandate-mission-card-${mission.id}`}
-                  className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
-                    mission.claimed
-                      ? 'border-[#2e7d52]/60 bg-[#0d1b18]'
-                      : canClaim
-                        ? 'border-[#4ade80] bg-[#11261f]'
-                        : 'border-[#334361]'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <div>
-                        <span
-                          className="font-pixel text-[6.5px] px-1.5 py-0.5 border"
-                          style={{
-                            borderColor: mission.accentColor,
-                            color: mission.accentColor,
-                          }}
-                        >
-                          {mission.categoryLabel}
-                        </span>
-                        <h4 className="font-pixel text-[9px] text-[#eef2f7] mt-1">
-                          {mission.title}
-                        </h4>
-                      </div>
-                      <span className="font-pixel text-[8px] px-2 py-1 bg-[#143326] border border-[#66d98c] text-[#ffe066] shrink-0">
-                        +${mission.rewardCash.toLocaleString('pt-BR')}
-                      </span>
-                    </div>
-                    <p className="text-[14.5px] text-[#cfd9e8] leading-snug mb-2">
-                      {mission.description}
-                    </p>
-                    <div className="w-full h-3 bg-[#0b101b] border border-[#334361] overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#0284c7] to-[#4ade80] transition-all duration-300"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[13px] text-[#9eb0c9] mt-1 tabular-nums">
-                      <span>Progresso: {mission.progressLabel}</span>
-                      <span>{pct}%</span>
-                    </div>
-                  </div>
-
+          return (
+            <section
+              aria-label="Metas e missões do mandato com recompensas em caixa"
+              data-testid="mandate-missions-section"
+              className="flex flex-col gap-3"
+            >
+              <div className="pixel-inset p-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-pixel text-[9px] text-[#ffe066]">
+                    METAS &amp; MISSÕES DO MANDATO (RECOMPENSAS EM CAIXA)
+                  </h3>
+                  <p className="text-[14.5px] text-[#9eb0c9] leading-tight mt-0.5">
+                    Cumpra objetivos estratégicos de infraestrutura, energia limpa, saúde, educação e logística para resgatar bônus diretos no Tesouro Municipal. Recompensas resgatadas saem da lista automaticamente.
+                  </p>
+                </div>
+                {st.stadiumCount > 0 ? (
                   <button
                     type="button"
-                    data-testid={`claim-mission-btn-${mission.id}`}
-                    disabled={!canClaim}
-                    onClick={() => onClaimMission?.(mission.id)}
-                    className={`pixel-btn w-full py-2 px-3 font-pixel text-[7.5px] ${
-                      mission.claimed
-                        ? 'bg-[#143326] border-[#2e7d52] text-[#66d98c]'
-                        : canClaim
-                          ? 'bg-[#16a34a] hover:bg-[#15803d] border-[#4ade80] text-white shadow-[0_0_12px_rgba(22,163,74,0.45)]'
-                          : 'bg-[#1f293d] text-[#8fa4bf]'
+                    data-testid="trigger-stadium-match-btn"
+                    disabled={Boolean(hud.stadiumMatchActive)}
+                    onClick={() => onTriggerStadiumMatch?.()}
+                    className={`pixel-btn px-3 py-2 font-pixel text-[7.5px] ${
+                      hud.stadiumMatchActive
+                        ? 'bg-[#143326] border-[#4ade80] text-[#4ade80]'
+                        : 'bg-[#1e3a8a] hover:bg-[#1d4ed8] border-[#ffe066] text-[#ffe066]'
                     }`}
                   >
-                    {mission.claimed
-                      ? `RECOMPENSA RESGATADA (+$${mission.rewardCash.toLocaleString('pt-BR')})`
-                      : canClaim
-                        ? `RESGATAR RECOMPENSA (+$${mission.rewardCash.toLocaleString('pt-BR')})`
-                        : 'EM ANDAMENTO · CUMPRIR META'}
+                    {hud.stadiumMatchActive
+                      ? '⚽ DIA DE JOGO ATIVO (FOGOS & REFLETORES NO MAPA)'
+                      : '⚽ REALIZAR DIA DE JOGO NO ESTÁDIO (FOGOS & TURISMO)'}
                   </button>
+                ) : null}
+              </div>
+
+              {visibleMissions.length === 0 ? (
+                <div
+                  data-testid="missions-all-claimed-empty"
+                  className="pixel-inset p-6 border-2 border-[#2e7d52] bg-[#0e201b] text-center flex flex-col items-center gap-1.5"
+                >
+                  <span className="font-pixel text-[9.5px] text-[#66d98c]">
+                    TODAS AS RECOMPENSAS DO MANDATO FORAM RESGATADAS!
+                  </span>
+                  <p className="text-[15px] text-[#cfd9e8] max-w-[520px]">
+                    Você cumpriu e resgatou todas as {mandateMissions.length} metas estratégicas desta gestão. Continue expandindo Pixópolis e equilibrando impostos e demanda R · C · I.
+                  </p>
                 </div>
-              );
-            })}
-          </div>
-        </section>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {visibleMissions.map((mission) => {
+                    const pct = Math.min(
+                      100,
+                      Math.round((mission.currentValue / Math.max(1, mission.targetValue)) * 100)
+                    );
+                    const canClaim = mission.completed && !mission.claimed;
+
+                    return (
+                      <div
+                        key={mission.id}
+                        data-testid={`mandate-mission-card-${mission.id}`}
+                        className={`pixel-inset p-3.5 flex flex-col justify-between gap-2.5 border-2 ${
+                          canClaim
+                            ? 'border-[#4ade80] bg-[#11261f]'
+                            : 'border-[#334361]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div>
+                              <span
+                                className="font-pixel text-[6.5px] px-1.5 py-0.5 border"
+                                style={{
+                                  borderColor: mission.accentColor,
+                                  color: mission.accentColor,
+                                }}
+                              >
+                                {mission.categoryLabel}
+                              </span>
+                              <h4 className="font-pixel text-[9px] text-[#eef2f7] mt-1">
+                                {mission.title}
+                              </h4>
+                            </div>
+                            <span className="font-pixel text-[8px] px-2 py-1 bg-[#143326] border border-[#66d98c] text-[#ffe066] shrink-0 tabular-nums">
+                              +${mission.rewardCash.toLocaleString('pt-BR')}
+                            </span>
+                          </div>
+                          <p className="text-[14.5px] text-[#cfd9e8] leading-snug mb-2">
+                            {mission.description}
+                          </p>
+                          <div className="w-full h-3 bg-[#0b101b] border border-[#334361] overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-[#0284c7] to-[#4ade80] transition-all duration-300"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[13px] text-[#9eb0c9] mt-1 tabular-nums">
+                            <span>Progresso: {mission.progressLabel}</span>
+                            <span>{pct}%</span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          data-testid={`claim-mission-btn-${mission.id}`}
+                          disabled={!canClaim}
+                          onClick={() => onClaimMission?.(mission.id)}
+                          className={`pixel-btn w-full py-2 px-3 font-pixel text-[7.5px] ${
+                            canClaim
+                              ? 'bg-[#16a34a] hover:bg-[#15803d] border-[#4ade80] text-white shadow-[0_0_12px_rgba(22,163,74,0.45)]'
+                              : 'bg-[#1f293d] text-[#8fa4bf]'
+                          }`}
+                        >
+                          {canClaim
+                            ? `RESGATAR RECOMPENSA (+$${mission.rewardCash.toLocaleString('pt-BR')})`
+                            : 'EM ANDAMENTO · CUMPRIR META'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })()
       ) : null}
 
       {/* TAB 2: TERRENO */}

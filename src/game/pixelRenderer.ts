@@ -8,13 +8,13 @@ import {
   unrotateGridCoord,
 } from './isoMath';
 import {
-  getMetroNetworkStations,
   getSkyscraperRoofHeightHd,
   getSkyscraperStyleIdx,
   getTile,
   getTrafficSignalState,
   hasSkyscraperHelipad,
   isExternalBorderRoadTile,
+  isRailCorridorTile,
   isRoadLike,
   isTollPlazaTile,
   isTrafficLightIntersection,
@@ -3048,14 +3048,11 @@ function getCommercialSprite(
           });
           drawTree64(ctx, cx + 15, cy + 4, 'emerald', 0.78);
         } else {
-          // (1,1) Front-East: Recessed Asphalt Customer Parking Court & Parked 3D Cars
+          // (1,1) Front-East: Recessed Asphalt Customer Parking Court (live cars enter, park & exit!)
           fillDiamond64(ctx, cx, cy, 24.5, 12.2, '#2c3545', '#64748b', 0.8);
           drawLine64(ctx, cx - 13, cy - 2, cx - 2, cy - 7.5, 'rgba(241, 245, 249, 0.72)', 0.95);
           drawLine64(ctx, cx - 4, cy + 2.5, cx + 7, cy - 3, 'rgba(241, 245, 249, 0.72)', 0.95);
           drawLine64(ctx, cx + 4, cy + 6.5, cx + 14, cy + 1, 'rgba(241, 245, 249, 0.72)', 0.95);
-          const carCols = ['#ef4444', '#38bdf8', '#eab308', '#22c55e'];
-          drawShoppingParkedCar64(ctx, cx - 5, cy - 1, carCols[mIdx % carCols.length], 'ne', 0.86);
-          drawShoppingParkedCar64(ctx, cx + 5, cy + 3, carCols[(mIdx + 2) % carCols.length], 'ne', 0.86);
           drawStreetProp64(ctx, cx - 18, cy + 2, 'lamp');
         }
       }
@@ -5038,11 +5035,13 @@ function getEstablishmentSprite(
   lotH: number = 1,
   lotDx: number = 0,
   lotDy: number = 0,
-  rotation: CameraRotation = 0
+  rotation: CameraRotation = 0,
+  lotRotation: number = 0
 ): CachedSprite {
   const v = ((variant % 3) + 3) % 3;
   const f = animFrame % 2;
   const isMulti = lotW > 1 || lotH > 1;
+  const flipUV = (lotRotation & 1) === 1;
 
   // Multi-tile 4×3 Soccer Stadium Arena: seamless stepped bleacher amphitheater surrounding the emerald pitch
   if (estId === 'soccer_stadium' && lotW >= 3 && lotH >= 3) {
@@ -5110,7 +5109,7 @@ function getEstablishmentSprite(
       );
     }
     return getOrCreateSprite(
-      `est64_market2x2_v2_hero_v${v}_f${f}`,
+      `est64_market2x2_v2_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
       216,
       188,
       108,
@@ -5120,10 +5119,11 @@ function getEstablishmentSprite(
         const dRy = -0.5;
         const mx = cx + (dRx - dRy) * TILE_HW;
         const my = cy + (dRx + dRy) * TILE_HH;
-        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-          mx + (u - wv) * TILE_HW,
-          my + (u + wv) * TILE_HH - z,
-        ];
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+          const mu = flipUV ? wv : u;
+          const mv = flipUV ? u : wv;
+          return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+        };
 
         // 1. Seamless 2×2 Stone Market Plaza Foundation & Customer Parking Apron (#8c97a8 / #cbd5e1)
         drawIsoQuad64(ctx, pt, -0.98, 0.98, -0.98, 0.98, 0, '#8c97a8');
@@ -5232,13 +5232,7 @@ function getEstablishmentSprite(
           });
         }
 
-        // 4. Parked Customer Cars & White Delivery Van in the Market Lot
-        const carColors = ['#ef4444', '#38bdf8', '#eab308'];
-        for (let c = 0; c < 3; c++) {
-          const [cxCar, cyCar] = pt(0.52, -0.26 + c * 0.36, 2.0);
-          drawShoppingParkedCar64(ctx, cxCar, cyCar, carColors[(c + v) % carColors.length], 'nw', 0.88);
-        }
-        // White delivery box van at back-right loading bay
+        // 4. White delivery box van at back-right loading bay (front stalls are live dynamic parking!)
         const [vx, vy] = pt(0.54, -0.68, 2.0);
         drawPrism64(
           ctx,
@@ -5279,7 +5273,7 @@ function getEstablishmentSprite(
       );
     }
     return getOrCreateSprite(
-      `est64_hosp3x3_v2_hero_v${v}_f${f}`,
+      `est64_hosp3x3_v2_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
       276,
       242,
       138,
@@ -5289,10 +5283,11 @@ function getEstablishmentSprite(
         const dRy = -(rotLot.rotH - 1) / 2;
         const mx = cx + (dRx - dRy) * TILE_HW;
         const my = cy + (dRx + dRy) * TILE_HH;
-        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-          mx + (u - wv) * TILE_HW,
-          my + (u + wv) * TILE_HH - z,
-        ];
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+          const mu = flipUV ? wv : u;
+          const mv = flipUV ? u : wv;
+          return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+        };
 
         // 1. Stone Hospital Plaza Foundation (#8c97a8 / #cbd5e1) & Emergency Driveway (#2c3545)
         drawIsoQuad64(ctx, pt, -1.48, 1.48, -1.48, 1.48, 0, '#8c97a8');
@@ -5404,7 +5399,7 @@ function getEstablishmentSprite(
     }
     const is4x4 = rotLot.rotW >= 4 && rotLot.rotH >= 4;
     return getOrCreateSprite(
-      `est64_univ_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}`,
+      `est64_univ_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
       is4x4 ? 340 : 276,
       is4x4 ? 266 : 236,
       is4x4 ? 170 : 138,
@@ -5414,10 +5409,11 @@ function getEstablishmentSprite(
         const dRy = -(rotLot.rotH - 1) / 2;
         const mx = cx + (dRx - dRy) * TILE_HW;
         const my = cy + (dRx + dRy) * TILE_HH;
-        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-          mx + (u - wv) * TILE_HW,
-          my + (u + wv) * TILE_HH - z,
-        ];
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+          const mu = flipUV ? wv : u;
+          const mv = flipUV ? u : wv;
+          return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+        };
         const halfSpan = is4x4 ? 1.94 : 1.44;
 
         // 1. Stone Academic Courtyard Quad Foundation matching city sidewalks (#8c97a8 / #cbd5e1)
@@ -5561,7 +5557,7 @@ function getEstablishmentSprite(
     }
     const is4x4 = rotLot.rotW >= 4 && rotLot.rotH >= 4;
     return getOrCreateSprite(
-      `est64_amuse_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}`,
+      `est64_amuse_v2_${is4x4 ? '4x4' : '3x3'}_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
       is4x4 ? 340 : 276,
       is4x4 ? 276 : 244,
       is4x4 ? 170 : 138,
@@ -5571,10 +5567,11 @@ function getEstablishmentSprite(
         const dRy = -(rotLot.rotH - 1) / 2;
         const mx = cx + (dRx - dRy) * TILE_HW;
         const my = cy + (dRx + dRy) * TILE_HH;
-        const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-          mx + (u - wv) * TILE_HW,
-          my + (u + wv) * TILE_HH - z,
-        ];
+        const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+          const mu = flipUV ? wv : u;
+          const mv = flipUV ? u : wv;
+          return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+        };
         const halfSpan = is4x4 ? 1.94 : 1.44;
 
         // 1. Stone Perimeter Sidewalk Curb (#8c97a8 / #cbd5e1) & Warm Sandstone Fairground Promenade (#e9d8a6)
@@ -5799,7 +5796,7 @@ function getEstablishmentSprite(
     // Case A: 4×4 Complexo de Esporte Olímpico (2º Centro de Esporte)
     if (rotLot.rotW >= 4 && rotLot.rotH >= 4) {
       return getOrCreateSprite(
-        `est64_sports4x4_v2_hero_v${v}_f${f}`,
+        `est64_sports4x4_v2_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
         344,
         266,
         172,
@@ -5809,10 +5806,11 @@ function getEstablishmentSprite(
           const dRy = -(rotLot.rotH - 1) / 2;
           const mx = cx + (dRx - dRy) * TILE_HW;
           const my = cy + (dRx + dRy) * TILE_HH;
-          const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-            mx + (u - wv) * TILE_HW,
-            my + (u + wv) * TILE_HH - z,
-          ];
+          const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+            const mu = flipUV ? wv : u;
+            const mv = flipUV ? u : wv;
+            return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+          };
 
           // 1. 4×4 Stone Campus Perimeter Foundation (#8c97a8 / #cbd5e1) & Landscaped Turf Lawns (#3f7a46)
           drawIsoQuad64(ctx, pt, -1.98, 1.98, -1.98, 1.98, 0, '#8c97a8');
@@ -5947,7 +5945,7 @@ function getEstablishmentSprite(
     // Case B: 2×2 Centro de Esporte (1º Centro de Esporte)
     if (rotLot.rotW === 2 && rotLot.rotH === 2) {
       return getOrCreateSprite(
-        `est64_sports2x2_v2_hero_v${v}_f${f}`,
+        `est64_sports2x2_v2_hero_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
         216,
         188,
         108,
@@ -5957,10 +5955,11 @@ function getEstablishmentSprite(
           const dRy = -0.5;
           const mx = cx + (dRx - dRy) * TILE_HW;
           const my = cy + (dRx + dRy) * TILE_HH;
-          const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-            mx + (u - wv) * TILE_HW,
-            my + (u + wv) * TILE_HH - z,
-          ];
+          const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+            const mu = flipUV ? wv : u;
+            const mv = flipUV ? u : wv;
+            return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+          };
 
           // 1. 2×2 Stone Sidewalk Curb (#8c97a8 / #cbd5e1) & Landscaped Turf Border (#3f7a46)
           drawIsoQuad64(ctx, pt, -0.98, 0.98, -0.98, 0.98, 0, '#8c97a8');
@@ -7589,6 +7588,8 @@ function getTileSprite(
   const coordSeed = hashCoord(tile.x, tile.y, tile.variant);
   const lotSeed = hashCoord(anchorXCoord, anchorYCoord, tile.variant);
 
+  const lotRot = tile.lotRotation ?? 0;
+
   if (tile.establishmentId) {
     return getEstablishmentSprite(
       tile.establishmentId,
@@ -7598,7 +7599,8 @@ function getTileSprite(
       lotH,
       lotDx,
       lotDy,
-      rotation
+      rotation,
+      lotRot
     );
   }
 
@@ -7686,7 +7688,8 @@ function getTileSprite(
         lotH,
         lotDx,
         lotDy,
-        rotation
+        rotation,
+        lotRot
       );
     case 'airport':
       return getAirportSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy);
@@ -7695,11 +7698,40 @@ function getTileSprite(
     case 'metro_station':
       return getMetroStationSprite(tile.level || 1, tile.variant || 0);
     case 'shopping':
-      return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy, rotation);
+      return getShoppingMallSprite(tile.level || 1, tile.variant, lotW, lotH, lotDx, lotDy, rotation, lotRot);
     case 'clean_energy':
-      return getCleanEnergySprite(tile.level || 1, tile.variant, animFrame, lotW, lotH, lotDx, lotDy, rotation);
-    case 'rail_terminal':
-      return getRailTerminalSprite(tile.level || 1, tile.variant, animFrame, lotW, lotH, lotDx, lotDy, rotation);
+      return getCleanEnergySprite(tile.level || 1, tile.variant, animFrame, lotW, lotH, lotDx, lotDy, rotation, lotRot);
+    case 'rail_track': {
+      const axis: 'ns' | 'ew' = state.railCorridor?.axis ?? (tile.variant === 1 ? 'ew' : 'ns');
+      const alongCoord = axis === 'ns' ? tile.y : tile.x;
+      const alongMax = (axis === 'ns' ? state.gridHeight : state.gridWidth) - 1;
+      const isPortal = alongCoord === 0 || alongCoord === alongMax;
+      return getRailTrackSprite(axis, isPortal, rotation, season);
+    }
+    case 'rail_terminal': {
+      const rc = state.railCorridor;
+      let trackCross = 0.5;
+      if (rc && (lotW > 1 || lotH > 1)) {
+        const localTrackDx = rc.axis === 'ns' ? Math.max(0, Math.min(lotW - 1, rc.lineCoord - anchorXCoord)) : 0;
+        const localTrackDy = rc.axis === 'ew' ? Math.max(0, Math.min(lotH - 1, rc.lineCoord - anchorYCoord)) : 0;
+        const rotTrack = getRotatedLotCoords(lotW, lotH, localTrackDx, localTrackDy, rotation);
+        const alongV = rotTrack.rotH >= rotTrack.rotW;
+        trackCross = alongV
+          ? rotTrack.rDx - (rotTrack.rotW - 1) / 2
+          : rotTrack.rDy - (rotTrack.rotH - 1) / 2;
+      }
+      return getRailTerminalSprite(
+        tile.level || 1,
+        tile.variant,
+        animFrame,
+        lotW,
+        lotH,
+        lotDx,
+        lotDy,
+        rotation,
+        trackCross
+      );
+    }
   }
 }
 
@@ -7711,10 +7743,12 @@ function getCleanEnergySprite(
   lotH: number = 1,
   lotDx: number = 0,
   lotDy: number = 0,
-  rotation: CameraRotation = 0
+  rotation: CameraRotation = 0,
+  lotRotation: number = 0
 ): CachedSprite {
   const v = ((variant % 3) + 3) % 3;
   const f = animFrame & 1;
+  const flipUV = (lotRotation & 1) === 1;
   const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
   if ((lotW > 1 || lotH > 1) && !rotLot.isFrontCorner) {
     return getOrCreateSprite(
@@ -7732,7 +7766,7 @@ function getCleanEnergySprite(
   }
   const isWind3x3 = level >= 2 || (rotLot.rotW >= 3 && rotLot.rotH >= 3);
   return getOrCreateSprite(
-    `clean_energy_hero_v2_lv${level}_w${rotLot.rotW}_v${v}_f${f}`,
+    `clean_energy_hero_v2_lv${level}_w${rotLot.rotW}_v${v}_f${f}_lr${flipUV ? 1 : 0}`,
     isWind3x3 ? 276 : 212,
     isWind3x3 ? 244 : 184,
     isWind3x3 ? 138 : 106,
@@ -7742,10 +7776,11 @@ function getCleanEnergySprite(
       const dRy = -(rotLot.rotH - 1) / 2;
       const mx = cx + (dRx - dRy) * TILE_HW;
       const my = cy + (dRx + dRy) * TILE_HH;
-      const pt = (u: number, wv: number, z: number = 0): [number, number] => [
-        mx + (u - wv) * TILE_HW,
-        my + (u + wv) * TILE_HH - z,
-      ];
+      const pt = (u: number, wv: number, z: number = 0): [number, number] => {
+        const mu = flipUV ? wv : u;
+        const mv = flipUV ? u : wv;
+        return [mx + (mu - mv) * TILE_HW, my + (mu + mv) * TILE_HH - z];
+      };
       const halfSpan = isWind3x3 ? 1.44 : 0.94;
 
       // 1. Stone & Concrete Utility Compound Base matching city curbs (#8c97a8 / #cbd5e1)
@@ -7924,22 +7959,381 @@ function getCleanEnergySprite(
   );
 }
 
+/** Resolve screen-rotated railway direction ('v' along ry, 'u' along rx) */
+function getRotatedRailScreenAxis(axis: 'ns' | 'ew', rotation: CameraRotation): 'v' | 'u' {
+  const oddRot = (rotation & 1) === 1;
+  if (axis === 'ns') return oddRot ? 'u' : 'v';
+  return oddRot ? 'v' : 'u';
+}
+
+/** 64-Bit Cross-Map Railway Track Sprite (crushed-granite ballast, timber sleepers, gleaming steel rails & border portal arch) */
+function getRailTrackSprite(
+  axis: 'ns' | 'ew',
+  isPortal: boolean,
+  rotation: CameraRotation,
+  season: SeasonId = 'summer'
+): CachedSprite {
+  const screenAxis = getRotatedRailScreenAxis(axis, rotation);
+  return getOrCreateSprite(
+    `rail_track64_v1_${screenAxis}_p${isPortal ? 1 : 0}_${season}`,
+    98,
+    120,
+    49,
+    84,
+    (ctx, cx, cy) => {
+      // 1. Seasonal terrain base matching city grass
+      const grassBase =
+        season === 'winter'
+          ? '#cbd5e1'
+          : season === 'autumn'
+            ? '#7fa04e'
+            : season === 'spring'
+              ? '#5fb354'
+              : '#4ea349';
+      const grassHi =
+        season === 'winter'
+          ? '#e2e8f0'
+          : season === 'autumn'
+            ? '#95b25b'
+            : season === 'spring'
+              ? '#73c765'
+              : '#61b857';
+      const gGrad = ctx.createLinearGradient(cx - TILE_HW, cy - TILE_HH, cx + TILE_HW, cy + TILE_HH);
+      gGrad.addColorStop(0, grassHi);
+      gGrad.addColorStop(1, grassBase);
+      fillDiamond64(ctx, cx, cy, TILE_HW + 0.5, TILE_HH + 0.3, gGrad);
+
+      const pt = (along: number, across: number, z: number = 0): [number, number] => {
+        const u = screenAxis === 'u' ? along : across;
+        const wv = screenAxis === 'u' ? across : along;
+        return [cx + (u - wv) * TILE_HW, cy + (u + wv) * TILE_HH - z];
+      };
+
+      // 2. Raised crushed-granite gravel ballast embankment spanning edge-to-edge (-0.52 .. +0.52)
+      const b00 = pt(-0.52, -0.29, 0.2);
+      const b10 = pt(0.52, -0.29, 0.2);
+      const b11 = pt(0.52, 0.29, 0.2);
+      const b01 = pt(-0.52, 0.29, 0.2);
+      ctx.beginPath();
+      ctx.moveTo(b00[0], b00[1]);
+      ctx.lineTo(b10[0], b10[1]);
+      ctx.lineTo(b11[0], b11[1]);
+      ctx.lineTo(b01[0], b01[1]);
+      ctx.closePath();
+      ctx.fillStyle = '#475569';
+      ctx.fill();
+
+      const t00 = pt(-0.52, -0.22, 1.3);
+      const t10 = pt(0.52, -0.22, 1.3);
+      const t11 = pt(0.52, 0.22, 1.3);
+      const t01 = pt(-0.52, 0.22, 1.3);
+      ctx.beginPath();
+      ctx.moveTo(t00[0], t00[1]);
+      ctx.lineTo(t10[0], t10[1]);
+      ctx.lineTo(t11[0], t11[1]);
+      ctx.lineTo(t01[0], t01[1]);
+      ctx.closePath();
+      ctx.fillStyle = '#64748b';
+      ctx.fill();
+
+      // 3. Timber railway sleepers (cross-ties)
+      for (const s of [-0.42, -0.21, 0, 0.21, 0.42]) {
+        const [s0x, s0y] = pt(s, -0.18, 1.55);
+        const [s1x, s1y] = pt(s, 0.18, 1.55);
+        drawLine64(ctx, s0x, s0y, s1x, s1y, '#6b3410', 2.0);
+        drawLine64(ctx, s0x, s0y - 0.4, s1x, s1y - 0.4, '#92400e', 0.9);
+      }
+
+      // 4. Twin gleaming steel rails running continuously edge-to-edge
+      for (const rc of [-0.10, 0.10]) {
+        const [r0x, r0y] = pt(-0.52, rc, 2.0);
+        const [r1x, r1y] = pt(0.52, rc, 2.0);
+        drawLine64(ctx, r0x, r0y + 0.8, r1x, r1y + 0.8, 'rgba(15, 23, 42, 0.55)', 1.5);
+        drawLine64(ctx, r0x, r0y, r1x, r1y, rc < 0 ? '#e2e8f0' : '#cbd5e1', 1.35);
+      }
+
+      // 5. Regional Border Railway Portal Gantry at map edges (coord === 0 or max)
+      if (isPortal) {
+        const [pL0x, pL0y] = pt(0, -0.28, 1.2);
+        const [pL1x, pL1y] = pt(0, -0.28, 22);
+        const [pR0x, pR0y] = pt(0, 0.28, 1.2);
+        const [pR1x, pR1y] = pt(0, 0.28, 22);
+        drawLine64(ctx, pL0x, pL0y, pL1x, pL1y, '#475569', 2.8);
+        drawLine64(ctx, pR0x, pR0y, pR1x, pR1y, '#334155', 2.8);
+        drawLine64(ctx, pL1x, pL1y, pR1x, pR1y, '#94a3b8', 3.4);
+        drawLine64(ctx, pL1x, pL1y - 1, pR1x, pR1y - 1, '#f8fafc', 1.2);
+        // Green regional rail clearance signal lamp
+        const midX = (pL1x + pR1x) * 0.5;
+        const midY = (pL1y + pR1y) * 0.5;
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(midX - 3, midY - 4, 6, 4.5);
+        drawGlow64(ctx, midX, midY - 1.5, 5.5, 'rgba(34, 197, 94, 0.92)', 'rgba(34, 197, 94, 0)');
+      }
+    }
+  );
+}
+
+/** Draw an animated railroad grade crossing (embedded rails + red/white crossing gates + warning lights) over a road tile */
+function drawRailGradeCrossing64(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  axis: 'ns' | 'ew',
+  rotation: CameraRotation,
+  zoom: number,
+  timeSeconds: number
+): void {
+  const screenAxis = getRotatedRailScreenAxis(axis, rotation);
+  const hw = TILE_HW * zoom;
+  const hh = TILE_HH * zoom;
+  const pt = (along: number, across: number, z: number = 0): [number, number] => {
+    const u = screenAxis === 'u' ? along : across;
+    const wv = screenAxis === 'u' ? across : along;
+    return [sx + (u - wv) * hw, sy + (u + wv) * hh - z * zoom];
+  };
+
+  ctx.save();
+  // Embedded concrete/timber rail crossing pad flush with road asphalt
+  const c00 = pt(-0.48, -0.22, 0.3);
+  const c10 = pt(0.48, -0.22, 0.3);
+  const c11 = pt(0.48, 0.22, 0.3);
+  const c01 = pt(-0.48, 0.22, 0.3);
+  ctx.beginPath();
+  ctx.moveTo(c00[0], c00[1]);
+  ctx.lineTo(c10[0], c10[1]);
+  ctx.lineTo(c11[0], c11[1]);
+  ctx.lineTo(c01[0], c01[1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(71, 85, 105, 0.85)';
+  ctx.fill();
+
+  // Yellow safety hazard stripes on road shoulders
+  for (const rc of [-0.21, 0.21]) {
+    const [y0x, y0y] = pt(-0.46, rc, 0.45);
+    const [y1x, y1y] = pt(0.46, rc, 0.45);
+    drawLine64(ctx, y0x, y0y, y1x, y1y, '#facc15', Math.max(0.8, 1.15 * zoom));
+  }
+  // Twin gleaming steel rails embedded into the road
+  for (const rc of [-0.10, 0.10]) {
+    const [r0x, r0y] = pt(-0.52, rc, 0.7);
+    const [r1x, r1y] = pt(0.52, rc, 0.7);
+    drawLine64(ctx, r0x, r0y, r1x, r1y, '#e2e8f0', Math.max(0.9, 1.3 * zoom));
+  }
+
+  // Pair of red/white signal crossbuck posts on opposite corners
+  const flashA = Math.floor(timeSeconds * 4.5) % 2 === 0;
+  for (const [pa, pc, isA] of [
+    [-0.32, -0.34, true],
+    [0.32, 0.34, false],
+  ] as const) {
+    const [px, py] = pt(pa, pc, 0.5);
+    drawLine64(ctx, px, py, px, py - 9.5 * zoom, '#f8fafc', Math.max(1.0, 1.4 * zoom));
+    drawLine64(ctx, px, py - 5 * zoom, px, py - 7 * zoom, '#ef4444', Math.max(1.0, 1.4 * zoom));
+    if (zoom >= 0.55) {
+      const lit = isA ? flashA : !flashA;
+      ctx.fillStyle = lit ? '#ef4444' : '#7f1d1d';
+      ctx.beginPath();
+      ctx.arc(px, py - 9.8 * zoom, Math.max(1.1, 1.7 * zoom), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/** Draw an elevated dark-steel Pratt truss railway bridge over a river water tile */
+function drawRailRiverBridge64(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  axis: 'ns' | 'ew',
+  rotation: CameraRotation,
+  zoom: number
+): void {
+  const screenAxis = getRotatedRailScreenAxis(axis, rotation);
+  const hw = TILE_HW * zoom;
+  const hh = TILE_HH * zoom;
+  const deckZ = 7.5;
+  const pt = (along: number, across: number, z: number = 0): [number, number] => {
+    const u = screenAxis === 'u' ? along : across;
+    const wv = screenAxis === 'u' ? across : along;
+    return [sx + (u - wv) * hw, sy + (u + wv) * hh - z * zoom];
+  };
+
+  ctx.save();
+  // Concrete bridge pier descending into the river
+  const [pBaseX, pBaseY] = pt(0, 0, -2);
+  const [pTopX, pTopY] = pt(0, 0, deckZ - 1);
+  ctx.fillStyle = 'rgba(203, 213, 225, 0.55)';
+  ctx.beginPath();
+  ctx.ellipse(pBaseX, pBaseY + 1.5 * zoom, 5.5 * zoom, 2.6 * zoom, 0, 0, Math.PI * 2);
+  ctx.fill();
+  drawLine64(ctx, pBaseX, pBaseY, pTopX, pTopY, '#94a3b8', Math.max(2.5, 5.2 * zoom));
+
+  // Elevated dark steel deck girder
+  const d00 = pt(-0.52, -0.24, deckZ);
+  const d10 = pt(0.52, -0.24, deckZ);
+  const d11 = pt(0.52, 0.24, deckZ);
+  const d01 = pt(-0.52, 0.24, deckZ);
+  ctx.beginPath();
+  ctx.moveTo(d00[0], d00[1]);
+  ctx.lineTo(d10[0], d10[1]);
+  ctx.lineTo(d11[0], d11[1]);
+  ctx.lineTo(d01[0], d01[1]);
+  ctx.closePath();
+  ctx.fillStyle = '#334155';
+  ctx.fill();
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = Math.max(0.8, 1.1 * zoom);
+  ctx.stroke();
+
+  // Sleepers & twin steel rails on elevated deck
+  for (const s of [-0.36, -0.12, 0.12, 0.36]) {
+    const [s0x, s0y] = pt(s, -0.17, deckZ + 0.3);
+    const [s1x, s1y] = pt(s, 0.17, deckZ + 0.3);
+    drawLine64(ctx, s0x, s0y, s1x, s1y, '#78350f', Math.max(0.9, 1.5 * zoom));
+  }
+  for (const rc of [-0.10, 0.10]) {
+    const [r0x, r0y] = pt(-0.52, rc, deckZ + 0.7);
+    const [r1x, r1y] = pt(0.52, rc, deckZ + 0.7);
+    drawLine64(ctx, r0x, r0y, r1x, r1y, '#e2e8f0', Math.max(0.9, 1.3 * zoom));
+  }
+
+  // Open steel Pratt truss side frames
+  for (const side of [-0.23, 0.23]) {
+    const [t0x, t0y] = pt(-0.48, side, deckZ + 9.5);
+    const [t1x, t1y] = pt(0.48, side, deckZ + 9.5);
+    const [b0x, b0y] = pt(-0.48, side, deckZ);
+    const [b1x, b1y] = pt(0.48, side, deckZ);
+    const [bmX, bmY] = pt(0, side, deckZ);
+    const [tmX, tmY] = pt(0, side, deckZ + 9.5);
+    const col = side < 0 ? '#64748b' : '#475569';
+    drawLine64(ctx, t0x, t0y, t1x, t1y, '#94a3b8', Math.max(1.0, 1.5 * zoom));
+    drawLine64(ctx, b0x, b0y, t0x, t0y, col, Math.max(0.9, 1.2 * zoom));
+    drawLine64(ctx, bmX, bmY, tmX, tmY, col, Math.max(0.9, 1.2 * zoom));
+    drawLine64(ctx, b1x, b1y, t1x, t1y, col, Math.max(0.9, 1.2 * zoom));
+    drawLine64(ctx, b0x, b0y, tmX, tmY, col, Math.max(0.8, 1.0 * zoom));
+    drawLine64(ctx, bmX, bmY, t1x, t1y, col, Math.max(0.8, 1.0 * zoom));
+  }
+  ctx.restore();
+}
+
+/** Draw a single 3D isometric train locomotive or coach car gliding along the cross-map railway corridor */
+function drawRailTrainCar64(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  axis: 'ns' | 'ew',
+  dirSign: 1 | -1,
+  rotation: CameraRotation,
+  zoom: number,
+  isLocomotive: boolean,
+  isExpress: boolean,
+  carIndex: number,
+  glowStrength: number,
+  bridgeLiftPx: number
+): void {
+  const screenAxis = getRotatedRailScreenAxis(axis, rotation);
+  const hw = TILE_HW * zoom;
+  const hh = TILE_HH * zoom;
+  const baseZ = 2.0 + bridgeLiftPx;
+  const pt = (u: number, wv: number, z: number = 0): [number, number] => [
+    sx + (u - wv) * hw,
+    sy + (u + wv) * hh - z * zoom,
+  ];
+
+  // Car spans [-0.39..+0.39] along screenAxis and [-0.15..+0.15] across
+  const u0 = screenAxis === 'u' ? -0.39 : -0.15;
+  const u1 = screenAxis === 'u' ? 0.39 : 0.15;
+  const v0 = screenAxis === 'v' ? -0.39 : -0.15;
+  const v1 = screenAxis === 'v' ? 0.39 : 0.15;
+
+  // Undercarriage bogie frame
+  drawIsoSpanBox64(ctx, pt, u0, u1, v0, v1, baseZ, 1.6, {
+    top: '#1e293b',
+    left: '#0f172a',
+    right: '#020617',
+  });
+
+  // Main carbody livery
+  const freightPalette = [
+    { top: '#38bdf8', topHi: '#7dd3fc', left: '#0284c7', leftBot: '#0369a1', right: '#075985', rightBot: '#0c4a6e' },
+    { top: '#4ade80', topHi: '#86efac', left: '#16a34a', leftBot: '#15803d', right: '#166534', rightBot: '#14532d' },
+    { top: '#fbbf24', topHi: '#fde68a', left: '#d97706', leftBot: '#b45309', right: '#92400e', rightBot: '#78350f' },
+    { top: '#f87171', topHi: '#fca5a5', left: '#dc2626', leftBot: '#b91c1c', right: '#991b1b', rightBot: '#7f1d1d' },
+  ];
+  const bodyColors = isLocomotive
+    ? isExpress
+      ? { top: '#f8fafc', topHi: '#ffffff', left: '#e2e8f0', leftBot: '#0284c7', right: '#94a3b8', rightBot: '#0369a1' }
+      : { top: '#ef4444', topHi: '#f87171', left: '#dc2626', leftBot: '#991b1b', right: '#991b1b', rightBot: '#7f1d1d' }
+    : isExpress
+      ? { top: '#f8fafc', topHi: '#ffffff', left: '#e2e8f0', leftBot: '#38bdf8', right: '#cbd5e1', rightBot: '#0284c7' }
+      : freightPalette[carIndex % freightPalette.length];
+
+  const carH = isLocomotive ? 7.6 : isExpress ? 6.8 : 6.4;
+  drawIsoSpanBox64(ctx, pt, u0, u1, v0, v1, baseZ + 1.6, carH, bodyColors);
+
+  // Illuminated passenger windows (for express coaches & locomotive cab)
+  if ((isExpress || isLocomotive) && zoom >= 0.45) {
+    const winCol = glowStrength > 0.2 ? '#fef08a' : '#bae6fd';
+    if (screenAxis === 'u') {
+      const [w0x, w0y] = pt(u0 + 0.08, v1, baseZ + 5.4);
+      const [w1x, w1y] = pt(u1 - 0.08, v1, baseZ + 5.4);
+      drawLine64(ctx, w0x, w0y, w1x, w1y, winCol, Math.max(1.2, 2.0 * zoom));
+    } else {
+      const [w0x, w0y] = pt(u1, v0 + 0.08, baseZ + 5.4);
+      const [w1x, w1y] = pt(u1, v1 - 0.08, baseZ + 5.4);
+      drawLine64(ctx, w0x, w0y, w1x, w1y, winCol, Math.max(1.2, 2.0 * zoom));
+    }
+  }
+
+  // Locomotive warm headlamp beam
+  if (isLocomotive) {
+    // Convert world dirSign along corridor into rotated screen sign
+    let screenAlongSign = dirSign;
+    if (axis === 'ns') {
+      screenAlongSign = rotation === 0 || rotation === 3 ? dirSign : (-dirSign as 1 | -1);
+    } else {
+      screenAlongSign = rotation === 0 || rotation === 1 ? dirSign : (-dirSign as 1 | -1);
+    }
+    const frontAlong = screenAlongSign * 0.41;
+    const [hlX, hlY] =
+      screenAxis === 'u'
+        ? pt(frontAlong, 0, baseZ + 4.8)
+        : pt(0, frontAlong, baseZ + 4.8);
+    drawGlow64(
+      ctx,
+      hlX,
+      hlY,
+      Math.max(4, (6 + glowStrength * 5) * zoom),
+      'rgba(254, 240, 138, 0.92)',
+      'rgba(254, 240, 138, 0)'
+    );
+  }
+}
+
+/**
+ * 64-Bit Architectural Train Station Sprite:
+ * - Level 1 (2×4 or 4×2): Estação de Trem Regional com plataforma coberta, bilheteria de tijolo/vidro e linha férrea contínua
+ * - Level 2 (4×8 or 8×4): Estação Central Ferroviária com nave envidraçada abobadada, torre do relógio, 3 vias paralelas e pátio
+ * Aligns edge-to-edge with `state.railCorridor` across all 4 camera rotations!
+ */
 function getRailTerminalSprite(
   level: number,
   variant: number,
   animFrame: number,
-  lotW: number = 1,
-  lotH: number = 1,
+  lotW: number = 2,
+  lotH: number = 4,
   lotDx: number = 0,
   lotDy: number = 0,
-  rotation: CameraRotation = 0
+  rotation: CameraRotation = 0,
+  trackCrossOffset: number = 0.5
 ): CachedSprite {
   const v = ((variant % 3) + 3) % 3;
   const f = animFrame & 1;
   const rotLot = getRotatedLotCoords(lotW, lotH, lotDx, lotDy, rotation);
   if ((lotW > 1 || lotH > 1) && !rotLot.isFrontCorner) {
     return getOrCreateSprite(
-      `rail_term_base_v2_lv${level}_x${rotLot.rDx}y${rotLot.rDy}`,
+      `rail_term_base_v3_lv${level}_x${rotLot.rDx}y${rotLot.rDy}`,
       98,
       128,
       49,
@@ -7951,13 +8345,21 @@ function getRailTerminalSprite(
       }
     );
   }
-  const isMono3x3 = level >= 2 || (rotLot.rotW >= 3 && rotLot.rotH >= 3);
+
+  const isGrand4x8 = level >= 2 || Math.max(rotLot.rotW, rotLot.rotH) >= 6;
+  const tcKey = Math.round(trackCrossOffset * 10);
+  const padX = 34;
+  const spanW = (rotLot.rotW + rotLot.rotH) * TILE_HW + padX * 2;
+  const anchorX = rotLot.rotW * TILE_HW + padX;
+  const anchorY = (rotLot.rotW + rotLot.rotH) * TILE_HH + (isGrand4x8 ? 104 : 84);
+  const spanH = anchorY + TILE_HH + 24;
+
   return getOrCreateSprite(
-    `rail_term_hero_v2_lv${level}_w${rotLot.rotW}h${rotLot.rotH}_v${v}_f${f}`,
-    276,
-    238,
-    138,
-    170,
+    `rail_term_hero_v3_lv${level}_w${rotLot.rotW}h${rotLot.rotH}_tc${tcKey}_v${v}_f${f}`,
+    spanW,
+    spanH,
+    anchorX,
+    anchorY,
     (ctx, cx, cy) => {
       const dRx = -(rotLot.rotW - 1) / 2;
       const dRy = -(rotLot.rotH - 1) / 2;
@@ -7967,170 +8369,365 @@ function getRailTerminalSprite(
         mx + (u - wv) * TILE_HW,
         my + (u + wv) * TILE_HH - z,
       ];
-      const spanU = rotLot.rotW / 2 - 0.04;
-      const spanV = rotLot.rotH / 2 - 0.04;
 
-      // 1. Stone & Concrete Intermodal Terminal Foundation matching city sidewalks (#8c97a8 / #cbd5e1)
-      drawIsoQuad64(ctx, pt, -spanU - 0.03, spanU + 0.03, -spanV - 0.03, spanV + 0.03, 0, '#8c97a8');
-      drawIsoSpanBox64(ctx, pt, -spanU, spanU, -spanV, spanV, 0, 2.4, {
+      const alongV = rotLot.rotH >= rotLot.rotW;
+      const longHalf = Math.max(rotLot.rotW, rotLot.rotH) / 2;
+      const shortHalf = Math.min(rotLot.rotW, rotLot.rotH) / 2;
+      const ptA = (along: number, across: number, z: number = 0): [number, number] =>
+        alongV ? pt(across, along, z) : pt(along, across, z);
+
+      const drawBoxAlong = (
+        a0: number,
+        a1: number,
+        c0: number,
+        c1: number,
+        z0: number,
+        h: number,
+        colors: {
+          top: string;
+          topHi?: string;
+          left: string;
+          leftBot?: string;
+          right: string;
+          rightBot?: string;
+          parapetColor?: string;
+        }
+      ) => {
+        const mnA = Math.min(a0, a1);
+        const mxA = Math.max(a0, a1);
+        const mnC = Math.min(c0, c1);
+        const mxC = Math.max(c0, c1);
+        if (alongV) {
+          drawIsoSpanBox64(ctx, pt, mnC, mxC, mnA, mxA, z0, h, colors);
+        } else {
+          drawIsoSpanBox64(ctx, pt, mnA, mxA, mnC, mxC, z0, h, colors);
+        }
+      };
+
+      const drawQuadAlong = (
+        a0: number,
+        a1: number,
+        c0: number,
+        c1: number,
+        z: number,
+        fill: string,
+        stroke?: string
+      ) => {
+        const mnA = Math.min(a0, a1);
+        const mxA = Math.max(a0, a1);
+        const mnC = Math.min(c0, c1);
+        const mxC = Math.max(c0, c1);
+        if (alongV) {
+          drawIsoQuad64(ctx, pt, mnC, mxC, mnA, mxA, z, fill, stroke);
+        } else {
+          drawIsoQuad64(ctx, pt, mnA, mxA, mnC, mxC, z, fill, stroke);
+        }
+      };
+
+      const drawGlassAlong = (
+        a0: number,
+        a1: number,
+        c0: number,
+        c1: number,
+        z0: number,
+        h: number,
+        colsAlong: number,
+        colsAcross: number,
+        rows: number
+      ) => {
+        const mnA = Math.min(a0, a1);
+        const mxA = Math.max(a0, a1);
+        const mnC = Math.min(c0, c1);
+        const mxC = Math.max(c0, c1);
+        if (alongV) {
+          drawIsoGlassGrid64(ctx, pt, 'left', mnC, mxC, mnA, mxA, z0, h, colsAcross, rows, '#1d4f7a', '#38bdf8');
+          drawIsoGlassGrid64(ctx, pt, 'right', mnC, mxC, mnA, mxA, z0, h, colsAlong, rows, '#163b5c', '#0284c7');
+        } else {
+          drawIsoGlassGrid64(ctx, pt, 'left', mnA, mxA, mnC, mxC, z0, h, colsAlong, rows, '#1d4f7a', '#38bdf8');
+          drawIsoGlassGrid64(ctx, pt, 'right', mnA, mxA, mnC, mxC, z0, h, colsAcross, rows, '#163b5c', '#0284c7');
+        }
+      };
+
+      // Helper to render one continuous edge-to-edge ballasted track at cross position `tc`
+      const drawThroughTrack = (tc: number) => {
+        drawQuadAlong(-longHalf, longHalf, tc - 0.27, tc + 0.27, 1.3, '#475569');
+        drawQuadAlong(-longHalf, longHalf, tc - 0.21, tc + 0.21, 1.6, '#64748b');
+        const step = 0.22;
+        for (let a = -longHalf + 0.1; a <= longHalf - 0.1; a += step) {
+          const [s0x, s0y] = ptA(a, tc - 0.17, 1.8);
+          const [s1x, s1y] = ptA(a, tc + 0.17, 1.8);
+          drawLine64(ctx, s0x, s0y, s1x, s1y, '#6b3410', 1.6);
+        }
+        for (const off of [-0.10, 0.10]) {
+          const [r0x, r0y] = ptA(-longHalf, tc + off, 2.2);
+          const [r1x, r1y] = ptA(longHalf, tc + off, 2.2);
+          drawLine64(ctx, r0x, r0y + 0.7, r1x, r1y + 0.7, 'rgba(15, 23, 42, 0.5)', 1.4);
+          drawLine64(ctx, r0x, r0y, r1x, r1y, off < 0 ? '#e2e8f0' : '#cbd5e1', 1.25);
+        }
+      };
+
+      // 1. Seamless Stone Concourse Foundation matching city sidewalks (#8c97a8 / #cbd5e1)
+      drawQuadAlong(-longHalf, longHalf, -shortHalf, shortHalf, 0, '#8c97a8');
+      drawBoxAlong(-longHalf + 0.03, longHalf - 0.03, -shortHalf + 0.03, shortHalf - 0.03, 0, 1.4, {
         top: '#cbd5e1',
         topHi: '#e2e8f0',
         left: '#94a3b8',
         right: '#64748b',
       });
-      // Recessed crushed-granite dark track ballast bed
-      drawIsoQuad64(ctx, pt, -spanU + 0.08, spanU - 0.08, -0.78, 0.28, 2.5, '#334155');
 
-      // 2. Dual Parallel Ballasted Railway Tracks with Cross-Ties (Sleepers) & Steel Rails
-      for (const tv of [-0.52, -0.02]) {
-        for (let su = -spanU + 0.18; su <= spanU - 0.18; su += 0.22) {
-          const [s0x, s0y] = pt(su, tv - 0.13, 2.6);
-          const [s1x, s1y] = pt(su, tv + 0.13, 2.6);
-          drawLine64(ctx, s0x, s0y, s1x, s1y, '#78350f', 1.5);
-        }
-        const [rA0x, rA0y] = pt(-spanU + 0.1, tv - 0.07, 2.8);
-        const [rA1x, rA1y] = pt(spanU - 0.1, tv - 0.07, 2.8);
-        const [rB0x, rB0y] = pt(-spanU + 0.1, tv + 0.07, 2.8);
-        const [rB1x, rB1y] = pt(spanU - 0.1, tv + 0.07, 2.8);
-        drawLine64(ctx, rA0x, rA0y, rA1x, rA1y, '#e2e8f0', 1.2);
-        drawLine64(ctx, rB0x, rB0y, rB1x, rB1y, '#94a3b8', 1.2);
-      }
+      const clampedTrackCross = Math.max(-shortHalf + 0.45, Math.min(shortHalf - 0.45, trackCrossOffset));
+      const buildingOnBack = clampedTrackCross >= 0;
 
-      // 3. Back Logistics Platform & Heritage Brick/Steel Freight Depot Building
-      const backV0 = -spanV + 0.12;
-      const backV1 = -0.78;
-      if (backV1 - backV0 > 0.25) {
-        drawIsoSpanBox64(ctx, pt, -spanU + 0.16, spanU - 0.16, backV0, backV1, 2.5, 16, {
-          top: '#64748b',
-          topHi: '#94a3b8',
-          left: v === 0 ? '#c2593f' : '#cbd5e1',
-          leftBot: v === 0 ? '#8c3824' : '#94a3b8',
-          right: v === 0 ? '#7c2d12' : '#64748b',
-          rightBot: v === 0 ? '#5c1f0b' : '#475569',
-          parapetColor: '#475569',
-        });
-        drawIsoGlassGrid64(ctx, pt, 'left', -spanU + 0.22, spanU - 0.22, backV0, backV1, 2.5, 15, 5, 2, '#1e3a5f', '#38bdf8');
-      }
+      if (!isGrand4x8) {
+        // =========================================================================
+        // TIER 1 (2×4 or 4×2): Estação de Trem Regional
+        // =========================================================================
+        const bC0 = buildingOnBack ? -shortHalf + 0.12 : 0.04;
+        const bC1 = buildingOnBack ? -0.04 : shortHalf - 0.12;
+        const platEdge = buildingOnBack ? clampedTrackCross - 0.30 : clampedTrackCross + 0.30;
 
-      // 4. Detailed 3D Diesel-Electric Freight Locomotive & Ribbed ISO Cargo Containers on Track 1
-      // Flatcar underframe
-      drawIsoSpanBox64(ctx, pt, -1.18, 1.15, -0.68, -0.36, 2.8, 1.8, {
-        top: '#334155',
-        left: '#1e293b',
-        right: '#0f172a',
-      });
-      // Locomotive body (front-left)
-      drawIsoSpanBox64(ctx, pt, -1.16, -0.44, -0.66, -0.38, 4.6, 8.2, {
-        top: '#fb923c',
-        topHi: '#fdba74',
-        left: '#f97316',
-        leftBot: '#c2410c',
-        right: '#9a3412',
-        rightBot: '#7c2d12',
-      });
-      // Locomotive raised cab & windshield
-      drawIsoSpanBox64(ctx, pt, -1.08, -0.76, -0.67, -0.37, 12.8, 3.6, {
-        top: '#f8fafc',
-        left: '#38bdf8',
-        right: '#0284c7',
-      });
-      // Warm locomotive headlamp glow
-      const [hlX, hlY] = pt(-1.18, -0.52, 8.5);
-      drawGlow64(ctx, hlX, hlY, 7, 'rgba(254, 240, 138, 0.92)', 'rgba(254, 240, 138, 0)');
-      // Container 1 (Cyan-Blue)
-      drawIsoSpanBox64(ctx, pt, -0.34, 0.36, -0.66, -0.38, 4.6, 7.2, {
-        top: '#38bdf8',
-        topHi: '#7dd3fc',
-        left: '#0284c7',
-        leftBot: '#0369a1',
-        right: '#075985',
-        rightBot: '#0c4a6e',
-      });
-      // Container 2 (Emerald Green) & Stacked Upper Container
-      drawIsoSpanBox64(ctx, pt, 0.44, 1.12, -0.66, -0.38, 4.6, 7.2, {
-        top: '#22c55e',
-        topHi: '#4ade80',
-        left: '#16a34a',
-        leftBot: '#15803d',
-        right: '#166534',
-        rightBot: '#14532d',
-      });
+        const drawStationBuilding = () => {
+          // Drop-off asphalt apron at far ends of the station side
+          drawQuadAlong(-longHalf + 0.12, -1.02, bC0, bC1, 1.55, '#2c3545');
+          drawQuadAlong(1.02, longHalf - 0.12, bC0, bC1, 1.55, '#2c3545');
+          // Landscaped lawn pockets
+          drawQuadAlong(-longHalf + 0.14, -1.55, bC0 + 0.06, bC1 - 0.06, 1.65, '#3f7a46');
+          drawQuadAlong(1.55, longHalf - 0.14, bC0 + 0.06, bC1 - 0.06, 1.65, '#3f7a46');
 
-      // 5. Front Intermodal Logistics Warehouse, Loading Docks & Yellow Overhead Gantry Crane
-      drawIsoSpanBox64(ctx, pt, -0.95, 0.95, 0.32, spanV - 0.14, 2.5, 14, {
-        top: '#94a3b8',
-        topHi: '#cbd5e1',
-        left: '#e2e8f0',
-        leftBot: '#cbd5e1',
-        right: '#94a3b8',
-        rightBot: '#64748b',
-        parapetColor: '#64748b',
-      });
-      drawIsoGlassGrid64(ctx, pt, 'left', -0.88, 0.88, 0.32, spanV - 0.14, 2.5, 13, 4, 2, '#1e3a5f', '#38bdf8');
-      drawIsoGlassGrid64(ctx, pt, 'right', -0.95, 0.95, 0.38, spanV - 0.18, 2.5, 13, 2, 2, '#172554', '#0284c7');
+          // Main 2-story Regional Brick & Limestone Station Headhouse
+          const brickL = v === 0 ? '#c86b4a' : v === 1 ? '#e2e8f0' : '#d4a373';
+          const brickLBot = v === 0 ? '#9a4a31' : v === 1 ? '#cbd5e1' : '#a97b50';
+          const brickR = v === 0 ? '#8c3f29' : v === 1 ? '#94a3b8' : '#8d633d';
+          const brickRBot = v === 0 ? '#692d1c' : v === 1 ? '#64748b' : '#6c492b';
+          drawBoxAlong(-1.12, 1.12, bC0 + 0.06, bC1 - 0.04, 1.5, 19, {
+            top: '#475569',
+            topHi: '#64748b',
+            left: brickL,
+            leftBot: brickLBot,
+            right: brickR,
+            rightBot: brickRBot,
+            parapetColor: '#334155',
+          });
+          drawGlassAlong(-1.02, 1.02, bC0 + 0.06, bC1 - 0.04, 2.0, 17, 4, 2, 2);
 
-      // Industrial Yellow Gantry Crane straddling the rail tracks (at u = 0.05)
-      const [gL0x, gL0y] = pt(0.05, -0.74, 2.8);
-      const [gL1x, gL1y] = pt(0.05, -0.74, 22);
-      const [gR0x, gR0y] = pt(0.05, 0.24, 2.8);
-      const [gR1x, gR1y] = pt(0.05, 0.24, 22);
-      drawLine64(ctx, gL0x, gL0y, gL1x, gL1y, '#eab308', 2.2);
-      drawLine64(ctx, gR0x, gR0y, gR1x, gR1y, '#ca8a04', 2.2);
-      drawLine64(ctx, gL1x, gL1y, gR1x, gR1y, '#facc15', 2.6);
+          // Central Clerestory Gable & Station Clock Medallion
+          drawBoxAlong(-0.46, 0.46, bC0 + 0.12, bC1 - 0.08, 20.5, 7.5, {
+            top: '#1e3a5f',
+            topHi: '#0284c7',
+            left: '#f1f5f9',
+            leftBot: '#cbd5e1',
+            right: '#94a3b8',
+            rightBot: '#64748b',
+          });
+          const [clkX, clkY] = ptA(0, (bC0 + bC1) * 0.5, 25);
+          ctx.fillStyle = '#fef9c3';
+          ctx.beginPath();
+          ctx.arc(clkX, clkY, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#1e293b';
+          ctx.lineWidth = 0.85;
+          ctx.stroke();
 
-      // 6. Level 2 (3×3 Terminal Ferroviário & Monotrilho Elevado):
-      // Concrete T-Pillars, Elevated Viaduct Beam, Glass Boarding Station & Sleek Aerodynamic Monorail Train!
-      if (isMono3x3) {
-        // Concrete support columns
-        for (const pu of [-1.05, 0.0, 1.05]) {
-          drawIsoSpanBox64(ctx, pt, pu - 0.12, pu + 0.12, -0.12, 0.12, 2.6, 17.5, {
-            top: '#cbd5e1',
-            left: '#94a3b8',
+          // Trees at station plaza corners
+          for (const ta of [-1.72, 1.72]) {
+            const [tx, ty] = ptA(ta, (bC0 + bC1) * 0.5, 1.8);
+            drawTree64(ctx, tx, ty, 'emerald', 0.72);
+          }
+        };
+
+        const drawTrackAndPlatform = () => {
+          // Continuous edge-to-edge railway track aligned with state.railCorridor
+          drawThroughTrack(clampedTrackCross);
+
+          // Raised boarding platform next to track with yellow tactile edge line
+          const pC0 = Math.min(bC1, platEdge);
+          const pC1 = Math.max(bC1, platEdge);
+          drawBoxAlong(-longHalf + 0.15, longHalf - 0.15, pC0, pC1, 1.4, 2.4, {
+            top: '#e2e8f0',
+            topHi: '#f8fafc',
+            left: '#cbd5e1',
+            right: '#94a3b8',
+          });
+          const [yl0x, yl0y] = ptA(-longHalf + 0.18, platEdge, 3.9);
+          const [yl1x, yl1y] = ptA(longHalf - 0.18, platEdge, 3.9);
+          drawLine64(ctx, yl0x, yl0y, yl1x, yl1y, '#facc15', 1.15);
+
+          // Covered Glass-and-Steel Platform Canopy Posts & Roof
+          const canC = (pC0 + pC1) * 0.5;
+          for (const pa of [-1.35, -0.45, 0.45, 1.35]) {
+            const [px, py] = ptA(pa, canC, 3.8);
+            drawLine64(ctx, px, py, px, py - 12, '#475569', 1.4);
+          }
+          drawBoxAlong(-1.55, 1.55, pC0 - 0.04, pC1 + 0.08, 15.2, 1.8, {
+            top: '#38bdf8',
+            topHi: '#bae6fd',
+            left: '#cbd5e1',
             right: '#64748b',
           });
+        };
+
+        if (buildingOnBack) {
+          drawStationBuilding();
+          drawTrackAndPlatform();
+        } else {
+          drawTrackAndPlatform();
+          drawStationBuilding();
         }
-        // Elevated Concrete Monorail Guideway Viaduct
-        drawIsoSpanBox64(ctx, pt, -spanU + 0.06, spanU - 0.06, -0.16, 0.16, 20.0, 3.4, {
-          top: '#e2e8f0',
-          topHi: '#f8fafc',
-          left: '#cbd5e1',
-          leftBot: '#94a3b8',
-          right: '#64748b',
-          rightBot: '#475569',
-        });
-        // Elevated Glass Station Canopy above central platform
-        drawIsoSpanBox64(ctx, pt, -0.58, 0.58, 0.14, 0.52, 20.0, 9.5, {
-          top: '#38bdf8',
-          topHi: '#bae6fd',
-          left: '#e0f2fe',
-          right: '#0284c7',
-        });
-        // Sleek Aerodynamic High-Speed Monorail Train on the elevated beam
-        const trainShift = f === 0 ? -0.08 : 0.08;
-        drawIsoSpanBox64(ctx, pt, -0.92 + trainShift, 0.78 + trainShift, -0.13, 0.13, 23.4, 5.8, {
-          top: '#ffffff',
-          topHi: '#f8fafc',
+        return;
+      }
+
+      // =========================================================================
+      // TIER 2 (4×8 or 8×4): Estação Central Ferroviária (Grand Central Hub)
+      // =========================================================================
+      const bSideC0 = buildingOnBack ? -shortHalf + 0.10 : 0.16;
+      const bSideC1 = buildingOnBack ? -0.16 : shortHalf - 0.10;
+      const outerTrackCross = buildingOnBack
+        ? Math.min(shortHalf - 0.36, clampedTrackCross + 0.86)
+        : Math.max(-shortHalf + 0.36, clampedTrackCross - 0.86);
+
+      const drawGrandConcourse = () => {
+        // Front/Side Asphalt Drop-Off & Taxi Parking Plaza at north/south ends of building wing
+        drawQuadAlong(-longHalf + 0.14, -2.18, bSideC0, bSideC1, 1.55, '#2c3545');
+        drawQuadAlong(2.18, longHalf - 0.14, bSideC0, bSideC1, 1.55, '#2c3545');
+        // Crisp parking bay markings
+        for (const pa of [-3.45, -2.95, -2.45, 2.45, 2.95, 3.45]) {
+          const [m0x, m0y] = ptA(pa, bSideC0 + 0.18, 1.65);
+          const [m1x, m1y] = ptA(pa, bSideC0 + 0.72, 1.65);
+          drawLine64(ctx, m0x, m0y, m1x, m1y, 'rgba(241, 245, 249, 0.7)', 0.9);
+        }
+
+        // Landscaped Civic Entry Gardens
+        const outerGreen0 = buildingOnBack ? bSideC0 + 0.06 : bSideC1 - 0.42;
+        const outerGreen1 = buildingOnBack ? bSideC0 + 0.42 : bSideC1 - 0.06;
+        drawQuadAlong(-2.15, 2.15, outerGreen0, outerGreen1, 1.65, '#3f7a46');
+
+        // North & South Monumental Limestone Concourse Wings
+        const wingC0 = buildingOnBack ? bSideC0 + 0.42 : bSideC0 + 0.06;
+        const wingC1 = buildingOnBack ? bSideC1 - 0.06 : bSideC1 - 0.42;
+        drawBoxAlong(-2.15, 2.15, wingC0, wingC1, 1.6, 26, {
+          top: '#64748b',
+          topHi: '#94a3b8',
           left: '#f1f5f9',
+          leftBot: '#cbd5e1',
+          right: '#cbd5e1',
+          rightBot: '#94a3b8',
+          parapetColor: '#475569',
+        });
+        drawGlassAlong(-2.02, 2.02, wingC0, wingC1, 2.2, 24, 7, 2, 3);
+
+        // Central Grand Atrium Hall & Glass Skylight Barrel Roof
+        drawBoxAlong(-1.05, 1.05, wingC0 - 0.12, wingC1 + 0.06, 27.6, 11, {
+          top: '#0284c7',
+          topHi: '#7dd3fc',
+          left: '#e0f2fe',
+          leftBot: '#bae6fd',
+          right: '#38bdf8',
+          rightBot: '#0369a1',
+        });
+
+        // Iconic Central Heritage Clocktower rising above the station
+        const towerC = (wingC0 + wingC1) * 0.5;
+        drawBoxAlong(-0.42, 0.42, towerC - 0.36, towerC + 0.36, 38.6, 24, {
+          top: '#334155',
+          topHi: '#64748b',
+          left: '#f8fafc',
           leftBot: '#cbd5e1',
           right: '#94a3b8',
           rightBot: '#64748b',
         });
-        // Continuous cyan/lit passenger window ribbon along the monorail train
-        drawIsoGlassGrid64(
-          ctx,
-          pt,
-          'left',
-          -0.84 + trainShift,
-          0.70 + trainShift,
-          -0.13,
-          0.14,
-          24.2,
-          4.2,
-          6,
-          1,
-          '#0284c7',
-          '#7dd3fc'
-        );
+        // Spire & illuminated clock faces
+        const [clkX, clkY] = ptA(0, towerC, 54);
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(clkX, clkY, 4.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 1.0;
+        ctx.stroke();
+        drawLine64(ctx, clkX, clkY, clkX, clkY - 2.8, '#0f172a', 0.9);
+        drawLine64(ctx, clkX, clkY, clkX + 2.2, clkY + 0.6, '#0f172a', 0.9);
+
+        const [spBaseX, spBaseY] = ptA(0, towerC, 62.6);
+        drawLine64(ctx, spBaseX, spBaseY, spBaseX, spBaseY - 14, '#cbd5e1', 1.8);
+        drawGlow64(ctx, spBaseX, spBaseY - 14.5, 5.5, 'rgba(56, 189, 248, 0.9)', 'rgba(56, 189, 248, 0)');
+
+        // Shade trees lining the civic concourse
+        for (const ta of [-3.65, -2.05, 0, 2.05, 3.65]) {
+          const [tx, ty] = ptA(ta, (outerGreen0 + outerGreen1) * 0.5, 1.8);
+          drawTree64(ctx, tx, ty, 'emerald', 0.80);
+        }
+      };
+
+      const drawGrandTrainShed = () => {
+        // Dark crushed-granite rail yard bed spanning the full 8-tile track zone
+        const trackZoneC0 = buildingOnBack ? -0.14 : -shortHalf + 0.08;
+        const trackZoneC1 = buildingOnBack ? shortHalf - 0.08 : 0.14;
+        drawQuadAlong(-longHalf, longHalf, trackZoneC0, trackZoneC1, 1.45, '#334155');
+
+        // Main continuous through-track at exact railCorridor offset + parallel express/commuter track!
+        drawThroughTrack(clampedTrackCross);
+        drawThroughTrack(outerTrackCross);
+
+        // Central Island Boarding Platform between the two tracks + Inner Platform along concourse
+        const islandC = (clampedTrackCross + outerTrackCross) * 0.5;
+        drawBoxAlong(-longHalf + 0.35, longHalf - 0.35, islandC - 0.15, islandC + 0.15, 1.5, 2.6, {
+          top: '#e2e8f0',
+          topHi: '#f8fafc',
+          left: '#cbd5e1',
+          right: '#94a3b8',
+        });
+        const [ylA0x, ylA0y] = ptA(-longHalf + 0.4, islandC - 0.13, 4.2);
+        const [ylA1x, ylA1y] = ptA(longHalf - 0.4, islandC - 0.13, 4.2);
+        const [ylB0x, ylB0y] = ptA(-longHalf + 0.4, islandC + 0.13, 4.2);
+        const [ylB1x, ylB1y] = ptA(longHalf - 0.4, islandC + 0.13, 4.2);
+        drawLine64(ctx, ylA0x, ylA0y, ylA1x, ylA1y, '#facc15', 0.9);
+        drawLine64(ctx, ylB0x, ylB0y, ylB1x, ylB1y, '#facc15', 0.9);
+
+        // Grand Vaulted Glass-and-Steel Train Shed Arches spanning over the central tracks!
+        const archC0 = Math.min(clampedTrackCross, outerTrackCross) - 0.34;
+        const archC1 = Math.max(clampedTrackCross, outerTrackCross) + 0.34;
+        for (const aa of [-2.4, -1.6, -0.8, 0, 0.8, 1.6, 2.4]) {
+          const [a0x, a0y] = ptA(aa, archC0, 2.2);
+          const [a1x, a1y] = ptA(aa, archC1, 2.2);
+          const [mX, mY] = ptA(aa, (archC0 + archC1) * 0.5, 25);
+          ctx.beginPath();
+          ctx.moveTo(a0x, a0y);
+          ctx.quadraticCurveTo(mX, mY, a1x, a1y);
+          ctx.strokeStyle = '#94a3b8';
+          ctx.lineWidth = 1.9;
+          ctx.stroke();
+        }
+        // Translucent vaulted skylight glass crown along the train shed spine
+        const [g00x, g00y] = ptA(-2.45, archC0 + 0.25, 19.5);
+        const [g10x, g10y] = ptA(2.45, archC0 + 0.25, 19.5);
+        const [g11x, g11y] = ptA(2.45, archC1 - 0.25, 19.5);
+        const [g01x, g01y] = ptA(-2.45, archC1 - 0.25, 19.5);
+        ctx.beginPath();
+        ctx.moveTo(g00x, g00y);
+        ctx.lineTo(g10x, g10y);
+        ctx.lineTo(g11x, g11y);
+        ctx.lineTo(g01x, g01y);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(125, 211, 252, 0.42)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(224, 242, 254, 0.72)';
+        ctx.lineWidth = 1.0;
+        ctx.stroke();
+
+        // Warm platform lamps along the outer ends
+        for (const la of [-3.3, -2.8, 2.8, 3.3]) {
+          const [lx, ly] = ptA(la, islandC, 4.1);
+          drawLine64(ctx, lx, ly, lx, ly - 9, '#64748b', 1.2);
+          drawGlow64(ctx, lx, ly - 9.5, 5, 'rgba(254, 240, 138, 0.85)', 'rgba(254, 240, 138, 0)');
+        }
+      };
+
+      if (buildingOnBack) {
+        drawGrandConcourse();
+        drawGrandTrainShed();
+      } else {
+        drawGrandTrainShed();
+        drawGrandConcourse();
       }
     }
   );
@@ -8173,6 +8770,14 @@ function drawIsoSpanBox64(
   const p11_1 = pt(u1, v1, z1);
   const p01_1 = pt(u0, v1, z1);
 
+  // Detect mirrored (u <-> v) compound rotation so sunlight & cast shadows stay 100% consistent!
+  const isMirrored = p01_1[0] > p10_1[0];
+  const shadowEdgeFar = isMirrored ? p01_0 : p10_0;
+  const faceV1Top = isMirrored ? colors.right : colors.left;
+  const faceV1Bot = isMirrored ? (colors.rightBot ?? colors.right) : (colors.leftBot ?? colors.left);
+  const faceU1Top = isMirrored ? colors.left : colors.right;
+  const faceU1Bot = isMirrored ? (colors.leftBot ?? colors.left) : (colors.rightBot ?? colors.right);
+
   // 1. Soft Directional Ground Cast Shadow (for ground-level architectural volumes)
   if (z0 <= 3.5 && h >= 6) {
     const shLen = Math.min(24, Math.max(6, h * 0.34));
@@ -8180,18 +8785,18 @@ function drawIsoSpanBox64(
     ctx.fillStyle = 'rgba(8, 13, 24, 0.22)';
     ctx.beginPath();
     ctx.moveTo(p11_0[0], p11_0[1] + 0.5);
-    ctx.lineTo(p10_0[0], p10_0[1] + 0.5);
-    ctx.lineTo(p10_0[0] + shLen * 1.05, p10_0[1] - shLen * 0.24);
+    ctx.lineTo(shadowEdgeFar[0], shadowEdgeFar[1] + 0.5);
+    ctx.lineTo(shadowEdgeFar[0] + shLen * 1.05, shadowEdgeFar[1] - shLen * 0.24);
     ctx.lineTo(p11_0[0] + shLen * 1.05, p11_0[1] - shLen * 0.24);
     ctx.closePath();
     ctx.fill();
     ctx.restore();
   }
 
-  // 2. Left-front sunlit face (v = v1, u from u0 to u1) with vertical gradient
+  // 2. Face v = v1 (sunlit left normally, shaded right when mirrored) with vertical gradient
   const leftGrad = ctx.createLinearGradient(p01_1[0], p01_1[1], p11_0[0], p11_0[1]);
-  leftGrad.addColorStop(0, colors.left);
-  leftGrad.addColorStop(1, colors.leftBot ?? colors.left);
+  leftGrad.addColorStop(0, faceV1Top);
+  leftGrad.addColorStop(1, faceV1Bot);
   ctx.beginPath();
   ctx.moveTo(p01_1[0], p01_1[1]);
   ctx.lineTo(p11_1[0], p11_1[1]);
@@ -8201,10 +8806,10 @@ function drawIsoSpanBox64(
   ctx.fillStyle = leftGrad;
   ctx.fill();
 
-  // 3. Right-front cool shaded face (u = u1, v from v0 to v1) with vertical gradient
+  // 3. Face u = u1 (shaded right normally, sunlit left when mirrored) with vertical gradient
   const rightGrad = ctx.createLinearGradient(p11_1[0], p11_1[1], p10_0[0], p10_0[1]);
-  rightGrad.addColorStop(0, colors.right);
-  rightGrad.addColorStop(1, colors.rightBot ?? colors.right);
+  rightGrad.addColorStop(0, faceU1Top);
+  rightGrad.addColorStop(1, faceU1Bot);
   ctx.beginPath();
   ctx.moveTo(p11_1[0], p11_1[1]);
   ctx.lineTo(p10_1[0], p10_1[1]);
@@ -8221,8 +8826,8 @@ function drawIsoSpanBox64(
       const cL0 = pt(u0, v1, cz);
       const cM = pt(u1, v1, cz);
       const cR1 = pt(u1, v0, cz);
-      drawLine64(ctx, cL0[0], cL0[1], cM[0], cM[1], 'rgba(15, 23, 42, 0.11)', 0.7);
-      drawLine64(ctx, cM[0], cM[1], cR1[0], cR1[1], 'rgba(15, 23, 42, 0.16)', 0.7);
+      drawLine64(ctx, cL0[0], cL0[1], cM[0], cM[1], isMirrored ? 'rgba(15, 23, 42, 0.16)' : 'rgba(15, 23, 42, 0.11)', 0.7);
+      drawLine64(ctx, cM[0], cM[1], cR1[0], cR1[1], isMirrored ? 'rgba(15, 23, 42, 0.11)' : 'rgba(15, 23, 42, 0.16)', 0.7);
     }
   }
 
@@ -8287,9 +8892,11 @@ function drawIsoSpanBox64(
     ctx.fillStyle = colors.parapetColor ?? 'rgba(14, 22, 36, 0.18)';
     ctx.fill();
     // Inner parapet lip shading & highlight matching drawPrism64
-    drawLine64(ctx, i01[0], i01[1], i00[0], i00[1], 'rgba(10, 16, 28, 0.34)', 0.9);
-    drawLine64(ctx, i00[0], i00[1], i10[0], i10[1], 'rgba(10, 16, 28, 0.24)', 0.9);
-    drawLine64(ctx, i01[0], i01[1], i11[0], i11[1], 'rgba(255, 255, 255, 0.26)', 0.8);
+    const pLeft = isMirrored ? i10 : i01;
+    const pRight = isMirrored ? i01 : i10;
+    drawLine64(ctx, pLeft[0], pLeft[1], i00[0], i00[1], 'rgba(10, 16, 28, 0.34)', 0.9);
+    drawLine64(ctx, i00[0], i00[1], pRight[0], pRight[1], 'rgba(10, 16, 28, 0.24)', 0.9);
+    drawLine64(ctx, pLeft[0], pLeft[1], i11[0], i11[1], 'rgba(255, 255, 255, 0.26)', 0.8);
   }
 
   // 5. Crisp vertical specular corner highlight ridge along front spine
@@ -8551,16 +9158,21 @@ function drawShoppingMallComplexScene64(
   frontCy: number,
   lv: number,
   rotW: number,
-  rotH: number
+  rotH: number,
+  lotRotation: number = 0
 ): void {
   const W = lv === 1 ? 5 : lv === 2 ? 7 : 9;
   const H = W;
   const scaleU = rotW / W;
   const scaleV = rotH / H;
+  const flipUV = (lotRotation & 1) === 1 && rotW === rotH;
+  const signFace: 'left' | 'right' = flipUV ? 'right' : 'left';
 
   const pt = (u: number, v: number, z: number = 0): [number, number] => {
-    const dRx = (u - W) * scaleU;
-    const dRy = (v - H) * scaleV;
+    const mu = flipUV ? v : u;
+    const mv = flipUV ? u : v;
+    const dRx = (mu - W) * scaleU;
+    const dRy = (mv - H) * scaleV;
     return [
       frontCx + (dRx - dRy) * TILE_HW,
       frontCy + (dRx + dRy) * TILE_HH + TILE_HH - z,
@@ -8650,7 +9262,7 @@ function drawShoppingMallComplexScene64(
 
     // 5. Architectural "MALL" Roof Parapet Signboard above front entrance
     const signPos = pt(1.98, 2.92, bH + 5.2);
-    drawIsoWallSign64(ctx, signPos[0], signPos[1], 'left', 32, 12, '#1e40af', '#93c5fd', 'MALL', '#ffffff', 8.5);
+    drawIsoWallSign64(ctx, signPos[0], signPos[1], signFace, 32, 12, '#1e40af', '#93c5fd', 'MALL', '#ffffff', 8.5);
 
     // 6. Shade Trees on the green lawn & entrance planters
     for (const [tu, tv, sc] of [
@@ -8663,20 +9275,7 @@ function drawShoppingMallComplexScene64(
       drawTree64(ctx, tp[0], tp[1], 'emerald', sc);
     }
 
-    // 7. Parked Cars in the L-Shaped Parking Lot
-    const carsLv1: Array<[number, number, string, 'ne' | 'nw']> = [
-      [0.92, 4.18, '#f97316', 'ne'],
-      [1.54, 4.18, '#3b82f6', 'ne'],
-      [2.16, 4.18, '#22c55e', 'ne'],
-      [2.78, 4.18, '#a855f7', 'ne'],
-      [4.12, 4.18, '#ef4444', 'nw'],
-      [4.12, 3.52, '#38bdf8', 'nw'],
-      [4.12, 2.86, '#eab308', 'nw'],
-    ];
-    for (const [cu, cv, col, dir] of carsLv1) {
-      const cp = pt(cu, cv, 1);
-      drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 1.0);
-    }
+    // 7. Ground-level L-shaped parking bays are served by live arriving/parked/exiting CarEntity vehicles!
     return;
   }
 
@@ -8809,7 +9408,7 @@ function drawShoppingMallComplexScene64(
       ctx,
       shopSignP[0],
       shopSignP[1],
-      'left',
+      signFace,
       74,
       15,
       'transparent',
@@ -8852,21 +9451,7 @@ function drawShoppingMallComplexScene64(
       drawTree64(ctx, tp[0], tp[1], 'emerald', 0.78);
     }
 
-    // 9. Parked Cars in the Parking Lot
-    const carsLv2: Array<[number, number, string, 'ne' | 'nw']> = [
-      [1.45, 4.15, '#eab308', 'ne'],
-      [1.45, 5.25, '#3b82f6', 'ne'],
-      [2.12, 5.35, '#facc15', 'ne'],
-      [2.78, 5.35, '#22c55e', 'ne'],
-      [3.42, 5.35, '#ef4444', 'ne'],
-      [3.65, 6.18, '#a855f7', 'nw'],
-      [4.15, 5.75, '#f97316', 'nw'],
-      [3.15, 6.45, '#4ade80', 'nw'],
-    ];
-    for (const [cu, cv, col, dir] of carsLv2) {
-      const cp = pt(cu, cv, 1);
-      drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 0.98);
-    }
+    // 9. Open parking bays are dynamically filled by live arriving/parked/exiting CarEntity vehicles!
     return;
   }
 
@@ -9039,7 +9624,7 @@ function drawShoppingMallComplexScene64(
     ctx,
     centerSignP[0],
     centerSignP[1],
-    'left',
+    signFace,
     82,
     14,
     '#1e40af',
@@ -9104,32 +9689,13 @@ function drawShoppingMallComplexScene64(
   const busP = pt(6.55, 5.65, 1.0);
   drawParkedMiniVehicle64(ctx, busP[0], busP[1], 'schoolbus', false);
 
-  // 8. Parked Cars across all Parking Sections & Taxis on the Avenue
-  const carsLv3: Array<[number, number, string, 'ne' | 'nw']> = [
-    [0.95, 4.85, '#a855f7', 'ne'],
-    [1.48, 4.85, '#22c55e', 'ne'],
-    [2.02, 4.85, '#3b82f6', 'ne'],
-    [0.95, 5.85, '#ef4444', 'ne'],
-    [1.48, 5.85, '#f97316', 'ne'],
-    [2.02, 5.85, '#38bdf8', 'ne'],
-    [1.25, 7.65, '#3b82f6', 'ne'],
-    [1.82, 7.65, '#ef4444', 'ne'],
-    [2.38, 7.65, '#22c55e', 'ne'],
-    [2.95, 7.65, '#facc15', 'ne'],
-    [4.15, 7.45, '#22c55e', 'ne'],
-    [4.68, 7.45, '#facc15', 'ne'],
-    [5.22, 7.45, '#ef4444', 'ne'],
-    [5.75, 7.45, '#a855f7', 'ne'],
-    [4.35, 8.25, '#eab308', 'nw'],
-    [4.95, 8.25, '#f97316', 'nw'],
-    [5.55, 8.25, '#38bdf8', 'nw'],
-    [2.55, 5.25, '#ef4444', 'nw'],
+  // 8. Ground-level parking bays are dynamically filled by live arriving/parked/exiting CarEntity vehicles!
+  // (Keep 2 subtle taxis waiting on the internal drop-off avenue near the fountain)
+  const dropOffTaxis: Array<[number, number, string, 'ne' | 'nw']> = [
     [3.35, 5.65, '#facc15', 'nw'],
-    [4.55, 6.25, '#3b82f6', 'nw'],
     [5.25, 6.45, '#facc15', 'nw'],
-    [6.15, 6.85, '#ef4444', 'nw'],
   ];
-  for (const [cu, cv, col, dir] of carsLv3) {
+  for (const [cu, cv, col, dir] of dropOffTaxis) {
     const cp = pt(cu, cv, 0.8);
     drawShoppingParkedCar64(ctx, cp[0], cp[1], col, dir, 0.92);
   }
@@ -9159,16 +9725,18 @@ function getShoppingMallSprite(
   lotH: number = 1,
   lotDx: number = 0,
   lotDy: number = 0,
-  rotation: CameraRotation = 0
+  rotation: CameraRotation = 0,
+  lotRotation: number = 0
 ): CachedSprite {
   const lv = Math.max(1, Math.min(3, level || 1));
   const v = variant % 4;
+  const flipKey = (lotRotation & 1) === 1 ? 1 : 0;
 
   // Compact Scaled Diorama Sprite (used in Obras 64-bit preview card & 1×1 fallback)
   if (lotW <= 1 || lotH <= 1) {
     const targetDim = lv === 1 ? 5 : lv === 2 ? 7 : 9;
     return getOrCreateSprite(`shopping64_single_v3_lv${lv}_v${v}`, 152, 132, 76, 98, (ctx, cx, cy) => {
-      const fullHero = getShoppingMallSprite(lv, v, targetDim, targetDim, targetDim - 1, targetDim - 1, 0);
+      const fullHero = getShoppingMallSprite(lv, v, targetDim, targetDim, targetDim - 1, targetDim - 1, 0, 0);
       const scale = lv === 1 ? 0.42 : lv === 2 ? 0.31 : 0.245;
       const dw = fullHero.canvas.width * scale;
       const dh = fullHero.canvas.height * scale;
@@ -9200,13 +9768,13 @@ function getShoppingMallSprite(
   const anchorY = spanH - 28;
 
   return getOrCreateSprite(
-    `shopping64_v3_hero_lv${lv}_v${v}_w${rotLot.rotW}h${rotLot.rotH}`,
+    `shopping64_v3_hero_lv${lv}_v${v}_w${rotLot.rotW}h${rotLot.rotH}_lr${flipKey}`,
     spanW,
     spanH,
     anchorX,
     anchorY,
     (ctx, cx, cy) => {
-      drawShoppingMallComplexScene64(ctx, cx, cy, lv, rotLot.rotW, rotLot.rotH);
+      drawShoppingMallComplexScene64(ctx, cx, cy, lv, rotLot.rotW, rotLot.rotH, lotRotation);
     }
   );
 }
@@ -11363,9 +11931,55 @@ export function renderCityCanvas(
 
   // Group live cars and boats by their current rotated isometric depth `sum = rx + ry` (hidden when zoomed <= 60%)
   const carsByDepth = new Map<number, Array<{ car: CarEntity; idx: number }>>();
+  const parkingCarsByDepth = new Map<
+    number,
+    Array<{
+      car: CarEntity;
+      idx: number;
+      frontRx: number;
+      frontRy: number;
+      rotLotW: number;
+      rotLotH: number;
+    }>
+  >();
   if (!hideVehiclesAndBoats) {
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i];
+      if (
+        car.parkingState &&
+        car.parkAnchorX !== undefined &&
+        car.parkAnchorY !== undefined &&
+        car.parkLotW !== undefined &&
+        car.parkLotH !== undefined
+      ) {
+        const ax = car.parkAnchorX;
+        const ay = car.parkAnchorY;
+        const lw = Math.max(1, car.parkLotW);
+        const lh = Math.max(1, car.parkLotH);
+        const c0 = rotateGridCoord(ax, ay, rot, gw, gh);
+        const c1 = rotateGridCoord(ax + lw - 1, ay, rot, gw, gh);
+        const c2 = rotateGridCoord(ax, ay + lh - 1, rot, gw, gh);
+        const c3 = rotateGridCoord(ax + lw - 1, ay + lh - 1, rot, gw, gh);
+        const frontRx = Math.max(c0.rx, c1.rx, c2.rx, c3.rx);
+        const frontRy = Math.max(c0.ry, c1.ry, c2.ry, c3.ry);
+        const frontSum = Math.max(0, Math.min(maxSum, frontRx + frontRy));
+        let depth = frontSum;
+        if (car.parkingState !== 'parked' && car.parkRoadX !== undefined && car.parkRoadY !== undefined) {
+          const rRot = rotateGridCoord(car.parkRoadX, car.parkRoadY, rot, gw, gh);
+          depth = Math.max(frontSum, Math.min(maxSum, rRot.rx + rRot.ry));
+        }
+        if (depth < sumMin || depth > sumMax) continue;
+        const rLotW = rot % 2 === 0 ? lw : lh;
+        const rLotH = rot % 2 === 0 ? lh : lw;
+        let pBucket = parkingCarsByDepth.get(depth);
+        if (!pBucket) {
+          pBucket = [];
+          parkingCarsByDepth.set(depth, pBucket);
+        }
+        pBucket.push({ car, idx: i, frontRx, frontRy, rotLotW: rLotW, rotLotH: rLotH });
+        continue;
+      }
+
       const cxTile = Math.max(0, Math.min(gw - 1, Math.floor(car.x)));
       const cyTile = Math.max(0, Math.min(gh - 1, Math.floor(car.y)));
       const { rx, ry } = rotateGridCoord(cxTile, cyTile, rot, gw, gh);
@@ -11459,6 +12073,7 @@ export function renderCityCanvas(
   //    Pass 2B-Cars: Vehicles driving ON TOP of Roads & Bridge Decks
   //    Pass 2C: 3D Buildings & Landmarks naturally occluding streets/vehicles behind them
   const bridgeTilesAtDepth: Array<{ tile: Tile; rx: number; ry: number; sx: number; sy: number }> = [];
+  const railBridgeTilesAtDepth: Array<{ sx: number; sy: number }> = [];
   const monthSubProgress = Math.max(
     0,
     Math.min(1, (state.monthElapsedSec ?? 0) / SECONDS_PER_MONTH_1X)
@@ -11475,6 +12090,138 @@ export function renderCityCanvas(
     Array<{ sx: number; sy: number; level: number; variant: number; rotW: number; rotH: number; berthDir: 'S' | 'E' }>
   >();
 
+  // Precompute animated cross-map railway trains (entering from map edge, stopping at 2×4 / 4×8 station, exiting opposite edge)
+  interface RailCarDrawItem {
+    tx: number;
+    ty: number;
+    sortKey: number;
+    dirSign: 1 | -1;
+    isLocomotive: boolean;
+    isExpress: boolean;
+    carIndex: number;
+    bridgeLiftPx: number;
+  }
+  const railCarsByDepth = new Map<number, RailCarDrawItem[]>();
+  const stationRailCarsByDepth = new Map<number, RailCarDrawItem[]>();
+  const activeRailCorridor = state.railCorridor ?? null;
+  if (activeRailCorridor && !hideVehiclesAndBoats) {
+    const rc = activeRailCorridor;
+    const alongSpan = rc.axis === 'ns' ? gh : gw;
+    const stAnchor = getTile(state, rc.stationAnchorX, rc.stationAnchorY);
+    const stW = stAnchor?.type === 'rail_terminal' ? (stAnchor.lotWidth ?? 2) : 2;
+    const stH = stAnchor?.type === 'rail_terminal' ? (stAnchor.lotHeight ?? 4) : 4;
+    const stationLen = rc.axis === 'ns' ? stH : stW;
+    const stationMidAlong =
+      (rc.axis === 'ns' ? rc.stationAnchorY : rc.stationAnchorX) + (stationLen - 1) * 0.5;
+
+    // Determine station front depth & whether station building is behind tracks (so train shows on open platform!)
+    let stationFrontDepth = 0;
+    let stationTrackInFront = true;
+    if (stAnchor && stAnchor.type === 'rail_terminal') {
+      const localTrackDx = rc.axis === 'ns' ? Math.max(0, Math.min(stW - 1, rc.lineCoord - stAnchor.x)) : 0;
+      const localTrackDy = rc.axis === 'ew' ? Math.max(0, Math.min(stH - 1, rc.lineCoord - stAnchor.y)) : 0;
+      const rotTrack = getRotatedLotCoords(stW, stH, localTrackDx, localTrackDy, rot);
+      const alongV = rotTrack.rotH >= rotTrack.rotW;
+      const trackCross = alongV
+        ? rotTrack.rDx - (rotTrack.rotW - 1) / 2
+        : rotTrack.rDy - (rotTrack.rotH - 1) / 2;
+      stationTrackInFront = trackCross >= 0;
+      let maxCornerDepth = 0;
+      for (const [cxOff, cyOff] of [
+        [0, 0],
+        [stW - 1, 0],
+        [0, stH - 1],
+        [stW - 1, stH - 1],
+      ] as const) {
+        const cr = rotateGridCoord(stAnchor.x + cxOff, stAnchor.y + cyOff, rot, gw, gh);
+        if (cr.rx + cr.ry > maxCornerDepth) maxCornerDepth = cr.rx + cr.ry;
+      }
+      stationFrontDepth = maxCornerDepth;
+    }
+
+    const trainCount = rc.stationLevel >= 2 ? 2 : 1;
+    const oneWaySec = Math.max(16, alongSpan * 0.42 + 6);
+    for (let ti = 0; ti < trainCount; ti++) {
+      const cyclePos = (opts.timeSeconds + ti * oneWaySec * 0.96) % (oneWaySec * 2);
+      const dirSign: 1 | -1 = cyclePos < oneWaySec ? 1 : -1;
+      const tNorm = (cyclePos % oneWaySec) / oneWaySec;
+      const startAlong = dirSign === 1 ? -3.2 : alongSpan + 2.2;
+      const endAlong = dirSign === 1 ? alongSpan + 2.2 : -3.2;
+      const stopStart = 0.43;
+      const stopEnd = 0.57;
+      let headAlong: number;
+      if (tNorm < stopStart) {
+        const u = tNorm / stopStart;
+        const easeOut = 1 - (1 - u) * (1 - u) * 0.48;
+        headAlong = startAlong + (stationMidAlong - startAlong) * easeOut;
+      } else if (tNorm <= stopEnd) {
+        headAlong = stationMidAlong;
+      } else {
+        const u = (tNorm - stopEnd) / (1 - stopEnd);
+        const easeIn = u * (0.52 + 0.48 * u);
+        headAlong = stationMidAlong + (endAlong - stationMidAlong) * easeIn;
+      }
+
+      const isExpress = ti === 0 && rc.stationLevel >= 2;
+      const carCount = rc.stationLevel >= 2 ? 6 : 5;
+      for (let c = 0; c < carCount; c++) {
+        const carAlong = headAlong - dirSign * (c - 1.5) * 0.86;
+        const carTx = rc.axis === 'ns' ? rc.lineCoord : carAlong;
+        const carTy = rc.axis === 'ns' ? carAlong : rc.lineCoord;
+        if (carTx < -0.55 || carTx > gw - 0.45 || carTy < -0.55 || carTy > gh - 0.45) continue;
+        const sampleX = Math.max(0, Math.min(gw - 1, Math.round(carTx)));
+        const sampleY = Math.max(0, Math.min(gh - 1, Math.round(carTy)));
+        const underTile = getTile(state, sampleX, sampleY);
+        const bridgeLiftPx = underTile?.type === 'water' ? 7.5 : 0;
+        const rSample = rotateGridCoord(sampleX, sampleY, rot, gw, gh);
+        const fracDx = carTx - sampleX;
+        const fracDy = carTy - sampleY;
+        let rxFloat = rSample.rx;
+        let ryFloat = rSample.ry;
+        if (rot === 0) {
+          rxFloat += fracDx;
+          ryFloat += fracDy;
+        } else if (rot === 1) {
+          rxFloat += fracDy;
+          ryFloat -= fracDx;
+        } else if (rot === 2) {
+          rxFloat -= fracDx;
+          ryFloat -= fracDy;
+        } else {
+          rxFloat -= fracDy;
+          ryFloat += fracDx;
+        }
+        const sortKey = rxFloat + ryFloat;
+        const item: RailCarDrawItem = {
+          tx: carTx,
+          ty: carTy,
+          sortKey,
+          dirSign,
+          isLocomotive: c === 0,
+          isExpress,
+          carIndex: c,
+          bridgeLiftPx,
+        };
+        if (underTile?.type === 'rail_terminal' && stationTrackInFront && stationFrontDepth > 0) {
+          let bucket = stationRailCarsByDepth.get(stationFrontDepth);
+          if (!bucket) {
+            bucket = [];
+            stationRailCarsByDepth.set(stationFrontDepth, bucket);
+          }
+          bucket.push(item);
+        } else {
+          const depthKey = Math.max(0, Math.min(maxSum, Math.round(sortKey)));
+          let bucket = railCarsByDepth.get(depthKey);
+          if (!bucket) {
+            bucket = [];
+            railCarsByDepth.set(depthKey, bucket);
+          }
+          bucket.push(item);
+        }
+      }
+    }
+  }
+
   for (let sum = sumMin; sum <= sumMax; sum++) {
     const rxMin = Math.max(0, sum - (rotH - 1));
     const rxMax = Math.min(rotW - 1, sum);
@@ -11487,8 +12234,9 @@ export function renderCityCanvas(
     if (visRxMin > visRxMax) continue;
 
     bridgeTilesAtDepth.length = 0;
+    railBridgeTilesAtDepth.length = 0;
 
-    // Pass 2A: Draw ground, water, river channel under bridges, and road tiles at depth `sum`
+    // Pass 2A: Draw ground, water, river channel under bridges, rail tracks, and road tiles at depth `sum`
     for (let rx = visRxMin; rx <= visRxMax; rx++) {
       const ry = sum - rx;
       const { tx, ty } = unrotateGridCoord(rx, ry, rot, gw, gh);
@@ -11500,7 +12248,8 @@ export function renderCityCanvas(
         tile.type === 'forest' ||
         tile.type === 'water' ||
         tile.type === 'road' ||
-        tile.type === 'bridge';
+        tile.type === 'bridge' ||
+        tile.type === 'rail_track';
 
       if (!isGroundOrRoad) continue;
 
@@ -11642,6 +12391,14 @@ export function renderCityCanvas(
         strokeOrFillScreenDiamond(ctx, sx, sy, halfW, halfH, fill);
       }
 
+      if (activeRailCorridor && isRailCorridorTile(state, tile.x, tile.y)) {
+        if (tile.type === 'road') {
+          drawRailGradeCrossing64(ctx, sx, sy, activeRailCorridor.axis, rot, zoom, opts.timeSeconds);
+        } else if (tile.type === 'water') {
+          railBridgeTilesAtDepth.push({ sx, sy });
+        }
+      }
+
       if (tile.evolveFlash > 0 && tile.type === 'road') {
         drawOrganicEvolutionGlow64(
           ctx,
@@ -11660,69 +12417,7 @@ export function renderCityCanvas(
       }
     }
 
-    // Pass 1B: Subtle Glowing Underground Metro Line & Animated Subterranean Train Light Pulses!
-    const metroStations = getMetroNetworkStations(state);
-    if (metroStations.length >= 2) {
-      const metroScreenPts = metroStations.map((ms) => {
-        const mr = rotateGridCoord(ms.x, ms.y, rot, gw, gh);
-        const mdx = mr.rx - midX;
-        const mdy = mr.ry - midY;
-        return {
-          sx: panOffsetX + (mdx - mdy) * isoHalfWZoom,
-          sy: panOffsetY + (mdx + mdy) * isoHalfHZoom,
-        };
-      });
-
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      // Soft outer glowing subterranean tunnel aura
-      ctx.strokeStyle = 'rgba(99, 102, 241, 0.34)';
-      ctx.lineWidth = Math.max(2.5, 5.5 * zoom);
-      ctx.beginPath();
-      ctx.moveTo(metroScreenPts[0].sx, metroScreenPts[0].sy);
-      for (let m = 1; m < metroScreenPts.length; m++) {
-        ctx.lineTo(metroScreenPts[m].sx, metroScreenPts[m].sy);
-      }
-      ctx.stroke();
-
-      // Crisp dashed cyan-violet underground rail track
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
-      ctx.lineWidth = Math.max(1.2, 2.2 * zoom);
-      ctx.setLineDash([Math.max(3, 6 * zoom), Math.max(2, 4 * zoom)]);
-      ctx.beginPath();
-      ctx.moveTo(metroScreenPts[0].sx, metroScreenPts[0].sy);
-      for (let m = 1; m < metroScreenPts.length; m++) {
-        ctx.lineTo(metroScreenPts[m].sx, metroScreenPts[m].sy);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Animated underground metro train light streaks gliding between stations!
-      for (let seg = 0; seg < metroScreenPts.length - 1; seg++) {
-        const a = metroScreenPts[seg];
-        const b = metroScreenPts[seg + 1];
-        const cycle = (opts.timeSeconds * 0.28 + seg * 0.37) % 2;
-        const t = cycle <= 1 ? cycle : 2 - cycle;
-        const tx = a.sx + (b.sx - a.sx) * t;
-        const ty = a.sy + (b.sy - a.sy) * t;
-        const tTail = Math.max(0, Math.min(1, t + (cycle <= 1 ? -0.10 : 0.10)));
-        const tailX = a.sx + (b.sx - a.sx) * tTail;
-        const tailY = a.sy + (b.sy - a.sy) * tTail;
-
-        ctx.strokeStyle = 'rgba(224, 242, 254, 0.92)';
-        ctx.lineWidth = Math.max(1.8, 3.2 * zoom);
-        ctx.beginPath();
-        ctx.moveTo(tailX, tailY);
-        ctx.lineTo(tx, ty);
-        ctx.stroke();
-
-        drawGlow64(ctx, tx, ty, Math.max(4, 8 * zoom), 'rgba(56, 189, 248, 0.85)');
-      }
-
-      ctx.restore();
-    }
+    // Metro operates strictly underground (invisible on surface; only metro_station entrances are shown)
 
     // Targeted pre-draw ONLY for the exact 1-2 destination road/water tiles at `sum + 1` under active vehicles
     // (Replaces full-diagonal re-draw, eliminating ~95% of redundant tile drawImage calls in dense cities!)
@@ -11868,7 +12563,40 @@ export function renderCityCanvas(
       }
     }
 
-    // Pass 2B-3: Draw 8-Class Vehicles (including Police & Fire units) ON TOP of Roads & Bridge Decks
+    // Elevated Steel Railway Bridges over the river (drawn after boats so boats sail UNDER rail bridges!)
+    if (activeRailCorridor && railBridgeTilesAtDepth.length > 0) {
+      for (let rbi = 0; rbi < railBridgeTilesAtDepth.length; rbi++) {
+        const rb = railBridgeTilesAtDepth[rbi];
+        drawRailRiverBridge64(ctx, rb.sx, rb.sy, activeRailCorridor.axis, rot, zoom);
+      }
+    }
+
+    // Pass 2B-3: Draw 8-Class Vehicles (including Police & Fire units) & Cross-Map Trains ON TOP of Roads, Rails & Bridges
+    const depthRailCars = railCarsByDepth.get(sum);
+    if (depthRailCars && activeRailCorridor) {
+      if (depthRailCars.length > 1) {
+        depthRailCars.sort((a, b) => a.sortKey - b.sortKey);
+      }
+      for (let rci = 0; rci < depthRailCars.length; rci++) {
+        const rcCar = depthRailCars[rci];
+        const pos = gridToScreen(rcCar.tx, rcCar.ty, canvasW, canvasH, camera, gw, gh);
+        if (pos.sx < -42 || pos.sx > canvasW + 42 || pos.sy < -42 || pos.sy > canvasH + 42) continue;
+        drawRailTrainCar64(
+          ctx,
+          pos.sx,
+          pos.sy,
+          activeRailCorridor.axis,
+          rcCar.dirSign,
+          rot,
+          zoom,
+          rcCar.isLocomotive,
+          rcCar.isExpress,
+          rcCar.carIndex,
+          lighting.glowStrength,
+          rcCar.bridgeLiftPx
+        );
+      }
+    }
     if (depthCars) {
       for (const { car, idx } of depthCars) {
         const pos = gridToScreen(car.x - 0.5, car.y - 0.5, canvasW, canvasH, camera, gw, gh);
@@ -11931,7 +12659,8 @@ export function renderCityCanvas(
         tile.type === 'forest' ||
         tile.type === 'water' ||
         tile.type === 'road' ||
-        tile.type === 'bridge';
+        tile.type === 'bridge' ||
+        tile.type === 'rail_track';
 
       if (isGroundOrRoad && !tile.construction) continue;
 
@@ -11986,13 +12715,36 @@ export function renderCityCanvas(
           );
         } else {
           const sprite = getTileSprite(state, tile, rx, ry, rot, 0, activeSeason);
-          ctx.drawImage(
-            sprite.canvas,
-            sx - sprite.anchorX * sScale,
-            sy - sprite.anchorY * sScale,
-            sprite.canvas.width * sScale,
-            sprite.canvas.height * sScale
-          );
+          const mirrorSingleTile =
+            (tile.lotWidth ?? 1) === 1 &&
+            (tile.lotHeight ?? 1) === 1 &&
+            ((tile.lotRotation ?? 0) & 1) === 1 &&
+            (tile.type === 'residential' ||
+              tile.type === 'commercial' ||
+              tile.type === 'industrial' ||
+              tile.type === 'park' ||
+              Boolean(tile.establishmentId && tile.establishmentId !== 'retro_cinema'));
+          if (mirrorSingleTile) {
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.scale(-1, 1);
+            ctx.drawImage(
+              sprite.canvas,
+              -sprite.anchorX * sScale,
+              -sprite.anchorY * sScale,
+              sprite.canvas.width * sScale,
+              sprite.canvas.height * sScale
+            );
+            ctx.restore();
+          } else {
+            ctx.drawImage(
+              sprite.canvas,
+              sx - sprite.anchorX * sScale,
+              sy - sprite.anchorY * sScale,
+              sprite.canvas.width * sScale,
+              sprite.canvas.height * sScale
+            );
+          }
           if (constructionStage === 3) {
             drawConstructionStage64(
               ctx,
@@ -12174,6 +12926,116 @@ export function renderCityCanvas(
           tile.x,
           tile.y,
           opts.timeSeconds
+        );
+      }
+    }
+
+    // Pass 2D: Draw live cars entering, parked inside, or exiting compound parking lots ON TOP of their asphalt bays!
+    const depthParkingCars = parkingCarsByDepth.get(sum);
+    if (depthParkingCars) {
+      if (depthParkingCars.length > 1) {
+        depthParkingCars.sort((a, b) => (a.car.parkU ?? 0) + (a.car.parkV ?? 0) - ((b.car.parkU ?? 0) + (b.car.parkV ?? 0)));
+      }
+      for (const entry of depthParkingCars) {
+        const { car, idx, frontRx, frontRy, rotLotW, rotLotH } = entry;
+        const lw = Math.max(1, car.parkLotW ?? 1);
+        const lh = Math.max(1, car.parkLotH ?? 1);
+        const u = car.parkU ?? lw * 0.5;
+        const v = car.parkV ?? lh * 0.5;
+        const frontDx = frontRx - midX;
+        const frontDy = frontRy - midY;
+        const frontSx = panOffsetX + (frontDx - frontDy) * isoHalfWZoom;
+        const frontSy = panOffsetY + (frontDx + frontDy) * isoHalfHZoom;
+        const dRx = (u - lw) * (rotLotW / lw);
+        const dRy = (v - lh) * (rotLotH / lh);
+        const spotSx = frontSx + (dRx - dRy) * isoHalfWZoom;
+        const spotSy = frontSy + (dRx + dRy) * isoHalfHZoom + isoHalfHZoom - 1.2 * zoom;
+
+        let drawSx = spotSx;
+        let drawSy = spotSy;
+        let dirSx = (car.parkDirX ?? 1) >= 0.5 ? isoHalfWZoom : -isoHalfWZoom;
+        let dirSy = -isoHalfHZoom;
+
+        if (car.parkingState !== 'parked' && car.parkRoadX !== undefined && car.parkRoadY !== undefined) {
+          const roadPos = gridToScreen(car.parkRoadX, car.parkRoadY, canvasW, canvasH, camera, gw, gh);
+          if (car.parkingState === 'entering') {
+            const ease = 1 - (1 - car.progress) * (1 - car.progress);
+            drawSx = roadPos.sx + (spotSx - roadPos.sx) * ease;
+            drawSy = roadPos.sy + (spotSy - roadPos.sy) * ease;
+            dirSx = spotSx - roadPos.sx;
+            dirSy = spotSy - roadPos.sy;
+          } else {
+            const ease = car.progress * car.progress;
+            drawSx = spotSx + (roadPos.sx - spotSx) * ease;
+            drawSy = spotSy + (roadPos.sy - spotSy) * ease;
+            dirSx = roadPos.sx - spotSx;
+            dirSy = roadPos.sy - spotSy;
+          }
+          if (Math.abs(dirSx) + Math.abs(dirSy) < 0.01) {
+            dirSx = isoHalfWZoom;
+            dirSy = -isoHalfHZoom;
+          }
+        }
+
+        if (drawSx < -28 || drawSx > canvasW + 28 || drawSy < -28 || drawSy > canvasH + 28) continue;
+
+        const carGlow = car.parkingState === 'parked' ? 0 : lighting.glowStrength;
+        if (isFarZoom) {
+          drawCarFast64(
+            ctx,
+            drawSx,
+            drawSy,
+            dirSx,
+            dirSy,
+            car.color,
+            zoom,
+            carGlow,
+            car.kind ?? getVehicleKind(idx),
+            opts.timeSeconds
+          );
+        } else {
+          drawCar64(
+            ctx,
+            drawSx,
+            drawSy,
+            dirSx,
+            dirSy,
+            car.color,
+            zoom,
+            idx,
+            carGlow,
+            car.kind,
+            opts.timeSeconds,
+            car.role,
+            car.cargoColor
+          );
+        }
+      }
+    }
+
+    // Pass 2D-Rail: Draw train cars gliding through open Train Station platforms in front of back-side concourse buildings!
+    const depthStationRailCars = stationRailCarsByDepth.get(sum);
+    if (depthStationRailCars && activeRailCorridor) {
+      if (depthStationRailCars.length > 1) {
+        depthStationRailCars.sort((a, b) => a.sortKey - b.sortKey);
+      }
+      for (let rci = 0; rci < depthStationRailCars.length; rci++) {
+        const rcCar = depthStationRailCars[rci];
+        const pos = gridToScreen(rcCar.tx, rcCar.ty, canvasW, canvasH, camera, gw, gh);
+        if (pos.sx < -42 || pos.sx > canvasW + 42 || pos.sy < -42 || pos.sy > canvasH + 42) continue;
+        drawRailTrainCar64(
+          ctx,
+          pos.sx,
+          pos.sy,
+          activeRailCorridor.axis,
+          rcCar.dirSign,
+          rot,
+          zoom,
+          rcCar.isLocomotive,
+          rcCar.isExpress,
+          rcCar.carIndex,
+          lighting.glowStrength,
+          rcCar.bridgeLiftPx
         );
       }
     }
@@ -12484,7 +13346,17 @@ export function renderLandmarkArtworkCanvas(
       kind === 'clean_energy'
         ? getCleanEnergySprite(lv, 0, animF, lv >= 2 ? 3 : 2, lv >= 2 ? 3 : 2, lv >= 2 ? 2 : 1, lv >= 2 ? 2 : 1, 0)
         : kind === 'rail'
-          ? getRailTerminalSprite(lv, 0, animF, 3, lv >= 2 ? 3 : 2, 2, lv >= 2 ? 2 : 1, 0)
+          ? getRailTerminalSprite(
+              lv,
+              0,
+              animF,
+              lv >= 2 ? 4 : 2,
+              lv >= 2 ? 8 : 4,
+              lv >= 2 ? 3 : 1,
+              lv >= 2 ? 7 : 3,
+              0,
+              0.5
+            )
           : kind === 'hospital'
             ? getEstablishmentSprite('general_hospital', 0, animF, 3, 3, 2, 2, 0)
             : kind === 'university'
@@ -12523,8 +13395,8 @@ export function renderLandmarkArtworkCanvas(
                 ? '4×4 MUNDO TEMÁTICO'
                 : '3×3 RODA-GIGANTE'
               : lv >= 2
-                ? '3×3 MONOTRILHO & HUB'
-                : '3×2 FERROVIA DE CARGA';
+                ? '4×8 ESTAÇÃO CENTRAL'
+                : '2×4 ESTAÇÃO DE TREM';
     ctx.fillText(label, 10, h - 11);
     return;
   }

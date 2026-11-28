@@ -6,6 +6,7 @@ import {
   computeCityNeeds,
   computeFairTaxRate,
   countRiverBridges,
+  createHudSnapshot,
   createNewCity,
   createParticlePool,
   deleteSavedCityFromStorage,
@@ -3868,7 +3869,304 @@ test('5 new evolutionary landmarks (Clean Energy, Hospital 3x3, Tech University,
   void typeMod;
 });
 
+test('RCI demand balances cause-and-effect between residents and jobs and reacts to per-sector taxes (attraction vs abandonment)', () => {
+  const city = createNewCity(202611, 'medium');
+  city.money = 250000;
 
+  // Run initial growth to establish R, C, and I tiles
+  for (let i = 0; i < 65; i++) {
+    stepCityTick(city);
+  }
+  recomputeFieldsAndStats(city);
 
+  const hud = createHudSnapshot(city);
+  assert.ok(hud.rciDemand, 'HudSnapshot must expose rciDemand');
+  assert.ok(hud.rciDemand.workforce > 0, 'Expected positive workforce');
+  assert.ok(hud.rciDemand.totalJobs > 0, 'Expected positive jobs');
+  assert.ok(hud.rciDemand.summary.length > 10, 'Expected readable RCI summary');
 
+  // 1. Lowering residential tax boosts R demand; raising residential tax to 24% collapses R demand & causes residential abandonment
+  setTaxRate(city, 'residential', 4);
+  const lowResDemand = city.stats.rciDemand.residential.demand;
+  setTaxRate(city, 'residential', 24);
+  const highResDemand = city.stats.rciDemand.residential.demand;
+  assert.ok(
+    lowResDemand > highResDemand + 40,
+    `Expected low residential tax (${lowResDemand}) to yield much higher R demand than abusive 24% tax (${highResDemand})`
+  );
+  assert.ok(highResDemand < -10, `Expected abusive residential tax to produce negative R demand, got ${highResDemand}`);
+
+  // 2. Lowering commercial tax boosts C demand; raising commercial tax to 24% collapses C demand and causes commercial closures
+  setTaxRate(city, 'residential', 9);
+  setTaxRate(city, 'commercial', 4);
+  const lowComDemand = city.stats.rciDemand.commercial.demand;
+  setTaxRate(city, 'commercial', 24);
+  const highComDemand = city.stats.rciDemand.commercial.demand;
+  assert.ok(
+    lowComDemand > highComDemand + 40,
+    `Expected low commercial tax (${lowComDemand}) to beat abusive commercial tax (${highComDemand})`
+  );
+  assert.ok(highComDemand < -10, `Expected abusive commercial tax to produce negative C demand, got ${highComDemand}`);
+
+  const comCountBefore = city.stats.commercialCount;
+  for (let m = 0; m < 4; m++) {
+    closeFinancialMonth(city);
+  }
+  const closedCom = city.tiles.filter((t) => t.type === 'abandoned' && t.previousType === 'commercial').length;
+  assert.ok(
+    closedCom > 0 || city.stats.commercialCount < comCountBefore,
+    `Expected abusive 24% commercial tax to close/abandon commercial buildings (before=${comCountBefore}, after=${city.stats.commercialCount}, closed=${closedCom})`
+  );
+
+  // 3. Abusive industrial tax suppresses industrial demand and causes industrial closures
+  setTaxRate(city, 'commercial', 9);
+  setTaxRate(city, 'industrial', 4);
+  const lowIndDemand = city.stats.rciDemand.industrial.demand;
+  setTaxRate(city, 'industrial', 24);
+  const highIndDemand = city.stats.rciDemand.industrial.demand;
+  assert.ok(
+    lowIndDemand > highIndDemand + 40,
+    `Expected low industrial tax (${lowIndDemand}) to beat abusive industrial tax (${highIndDemand})`
+  );
+  assert.ok(highIndDemand < -10, `Expected abusive industrial tax to produce negative I demand, got ${highIndDemand}`);
+
+  // 4. Cause-and-effect: Adding many new residents (workforce >> jobs) increases C and I job demand!
+  setTaxRate(city, 'residential', 9);
+  setTaxRate(city, 'commercial', 9);
+  setTaxRate(city, 'industrial', 9);
+  recomputeFieldsAndStats(city);
+  const baseComBalance = city.stats.rciDemand.commercial.balanceEffect;
+  const baseIndBalance = city.stats.rciDemand.industrial.balanceEffect;
+
+  // Add 18 dense residential tiles to simulate a wave of new workers arriving
+  let addedRes = 0;
+  for (const t of city.tiles) {
+    if (addedRes >= 18) break;
+    if (t.type === 'grass') {
+      t.type = 'residential';
+      t.level = 3;
+      addedRes++;
+    }
+  }
+  recomputeFieldsAndStats(city);
+  assert.ok(
+    city.stats.rciDemand.commercial.balanceEffect > baseComBalance &&
+      city.stats.rciDemand.industrial.balanceEffect > baseIndBalance,
+    `Expected influx of workers to increase Commercial (${baseComBalance} -> ${city.stats.rciDemand.commercial.balanceEffect}) and Industrial (${baseIndBalance} -> ${city.stats.rciDemand.industrial.balanceEffect}) job demand`
+  );
+});
+
+test('dynamic parking lots allow live cars to enter stalls, park, and exit back onto adjacent streets', () => {
+  const city = createNewCity(771122, 'easy');
+  city.money = 900000;
+
+  for (let i = 0; i < 40; i++) {
+    stepCityTick(city);
+  }
+  // Unlock and construct a 5x5 Shopping Mall Lv.1 with 7 live parking bays adjacent to the road network
+  city.totalPopulation = Math.max(city.totalPopulation, 8500);
+  const res = executeEmergencyAction(city, 'shopping_evolution');
+  assert.equal(res.ok, true, `Expected 5x5 Shopping Mall work to start: ${res.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+  assert.ok(city.stats.shoppingCount >= 1, 'Expected at least 1 shopping mall');
+
+  const cars: CarEntity[] = [];
+  const particles = createParticlePool(32);
+  const cursor = { idx: 0 };
+
+  const observedParkingStates = new Set<string>();
+  let observedRejoinedStreet = false;
+  const hadParkedCar = new Set<CarEntity>();
+  let minParkedAtMall = Infinity;
+
+  for (let step = 0; step < 260; step++) {
+    updateCarsAndParticles(city, cars, particles, cursor, 0.25, 1.0, step * 0.25);
+    let parkedAtMallNow = 0;
+    for (const c of cars) {
+      if (c.parkingState) {
+        observedParkingStates.add(c.parkingState);
+        hadParkedCar.add(c);
+        if (c.parkingState === 'parked' && c.parkLotKey?.startsWith('shopping_')) {
+          parkedAtMallNow++;
+        }
+      } else if (hadParkedCar.has(c)) {
+        observedRejoinedStreet = true;
+      }
+    }
+    if (parkedAtMallNow < minParkedAtMall) {
+      minParkedAtMall = parkedAtMallNow;
+    }
+  }
+
+  assert.ok(
+    minParkedAtMall >= 4,
+    `Expected 5x5 Shopping Mall parking lot to ALWAYS have at least 4 parked cars on every step, lowest observed was ${minParkedAtMall}`
+  );
+  assert.ok(
+    observedParkingStates.has('entering') &&
+      observedParkingStates.has('parked') &&
+      observedParkingStates.has('exiting'),
+    `Expected parking lot cars to enter, park, and exit; saw: ${[...observedParkingStates].join(', ')}`
+  );
+  assert.equal(observedRejoinedStreet, true, 'Expected exiting cars to cleanly rejoin adjacent street traffic');
+});
+
+test('cross-map railway runs edge-to-edge through 2x4 then 4x8 train station, and duplicate major structures enforce >=32-block spacing with distinct rotation', () => {
+  const city = createNewCity(884422, 'easy');
+  city.money = 5_000_000;
+  for (let i = 0; i < 30; i++) {
+    stepCityTick(city);
+  }
+
+  // 1. Build Tier 1 Train Station (2x4 or 4x2) with cross-map railway corridor
+  city.totalPopulation = Math.max(city.totalPopulation, 40_000);
+  const railLv1 = executeEmergencyAction(city, 'rail_freight_project');
+  assert.equal(railLv1.ok, true, `Expected Lv.1 train station work to start: ${railLv1.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+
+  const rc1 = city.railCorridor;
+  assert.ok(rc1, 'Expected active state.railCorridor after completing Lv.1 Train Station');
+  const stLv1Tiles = city.tiles.filter((t) => t.type === 'rail_terminal');
+  assert.equal(stLv1Tiles.length, 8, `Expected Lv.1 Train Station to cover 2x4 = 8 tiles, got ${stLv1Tiles.length}`);
+  const stLv1Anchor = stLv1Tiles.find((t) => t.lotRole !== 'part')!;
+  assert.ok(
+    (stLv1Anchor.lotWidth === 2 && stLv1Anchor.lotHeight === 4) ||
+      (stLv1Anchor.lotWidth === 4 && stLv1Anchor.lotHeight === 2),
+    `Expected 2x4 or 4x2 Train Station footprint, got ${stLv1Anchor.lotWidth}x${stLv1Anchor.lotHeight}`
+  );
+
+  // Verify continuous edge-to-edge railway from 0 to max - 1
+  const alongMax1 = rc1.axis === 'ns' ? city.gridHeight : city.gridWidth;
+  for (let c = 0; c < alongMax1; c++) {
+    const t = getTile(city, rc1.axis === 'ns' ? rc1.lineCoord : c, rc1.axis === 'ns' ? c : rc1.lineCoord);
+    assert.ok(
+      t &&
+        (t.type === 'rail_track' ||
+          t.type === 'rail_terminal' ||
+          t.type === 'road' ||
+          t.type === 'bridge' ||
+          t.type === 'water'),
+      `Expected continuous railway tile at c=${c}, got ${t?.type}`
+    );
+  }
+  const edge0 = getTile(city, rc1.axis === 'ns' ? rc1.lineCoord : 0, rc1.axis === 'ns' ? 0 : rc1.lineCoord);
+  const edgeEnd = getTile(
+    city,
+    rc1.axis === 'ns' ? rc1.lineCoord : alongMax1 - 1,
+    rc1.axis === 'ns' ? alongMax1 - 1 : rc1.lineCoord
+  );
+  assert.ok(
+    edge0 && (edge0.type === 'rail_track' || edge0.type === 'road' || edge0.type === 'water'),
+    'Expected railway corridor to touch edge 0'
+  );
+  assert.ok(
+    edgeEnd && (edgeEnd.type === 'rail_track' || edgeEnd.type === 'road' || edgeEnd.type === 'water'),
+    'Expected railway corridor to touch opposite outer edge'
+  );
+
+  // 2. Upgrade to Tier 2 Central Train Station (4x8 or 8x4) on the same corridor
+  city.totalPopulation = Math.max(city.totalPopulation, 80_000);
+  const railLv2 = executeEmergencyAction(city, 'rail_freight_project');
+  assert.equal(railLv2.ok, true, `Expected Lv.2 train station upgrade to start: ${railLv2.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) {
+    closeFinancialMonth(city);
+  }
+  recomputeFieldsAndStats(city);
+
+  const stLv2Tiles = city.tiles.filter((t) => t.type === 'rail_terminal');
+  assert.equal(stLv2Tiles.length, 32, `Expected Lv.2 Central Train Station to cover 4x8 = 32 tiles, got ${stLv2Tiles.length}`);
+  const stLv2Anchor = stLv2Tiles.find((t) => t.lotRole !== 'part')!;
+  assert.ok(
+    (stLv2Anchor.lotWidth === 4 && stLv2Anchor.lotHeight === 8) ||
+      (stLv2Anchor.lotWidth === 8 && stLv2Anchor.lotHeight === 4),
+    `Expected 4x8 or 8x4 Central Train Station footprint, got ${stLv2Anchor.lotWidth}x${stLv2Anchor.lotHeight}`
+  );
+
+  // 3. Expanding city land extends the railway all the way to the new outer borders
+  const oldAlong = city.railCorridor!.axis === 'ns' ? city.gridHeight : city.gridWidth;
+  const expDir = city.railCorridor!.axis === 'ns' ? 'norte' : 'oeste';
+  const expRes = expandCityLand(city, expDir);
+  assert.equal(expRes.ok, true, `Expected expandCityLand(${expDir}) to succeed: ${expRes.reason ?? ''}`);
+  const newAlong = city.railCorridor!.axis === 'ns' ? city.gridHeight : city.gridWidth;
+  assert.ok(newAlong > oldAlong, 'Expected grid size to increase after expandCityLand');
+  const rcExp = city.railCorridor!;
+  const newEdge0 = getTile(city, rcExp.axis === 'ns' ? rcExp.lineCoord : 0, rcExp.axis === 'ns' ? 0 : rcExp.lineCoord);
+  const newEdgeEnd = getTile(
+    city,
+    rcExp.axis === 'ns' ? rcExp.lineCoord : newAlong - 1,
+    rcExp.axis === 'ns' ? newAlong - 1 : rcExp.lineCoord
+  );
+  assert.ok(
+    newEdge0 && (newEdge0.type === 'rail_track' || newEdge0.type === 'road' || newEdge0.type === 'water'),
+    'Expected railway corridor to extend to new edge 0 after land expansion'
+  );
+  assert.ok(
+    newEdgeEnd && (newEdgeEnd.type === 'rail_track' || newEdgeEnd.type === 'road' || newEdgeEnd.type === 'water'),
+    'Expected railway corridor to extend to new far edge after land expansion'
+  );
+
+  // 4. Duplicate Sports Centers (2x2 & 4x4) and Hospitals (3x3) enforce >= 32 blocks spacing & distinct lotRotation
+  city.totalPopulation = 80_000;
+  const sp1 = executeEmergencyAction(city, 'sports_center_project');
+  assert.equal(sp1.ok, true, `Expected 1st sports center to start: ${sp1.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  city.totalPopulation = 80_000;
+  const sp2 = executeEmergencyAction(city, 'sports_center_project');
+  assert.equal(sp2.ok, true, `Expected 2nd sports center to start: ${sp2.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+
+  const sportAnchors = city.tiles.filter(
+    (t) => t.establishmentId === 'sports_court' && t.lotRole !== 'part' && (t.lotWidth ?? 1) >= 2 && (t.lotHeight ?? 1) >= 2
+  );
+  assert.ok(sportAnchors.length >= 2, `Expected 2 sports center anchors (2x2 and 4x4), got ${sportAnchors.length}`);
+  const sDist = Math.hypot(sportAnchors[0].x - sportAnchors[1].x, sportAnchors[0].y - sportAnchors[1].y);
+  assert.ok(sDist >= 32, `Expected Sports Centers to be >= 32 blocks apart, got ${sDist.toFixed(1)}`);
+  assert.notEqual(
+    sportAnchors[0].lotRotation ?? 0,
+    sportAnchors[1].lotRotation ?? 0,
+    'Expected duplicate Sports Centers to have distinct lotRotation'
+  );
+
+  city.totalPopulation = 80_000;
+  const h1 = executeEmergencyAction(city, 'hospital_project');
+  assert.equal(h1.ok, true, `Expected 1st hospital to start: ${h1.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+  city.totalPopulation = 80_000;
+  const h2 = executeEmergencyAction(city, 'hospital_project');
+  assert.equal(h2.ok, true, `Expected 2nd hospital to start: ${h2.reason ?? ''}`);
+  while (city.pendingWorks.length > 0) closeFinancialMonth(city);
+
+  const hospAnchors = city.tiles.filter(
+    (t) => t.establishmentId === 'general_hospital' && t.lotRole !== 'part' && (t.lotWidth ?? 1) >= 3
+  );
+  assert.ok(hospAnchors.length >= 2, `Expected 2 3x3 Hospital anchors, got ${hospAnchors.length}`);
+  const hDist = Math.hypot(hospAnchors[0].x - hospAnchors[1].x, hospAnchors[0].y - hospAnchors[1].y);
+  assert.ok(hDist >= 32, `Expected Hospitals to be >= 32 blocks apart, got ${hDist.toFixed(1)}`);
+  assert.notEqual(
+    hospAnchors[0].lotRotation ?? 0,
+    hospAnchors[1].lotRotation ?? 0,
+    'Expected duplicate Hospitals to have distinct lotRotation'
+  );
+
+  // 5. Save/load round-trip preserves railCorridor & lotRotation
+  const saved = serializeCitySave(city);
+  const restored = deserializeCitySave(saved);
+  assert.ok(restored, 'Expected deserializeCitySave to succeed');
+  assert.equal(restored!.railCorridor?.axis, city.railCorridor?.axis);
+  assert.equal(restored!.railCorridor?.lineCoord, city.railCorridor?.lineCoord);
+  const restoredHosp = restored!.tiles.filter(
+    (t) => t.establishmentId === 'general_hospital' && t.lotRole !== 'part' && (t.lotWidth ?? 1) >= 3
+  );
+  assert.notEqual(
+    restoredHosp[0]?.lotRotation ?? 0,
+    restoredHosp[1]?.lotRotation ?? 0,
+    'Expected distinct lotRotation to survive save/load round-trip'
+  );
+});
 

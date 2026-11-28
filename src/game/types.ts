@@ -19,7 +19,8 @@ export type TileType =
   | 'metro_station'
   | 'shopping'
   | 'clean_energy'
-  | 'rail_terminal';
+  | 'rail_terminal'
+  | 'rail_track';
 
 /** Coherent urban neighborhood (bairro) macro-zone classification */
 export type NeighborhoodDistrictType = 'residential' | 'commercial' | 'industrial';
@@ -132,6 +133,18 @@ export interface ExternalHighwayState {
   tollY: number;
 }
 
+export interface RailCorridorState {
+  /** Cross-map direction: 'ns' (North <-> South along column `lineCoord`) or 'ew' (West <-> East along row `lineCoord`) */
+  axis: 'ns' | 'ew';
+  /** Column X (for 'ns') or row Y (for 'ew') where the continuous edge-to-edge railway runs */
+  lineCoord: number;
+  /** Anchor coordinates of the Train Station (`rail_terminal`) situated along the corridor */
+  stationAnchorX: number;
+  stationAnchorY: number;
+  /** Current station tier: 1 = 2x4 initial station, 2 = 4x8 central station */
+  stationLevel: 1 | 2;
+}
+
 export type TollTariffLevel = 'low' | 'medium' | 'high';
 
 export interface TollTariffSpec {
@@ -218,6 +231,8 @@ export interface Tile {
   /** Relative offset (0..lotWidth-1, 0..lotHeight-1) from the compound's top-left anchor tile */
   lotDx?: number;
   lotDy?: number;
+  /** Per-building visual rotation step (0..3) so duplicate structures on the map look distinct */
+  lotRotation?: 0 | 1 | 2 | 3;
   /** Active multi-month public work construction/upgrade reservation on this tile */
   construction?: TileConstructionMeta;
 }
@@ -255,6 +270,11 @@ export interface PendingConstructionWork {
   targetCoords?: Array<{ x: number; y: number }>;
   isUpgrade?: boolean;
   variant?: number;
+  /** Visual rotation assigned to the completed building/compound */
+  lotRotation?: 0 | 1 | 2 | 3;
+  /** Planned cross-map railroad corridor metadata when constructing/upgrading the Train Station */
+  railAxis?: 'ns' | 'ew';
+  railLineCoord?: number;
 }
 
 export type CityBudgets = Record<BudgetAreaKey, number>;
@@ -327,6 +347,39 @@ export interface CityStats {
   level3Count: number;
   visitorTrafficPct: number;
   coverage: Record<BudgetAreaKey, BudgetAreaStatus>;
+  /** Live RCI (Residencial / Comercial / Industrial) demand & cause-effect balance state */
+  rciDemand: RciDemandState;
+}
+
+export interface RciSectorDemand {
+  /** Net demand score from -100 (êxodo/abandono) to +100 (alta procura) */
+  demand: number;
+  /** Short status label: 'Alta' | 'Moderada' | 'Estável' | 'Fraca' | 'Êxodo' */
+  statusLabel: string;
+  /** Clear cause-and-effect explanation for why this sector is growing or shrinking */
+  reason: string;
+  /** Contribution from this sector's tax rate */
+  taxEffect: number;
+  /** Contribution from workforce / jobs / supply-chain balance */
+  balanceEffect: number;
+}
+
+export interface RciDemandState {
+  residential: RciSectorDemand;
+  commercial: RciSectorDemand;
+  industrial: RciSectorDemand;
+  /** Active working-age population seeking employment */
+  workforce: number;
+  /** Jobs provided by commercial stores, offices, malls & civic services */
+  commercialJobs: number;
+  /** Jobs provided by industrial plants, ports, rail & energy */
+  industrialJobs: number;
+  /** Combined jobs available across the city */
+  totalJobs: number;
+  /** Percentage of workforce covered by available jobs (100% = balanced) */
+  employmentRatioPct: number;
+  /** One-line summary of the dominant cause-effect dynamic in the city */
+  summary: string;
 }
 
 export interface TaxRates {
@@ -565,6 +618,32 @@ export interface CarEntity {
   targetY?: number;
   /** Secondary container color for articulated freight convoys */
   cargoColor?: string;
+  /** Dynamic parking lot lifecycle for vehicles entering, parking, and exiting parking lots */
+  parkingState?: 'entering' | 'parked' | 'exiting';
+  /** Remaining seconds parked inside the bay before departing back onto the street */
+  parkTimer?: number;
+  /** Entry/exit road tile coordinates adjacent to the parking lot */
+  parkRoadX?: number;
+  parkRoadY?: number;
+  /** World grid fractional position of the assigned parking stall */
+  parkSpotX?: number;
+  parkSpotY?: number;
+  /** Facing direction vector while parked */
+  parkDirX?: number;
+  parkDirY?: number;
+  /** Compound parking lot key for occupancy tracking */
+  parkLotKey?: string;
+  /** Assigned stall index within the lot so live cars never overlap */
+  parkSlotIdx?: number;
+  /** Compound geometry & local visual layout coordinates (u, v) for rotation-accurate stall alignment */
+  parkAnchorX?: number;
+  parkAnchorY?: number;
+  parkLotW?: number;
+  parkLotH?: number;
+  parkU?: number;
+  parkV?: number;
+  /** Cooldown seconds after exiting a parking lot before entering another */
+  parkCooldown?: number;
 }
 
 export type BoatKind = 'small' | 'medium' | 'yacht' | 'cargo' | 'cruise';
@@ -742,6 +821,8 @@ export interface CityState {
   seasonMode?: SeasonMode;
   /** Permanent external regional highway connecting the city to the outside map edge */
   externalHighway: ExternalHighwayState;
+  /** Continuous edge-to-edge cross-map railway passing through the Train Station (2x4 -> 4x8) */
+  railCorridor?: RailCorridorState | null;
   /** Optional Toll Plaza (Pedágio) built on the external entry road at 20,000+ inhabitants */
   tollPlaza: TollPlazaState;
   /** Controls whether residential Prédios Médios stay mid-rise until manually converted ('manual') or auto-evolve into Condomínios ('auto') */
@@ -797,4 +878,6 @@ export interface HudSnapshot {
   condoPolicy: CondoPolicy;
   activeEconomicEvent: ActiveCityEvent | null;
   activeUrbanIncident: ActiveCityEvent | null;
+  /** Live RCI demand & cause-effect workforce/jobs balance */
+  rciDemand: RciDemandState;
 }

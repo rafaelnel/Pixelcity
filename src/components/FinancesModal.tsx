@@ -179,8 +179,50 @@ export function FinancesModal({
         </div>
       ) : null}
 
+      {/* Live R · C · I Cause-and-Effect Demand & Migration Strip */}
+      <section
+        data-testid="finances-rci-panel"
+        aria-label="Demanda RCI e causa-efeito de migração"
+        className="pixel-inset p-3 mb-3 flex flex-col gap-2 border-2 border-[#2a3b5c]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-pixel text-[8px] text-[#ffe066]">
+            DEMANDA R · C · I &amp; CAUSA-EFEITO DE MIGRAÇÃO
+          </span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[13.5px] text-[#cfd9e8] tabular-nums">
+            <span>
+              Trabalhadores:{' '}
+              <strong className="text-[#66d98c]">
+                {hud.rciDemand.workforce.toLocaleString('pt-BR')}
+              </strong>
+            </span>
+            <span>
+              Vagas (C+I):{' '}
+              <strong className="text-[#56c2ff]">
+                {hud.rciDemand.totalJobs.toLocaleString('pt-BR')}
+              </strong>
+            </span>
+            <span>
+              Empregos/Trab.:{' '}
+              <strong
+                className={
+                  hud.rciDemand.employmentRatioPct >= 88 && hud.rciDemand.employmentRatioPct <= 118
+                    ? 'text-[#66d98c]'
+                    : 'text-[#f5b73b]'
+                }
+              >
+                {hud.rciDemand.employmentRatioPct}%
+              </strong>
+            </span>
+          </div>
+        </div>
+        <p className="text-[14.5px] text-[#dce6f2] leading-snug">
+          {hud.rciDemand.summary}
+        </p>
+      </section>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Left: 3 Tax Sliders (0% to 25%) */}
+        {/* Left: 3 Tax Sliders (0% to 25%) + Live Sector R/C/I Demand */}
         <section aria-label="Controle de impostos" className="flex flex-col gap-3">
           <h3 className="font-pixel text-[9px] text-[#ffe066]">
             ALÍQUOTAS DE IMPOSTOS (0% – 25%)
@@ -190,6 +232,9 @@ export function FinancesModal({
             const rate = hud.taxes[key];
             const fairLimit = fin.fairTaxRate + fairOffset;
             const mood = getTaxMood(rate, fairLimit);
+            const sectorDemand = hud.rciDemand[key];
+            const dVal = sectorDemand.demand;
+            const barHalfPct = Math.min(50, Math.round(Math.abs(dVal) * 0.5));
             const revVal =
               key === 'residential'
                 ? fin.revenue.residentialTax
@@ -204,15 +249,57 @@ export function FinancesModal({
                 className="pixel-inset p-3 flex flex-col gap-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-pixel text-[9px]" style={{ color }}>
-                    {label}
-                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-pixel text-[9px]" style={{ color }}>
+                      {label}
+                    </span>
+                    <span
+                      data-testid={`tax-demand-badge-${key}`}
+                      className="font-pixel text-[6.5px] px-1.5 py-0.5 bg-[#0b101b] border tabular-nums"
+                      style={{
+                        borderColor: dVal >= 10 ? color : dVal <= -10 ? '#ff6b6b' : '#475569',
+                        color: dVal >= 10 ? color : dVal <= -10 ? '#ff6b6b' : '#cbd5e1',
+                      }}
+                    >
+                      DEMANDA {dVal > 0 ? `+${dVal}` : dVal} · {sectorDemand.statusLabel.toUpperCase()}
+                    </span>
+                  </div>
                   <span className="text-[22px] font-bold text-[#ffe066] tabular-nums leading-none">
                     {rate}%
                   </span>
                 </div>
 
-                <p className="text-[15px] text-[#9eb0c9] leading-tight">{desc}</p>
+                {/* Live Dual-Polarity Demand Meter (-100..+100) */}
+                <div className="flex flex-col gap-1">
+                  <div className="relative w-full h-2.5 bg-[#0b101b] border border-[#2c3b57] overflow-hidden">
+                    <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-[#64748b] z-10" />
+                    {dVal !== 0 ? (
+                      <div
+                        className="absolute top-0 bottom-0 transition-all duration-300"
+                        style={{
+                          backgroundColor: dVal >= 0 ? color : '#ff6b6b',
+                          width: `${Math.max(3, barHalfPct)}%`,
+                          ...(dVal >= 0 ? { left: '50%' } : { right: '50%' }),
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[13px] text-[#9eb0c9] tabular-nums">
+                    <span>{sectorDemand.reason}</span>
+                    <span>
+                      Imp.:{' '}
+                      <strong className={sectorDemand.taxEffect >= 0 ? 'text-[#66d98c]' : 'text-[#ff6b6b]'}>
+                        {sectorDemand.taxEffect > 0 ? `+${sectorDemand.taxEffect}` : sectorDemand.taxEffect}
+                      </strong>{' '}
+                      · Equil.:{' '}
+                      <strong className={sectorDemand.balanceEffect >= 0 ? 'text-[#56c2ff]' : 'text-[#f5b73b]'}>
+                        {sectorDemand.balanceEffect > 0 ? `+${sectorDemand.balanceEffect}` : sectorDemand.balanceEffect}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-[14px] text-[#9eb0c9] leading-tight">{desc}</p>
 
                 <div className="flex items-center gap-2">
                   <button
@@ -245,7 +332,7 @@ export function FinancesModal({
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-1 text-[15px] tabular-nums">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[14.5px] tabular-nums">
                   <span style={{ color: mood.color }}>{mood.text}</span>
                   <span className="text-[#dce6f2]">
                     Est.: +${revVal.toLocaleString('pt-BR')}/mês

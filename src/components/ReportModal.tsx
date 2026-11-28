@@ -383,6 +383,140 @@ export function ReportModal({
             </div>
           </section>
 
+          {/* 1B. Live R · C · I Demand & Migration Cause-and-Effect Card */}
+          <section
+            data-testid="report-rci-demand"
+            aria-label="Equilíbrio RCI e mobilidade de migração"
+            className="pixel-inset p-3 flex flex-col gap-2.5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-pixel text-[9px] text-[#66d98c]">
+                  EQUILÍBRIO R · C · I &amp; MOBILIDADE DE MIGRAÇÃO
+                </h3>
+                <p className="text-[14px] text-[#cfd9e8] leading-snug mt-0.5">
+                  {hud.rciDemand.summary}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigateNeed('finances')}
+                className="pixel-btn px-2.5 py-1 bg-[#25314a] hover:bg-[#314161] text-[#ffe066] font-pixel text-[6.5px] shrink-0 flex items-center gap-1"
+              >
+                <span>Ajustar Impostos</span>
+                <ArrowRight className="w-2.5 h-2.5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center tabular-nums">
+              <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+                <div className="font-pixel text-[6.5px] text-[#66d98c]">FORÇA DE TRABALHO</div>
+                <div className="text-[18px] font-bold text-[#eef2f7] leading-tight">
+                  {hud.rciDemand.workforce.toLocaleString('pt-BR')}
+                </div>
+              </div>
+              <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+                <div className="font-pixel text-[6.5px] text-[#56c2ff]">EMPREGOS COMÉRCIO</div>
+                <div className="text-[18px] font-bold text-[#56c2ff] leading-tight">
+                  {hud.rciDemand.commercialJobs.toLocaleString('pt-BR')}
+                </div>
+              </div>
+              <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+                <div className="font-pixel text-[6.5px] text-[#f5b73b]">EMPREGOS INDÚSTRIA</div>
+                <div className="text-[18px] font-bold text-[#f5b73b] leading-tight">
+                  {hud.rciDemand.industrialJobs.toLocaleString('pt-BR')}
+                </div>
+              </div>
+              <div className="bg-[#0b101b] border border-[#2a3854] px-2 py-1.5">
+                <div className="font-pixel text-[6.5px] text-[#ffe066]">VAGAS / TRABALHADORES</div>
+                <div
+                  className={`text-[18px] font-bold leading-tight ${
+                    hud.rciDemand.employmentRatioPct >= 88 && hud.rciDemand.employmentRatioPct <= 118
+                      ? 'text-[#66d98c]'
+                      : 'text-[#f5b73b]'
+                  }`}
+                >
+                  {hud.rciDemand.employmentRatioPct}%
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {(
+                [
+                  {
+                    key: 'residential' as const,
+                    title: 'RESIDENCIAL (R)',
+                    color: '#66d98c',
+                    tax: hud.taxes.residential,
+                    data: hud.rciDemand.residential,
+                  },
+                  {
+                    key: 'commercial' as const,
+                    title: 'COMERCIAL (C)',
+                    color: '#56c2ff',
+                    tax: hud.taxes.commercial,
+                    data: hud.rciDemand.commercial,
+                  },
+                  {
+                    key: 'industrial' as const,
+                    title: 'INDUSTRIAL (I)',
+                    color: '#f5b73b',
+                    tax: hud.taxes.industrial,
+                    data: hud.rciDemand.industrial,
+                  },
+                ] as const
+              ).map(({ key, title, color, tax, data }) => {
+                const halfPct = Math.min(50, Math.round(Math.abs(data.demand) * 0.5));
+                return (
+                  <div
+                    key={key}
+                    data-testid={`report-rci-card-${key}`}
+                    className="bg-[#0b101b] border border-[#24324d] p-2.5 flex flex-col gap-1.5"
+                  >
+                    <div className="flex items-center justify-between gap-1 tabular-nums">
+                      <span className="font-pixel text-[7px]" style={{ color }}>
+                        {title}
+                      </span>
+                      <span className="text-[13px] text-[#9eb0c9]">
+                        Imp. <strong className="text-[#ffe066]">{tax}%</strong> ·{' '}
+                        <strong style={{ color: data.demand >= 0 ? color : '#ff6b6b' }}>
+                          {data.demand > 0 ? `+${data.demand}` : data.demand}
+                        </strong>
+                      </span>
+                    </div>
+                    <div className="relative w-full h-2.5 bg-[#121a2b] border border-[#2c3b57] overflow-hidden">
+                      <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-[#64748b] z-10" />
+                      {data.demand !== 0 ? (
+                        <div
+                          className="absolute top-0 bottom-0 transition-all duration-300"
+                          style={{
+                            backgroundColor: data.demand >= 0 ? color : '#ff6b6b',
+                            width: `${Math.max(3, halfPct)}%`,
+                            ...(data.demand >= 0 ? { left: '50%' } : { right: '50%' }),
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                    <div className="flex items-center justify-between gap-1 text-[13px]">
+                      <span
+                        className="font-bold"
+                        style={{ color: data.demand >= 0 ? color : '#ff6b6b' }}
+                      >
+                        {data.statusLabel}
+                      </span>
+                      <span className="text-[#8fa4bf] tabular-nums text-[12px]">
+                        Imp {data.taxEffect > 0 ? `+${data.taxEffect}` : data.taxEffect} · Bal{' '}
+                        {data.balanceEffect > 0 ? `+${data.balanceEffect}` : data.balanceEffect}
+                      </span>
+                    </div>
+                    <p className="text-[13px] text-[#9eb0c9] leading-tight">{data.reason}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
           {/* 2. 12-Month Growth Mini-Charts & Migration Summary */}
           <section aria-label="Gráficos de crescimento dos últimos 12 meses">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">

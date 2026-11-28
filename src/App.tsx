@@ -135,7 +135,8 @@ const TILE_LABELS: Record<TileType, string> = {
   metro_station: 'Estação de Metrô',
   shopping: 'Shopping Center',
   clean_energy: 'Usina de Energia Limpa',
-  rail_terminal: 'Ferrovia de Carga & Monotrilho',
+  rail_terminal: 'Estação de Trem',
+  rail_track: 'Linha Férrea',
 };
 
 function getInitialQueryParams(): {
@@ -1678,6 +1679,7 @@ export default function App() {
           onQuickSave={handleQuickSave}
           onRequestReturnMenu={handleRequestReturnMenu}
           onCycleSeason={handleCycleSeason}
+          onOpenFinances={() => handleNavigateNeed('finances')}
           onOpenPauseMenu={() => {
             setActiveModal(null);
             setSavesModalOpen(false);
